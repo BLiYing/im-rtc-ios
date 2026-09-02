@@ -1,0 +1,33 @@
+# ── Xcode ──
+build/
+DerivedData/
+*.xcuserstate
+*.xcuserdatad/
+xcuserdata/
+*.moved-aside
+*.hmap
+*.ipa
+*.dSYM.zip
+*.dSYM
+
+# ── Swift Package Manager ──
+.build/
+.swiftpm/
+Package.resolved.bak
+
+# ── CocoaPods（宿主若混用）──
+Pods/
+
+# ── 本地配置与密钥（绝不入库）──
+.env
+.env.*
+!.env.example
+*.mobileprovision
+*.p12
+*.cer
+
+# ── 编辑器 / 系统 ──
+.DS_Store
+.idea/
+.vscode/
+*.swp

@@ -1,0 +1,23 @@
+#!/usr/bin/env bash
+# pre-commit —— 提交前防「上帝文件」体检（跑 scripts/check-file-size.sh）。
+#
+#   安装（每个 clone 一次）：  ./scripts/install-hooks.sh
+#   应急绕过单次提交（不推荐）：git commit --no-verify
+#
+# 说明：走 core.hooksPath=scripts/hooks，钩子随代码入库、可版本化更新。
+set -u
+
+REPO_ROOT=$(git rev-parse --show-toplevel) || exit 1
+
+"$REPO_ROOT/scripts/check-file-size.sh"
+status=$?
+
+if [ "$status" -ne 0 ]; then
+  echo ""
+  echo "✗ pre-commit：有文件超预算，提交已拦。"
+  echo "  正确处理：拆分（抽协作对象 / 拆 extension 到独立文件），见 CONVENTIONS.md §2——**别放宽阈值**。"
+  echo "  应急绕过（仅限确有正当理由）：git commit --no-verify"
+  exit 1
+fi
+
+exit 0
