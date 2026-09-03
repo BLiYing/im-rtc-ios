@@ -9,8 +9,9 @@ import Foundation
 
  - **R1** 只有 joined 才允许 publish / subscribe / mute；其余状态**本地拒绝**，
    不发上去让服务端报错。
- - **R2** reconnecting 期间**禁止发任何房间帧**，但要把用户意图缓存下来，
-   恢复后一次性重放。
+ - **R2** joining 与 reconnecting 期间**禁止发任何房间帧**，但要把用户意图
+   缓存下来，进房/恢复后一次性重放。这两个状态的共同点是**宿主观察不到**——
+   它拿到 onCallBegin 就推流是最自然的写法，不该因为一个内部中间态而失败。
  - **R3** 订阅与换层是**幂等**的：重复 subscribe 同一条 track 等价于换层。
  */
 
@@ -54,13 +55,26 @@ public struct IMRoomContext: Equatable, Sendable {
     public var remoteTracks: [String: IMRemoteTrack] = [:]
     /// 期望的最高层。track_id → layer。
     public var layers: [String: String] = [:]
-    /// reconnecting 期间缓存的用户意图（不变量 R2）。
-    public var buffered: [IMOutgoingFrame] = []
+    /// joining / reconnecting 期间缓存的用户意图（不变量 R2）。
+    public var buffered: [IMBufferedIntent] = []
 
     public init() {}
 }
 
+/// 攒下来的一次调用，**存的是意图不是帧**。
+///
+/// 存帧的话重放时只能原样发出去，状态（比如 `publish[cid] = .publishing`）就漏掉了；
+/// 存意图则可以在 joined 态重新走一遍正常路径，跟没缓存过一模一样。
+public struct IMBufferedIntent: Equatable, Sendable {
+    public let op: String
+    public let args: [String: IMJSON]
+}
+
 public enum IMRoomMachine {
+    /// 值得攒下来重放的操作——正好是 R1 管的那一组。
+    static let bufferableOps: Set<String> = [
+        "publish", "unpublish", "mute", "subscribe", "unsubscribe", "update_layer",
+    ]
     /// reduce 是房间状态机的唯一入口。
     public static func reduce(_ ctx: IMRoomContext,
                               _ input: IMMachineInput) -> IMMachineOutput<IMRoomContext> {
@@ -111,10 +125,29 @@ public enum IMRoomMachine {
                               resumed: Bool) -> IMMachineOutput<IMRoomContext> {
         guard resumed else { return out(cleared(.idle)) }
         guard ctx.state == .reconnecting else { return out(ctx) }
-        var next = ctx
-        next.state = .joined
-        next.buffered = []
-        return out(next, send: ctx.buffered)
+        var joined = ctx
+        joined.state = .joined
+        return replayBuffered(joined)
+    }
+
+    /// replayBuffered 在 joined 态把攒下的意图重新走一遍。
+    ///
+    /// **重放走的是正常路径**（reduceAct），不是把缓存的帧直接吐出去——
+    /// 这样状态更新与帧生成永远一致，不会出现「帧发了但本地记账没跟上」。
+    static func replayBuffered(_ ctx: IMRoomContext) -> IMMachineOutput<IMRoomContext> {
+        guard !ctx.buffered.isEmpty else { return out(ctx) }
+
+        var state = ctx
+        state.buffered = []
+        var send: [IMOutgoingFrame] = []
+        var emit: [IMEmittedEvent] = []
+        for intent in ctx.buffered {
+            let result = reduceAct(state, intent.op, intent.args)
+            state = result.state
+            send.append(contentsOf: result.send)
+            emit.append(contentsOf: result.emit)
+        }
+        return out(state, send: send, emit: emit)
     }
 
     private static func reduceAct(_ ctx: IMRoomContext, _ op: String,
@@ -129,8 +162,12 @@ public enum IMRoomMachine {
         }
 
         // R1：只有 joined 才允许发布/订阅类操作。
-        // R2：reconnecting 期间把意图缓存下来，恢复后重放——不是丢掉，也不是发上去。
-        if ctx.state == .reconnecting { return bufferIntent(ctx, op, args) }
+        // R2：**joining 与 reconnecting** 期间把意图缓存下来，之后重放——
+        //     不是丢掉，也不是发上去。这两个状态宿主都观察不到，
+        //     在它们上面报「状态非法」等于让宿主为一个内部细节买单。
+        if ctx.state == .joining || ctx.state == .reconnecting {
+            return bufferIntent(ctx, op, args)
+        }
         guard ctx.state == .joined else { return localReject(ctx) }
 
         switch op {
@@ -232,12 +269,13 @@ public enum IMRoomMachine {
         ])])
     }
 
-    /// bufferIntent 把 reconnecting 期间的用户意图缓存起来（不变量 R2）。
+    /// bufferIntent 把中间态期间的用户意图缓存起来（不变量 R2）。
     private static func bufferIntent(_ ctx: IMRoomContext, _ op: String,
                                      _ args: [String: IMJSON]) -> IMMachineOutput<IMRoomContext> {
-        guard op == "mute" else { return out(ctx) } // 只有开关麦/摄像头值得重放
+        // 不认识的 op 照旧本地拒绝：缓存的是**合法但来早了**的调用，不是笔误。
+        guard bufferableOps.contains(op) else { return localReject(ctx) }
         var next = ctx
-        next.buffered.append(IMOutgoingFrame(IMFrameType.roomMute, muteData(args)))
+        next.buffered.append(IMBufferedIntent(op: op, args: args))
         return out(next)
     }
 

@@ -98,7 +98,10 @@ extension IMRoomMachine {
             // 自动订阅是**服务端**做的，客户端这边只记账，等 sub offer 来把它们坐实。
             if ctx.autoSubscribe { next.subscribe[trackID] = .subscribing }
         }
-        return out(next, emit: emit)
+        // 进房成功之后**立刻重放 joining 期间攒下的意图**（不变量 R2）：
+        // 宿主在 onCallBegin 里就发起的 publish 走的正是这条路。
+        let replayed = replayBuffered(next)
+        return out(replayed.state, send: replayed.send, emit: emit + replayed.emit)
     }
 
     private static func handlePublishOK(_ ctx: IMRoomContext,
