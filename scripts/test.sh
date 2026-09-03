@@ -12,8 +12,13 @@
 # 让「文件长到 800 行」这种问题在两秒内暴露，而不是等编译跑完。
 #
 # 注意：这里跑的是 **macOS 上的 swift test**，不需要模拟器。
-# 协议层与状态机不碰 UIKit、不碰 libwebrtc，所以它们能这么跑；
+# 协议层、状态机与信令都不碰 UIKit、不碰 libwebrtc，所以它们能这么跑；
 # 媒体链路的验收是**真机**，那部分不在这个脚本里（CONVENTIONS §9）。
+#
+# 真服务端联调（`LiveServerTests`）默认以 XCTSkip 跳过，手动跑：
+#   cd ../im-rtc-server && ./scripts/dev.sh
+#   RTC_LIVE_SERVER=http://127.0.0.1:8787 swift test --filter LiveServerTests
+# 它测的是网络连通性不是协议一致性——后者由向量在每次回归里守着，不靠它。
 set -u
 
 cd "$(dirname "$0")/.." || { echo "无法定位仓库根目录"; exit 2; }
