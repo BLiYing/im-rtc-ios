@@ -35,6 +35,19 @@ public enum IMConnectionState: String, Sendable {
 
 /// 连接层对外的回调。**全部在信令队列上调用**。
 public struct IMConnectionEvents {
+    /**
+     握手完成——**每一次**，包括自动重连那些。
+
+     门面必须接住它，并把 `sys.hello.ok` 喂给状态机。**不能只在 `login()` 里喂一遍**：
+     重连是连接层自己发起的，那次握手的结果只从这里出来。漏掉的后果不是「少一个事件」，
+     而是重连之后状态机根本不知道自己重连了——`resumed == false` 时房间与通话不归零
+     （服务端那边早就没了，之后每一帧都发向一个不存在的房间）、`resumed == true` 时
+     攒下的意图不重放，宿主也永远收不到第二次 `onConnected`。
+
+     （Web 端就是这么漏的，症状是服务端重启后换票重连其实成功了，界面却一直停在
+     「重连中」。见 im-rtc-web 的 `connectionFactory.ts`。）
+     */
+    public var onConnected: ((IMHelloOK) -> Void)?
     /// 收到服务端主动推送的事件（req_id 为空的帧）。
     public var onEvent: ((String, [String: IMJSON]) -> Void)?
     /// 连接断开。willReconnect=false 时不会再自动回来。
@@ -67,6 +80,9 @@ public struct IMConnectionOptions {
 
 public final class IMSignalConnection {
     private let queue = DispatchQueue(label: "com.imrtc.engine.signaling")
+    /// maxAuthFailures 是连续几次 4401 之后彻底放弃（协议 §1.5 关闭码表）。三端同一个数。
+    static let maxAuthFailures = 3
+
     private var options: IMConnectionOptions
     private var events: IMConnectionEvents
 
@@ -76,6 +92,8 @@ public final class IMSignalConnection {
     private var seq = 0
     private var reconnectAttempt = 0
     private var reconnectTimer: DispatchSourceTimer?
+    /// 连续鉴权失败次数。握手一成功、或宿主换了票，就清零——只有**连续**失败才说明票是死的。
+    private var authFailures = 0
 
     private var pending: PendingRequests!
     private var heartbeat: Heartbeat!
@@ -106,8 +124,14 @@ public final class IMSignalConnection {
     ///
     /// 协议里 4401 的含义就是「换个 token 再来」——换票是宿主的事，
     /// Engine 不该自己去要（它不知道宿主的账号体系）。
+    ///
+    /// **顺带把鉴权失败计数清零**：换票就是「这次不一样了」的唯一信号，
+    /// 不清的话已经用光重试次数的连接换了新票也再没有机会试。
     public func updateToken(_ token: String) {
-        queue.async { self.options.token = token }
+        queue.async {
+            self.options.token = token
+            self.authFailures = 0
+        }
     }
 
     /// connect 建立连接并完成握手。
@@ -213,8 +237,12 @@ public final class IMSignalConnection {
                 self.sessionID = ok.sessionID
                 self.state = .connected
                 self.reconnectAttempt = 0
+                self.authFailures = 0
                 self.heartbeat.start(intervalSec: ok.pingIntervalSec)
                 IMRTCLog.info("信令已连接", ["uid": ok.uid, "resumed": String(ok.resumed)])
+                // 先抛事件再 resume：`connect()` 返回时，门面那边的状态机应该已经吃过
+                // hello.ok 了——首次登录的调用方 await 到的就该是最终状态。
+                self.events.onConnected?(ok)
                 continuation.resume(returning: ok)
             }
         }
@@ -315,7 +343,26 @@ public final class IMSignalConnection {
 
         if code == IMCloseCode.kickedOut { events.onKickedOut?() }
 
-        let willReconnect = state != .closed && IMCloseCode.shouldReconnect(code)
+        /*
+         4401 要计数。重连**带的是同一枚 token**，所以协议 §1.5 的「换新 token 后重连」
+         这条规则只有配上一个上限才成立——否则一枚废票能自己重试到天荒地老。
+         Web 端实测过：服务端重启换了签名密钥，一个没关的标签页重试到第 19 次还在敲，
+         日志里全是 token_invalid，把真正的问题淹掉了。
+         连续 3 次之后抛 onKickedOut，让宿主回登录页重新取票。
+         */
+        var exhausted = false
+        if code == IMCloseCode.unauthorized {
+            authFailures += 1
+            exhausted = authFailures >= Self.maxAuthFailures
+            if exhausted {
+                IMRTCLog.info("鉴权连续失败，停止重连", ["failures": String(authFailures)])
+                reconnectTimer?.cancel()
+                reconnectTimer = nil
+                events.onKickedOut?()
+            }
+        }
+
+        let willReconnect = !exhausted && state != .closed && IMCloseCode.shouldReconnect(code)
         events.onDisconnected?(code, willReconnect)
         guard willReconnect else {
             state = .closed

@@ -4,9 +4,12 @@ import XCTest
 /// 信令连接的时序测试。全部用假连接跑，**不需要网络也不需要模拟器**。
 final class SignalingTests: XCTestCase {
     /// makeConnection 建一条接了假 socket 的连接。
+    ///
+    /// **返回的是 `SocketBox` 而不是取值闭包**：重连会换一条新 socket，
+    /// 「换过了没有」「一共造了几条」这两件事只有盒子本身答得上来。
     private func makeConnection(events: IMConnectionEvents = IMConnectionEvents(),
                                 random: @escaping () -> Double = { 0.5 })
-        -> (IMSignalConnection, () -> FakeWebSocket?) {
+        -> (IMSignalConnection, SocketBox) {
         let box = SocketBox()
         var options = IMConnectionOptions(url: URL(string: "ws://test/v1/ws")!,
                                           token: "test-token", deviceID: "d-1")
@@ -17,7 +20,7 @@ final class SignalingTests: XCTestCase {
             box.set(socket)
             return socket
         }
-        return (IMSignalConnection(options: options, events: events), { box.get() })
+        return (IMSignalConnection(options: options, events: events), box)
     }
 
     /// 握手：**第一帧必须是 sys.hello**，且带上 token 与 device_id（§1.2）。
@@ -170,6 +173,96 @@ final class SignalingTests: XCTestCase {
         XCTAssertEqual(connection.currentState, .closed)
     }
 
+    /// **每一次**握手都要抛 onConnected，重连那些也算。
+    ///
+    /// 门面靠它把 `sys.hello.ok` 喂给状态机。只在 `login()` 里喂一遍的话，
+    /// 重连之后状态机不知道自己重连了：`resumed == false` 时房间不归零、
+    /// `resumed == true` 时攒下的意图不重放，宿主也收不到第二次 onConnected。
+    /// （Web 端真漏过，症状是换票重连成功了界面却停在「重连中」。）
+    func testConnectedIsRaisedOnEveryHandshake() async throws {
+        let box = EventBox()
+        var events = IMConnectionEvents()
+        events.onConnected = { ok in box.append("connected:\(ok.resumed)") }
+        let (connection, socket) = makeConnection(events: events)
+        let first = try await handshake(connection, socket)
+        XCTAssertEqual(box.all(), ["connected:false"], "首次握手就该抛一次")
+
+        first.closeFromServer(IMCloseCode.goingAway)
+        let next = try await waitForNewSocket(socket, after: first)
+        next.open()
+        let hello = try await waitForFrame(next, ofType: IMFrameType.hello)
+        XCTAssertEqual(hello.data["session_id"]?.stringValue, "s-1", "重连要带上原会话 id")
+        next.receive(helloOKFrame(reqID: hello.reqID, resumed: true))
+        try await Task.sleep(nanoseconds: 150_000_000)
+
+        XCTAssertEqual(box.all(), ["connected:false", "connected:true"],
+                       "重连那次握手也必须抛——门面就是靠它把 hello.ok 喂进状态机的")
+    }
+
+    /// 连续 3 次 4401 就彻底放弃并抛 onKickedOut（协议 §1.5）。
+    ///
+    /// **一定要有这个上限**：4401 说的是「这枚 token 不好使」，而重连**带的是同一枚
+    /// token**——没有上限就是拿同一把坏钥匙永远敲同一扇门。Web 端实测过：服务端重启
+    /// 换了签名密钥，一个没关的标签页重试到第 19 次还在敲，日志里全是 token_invalid。
+    ///
+    /// 这个用例要真等两档退避（1s + 2s），是本套件里最慢的一个；换来的是
+    /// 「废票不会自己敲一整天」这条规则被守住。
+    func testConsecutiveAuthFailuresGiveUp() async throws {
+        let kicked = CounterBox()
+        let lastWillReconnect = CounterBox()
+        var events = IMConnectionEvents()
+        events.onKickedOut = { kicked.bump() }
+        events.onDisconnected = { _, willReconnect in
+            if willReconnect { lastWillReconnect.bump() }
+        }
+        let (connection, socket) = makeConnection(events: events)
+        var ws = try await handshake(connection, socket)
+        let box = socket
+
+        // 前两次还给机会：换新 token 后重连是可能成功的。
+        for _ in 0..<2 {
+            let previous = ws
+            ws.closeFromServer(IMCloseCode.unauthorized)
+            XCTAssertEqual(kicked.value, 0, "还没到上限，不该抛 onKickedOut")
+            ws = try await waitForNewSocket(box, after: previous)
+            ws.open()
+            _ = try await waitForFrame(ws, ofType: IMFrameType.hello)
+        }
+        XCTAssertEqual(lastWillReconnect.value, 2, "前两次都该说「会重连」")
+
+        // 第 3 次到顶：不再重连，把宿主赶回登录页去换票。
+        let madeBefore = box.count
+        ws.closeFromServer(IMCloseCode.unauthorized)
+        try await Task.sleep(nanoseconds: 200_000_000)
+        XCTAssertEqual(kicked.value, 1)
+        XCTAssertEqual(connection.currentState, .closed)
+        XCTAssertEqual(lastWillReconnect.value, 2, "到顶那次不该再说「会重连」")
+
+        // 再等过最长一档也不该有新连接。
+        try await Task.sleep(nanoseconds: 1_500_000_000)
+        XCTAssertEqual(box.count, madeBefore, "放弃之后不该再建连接")
+    }
+
+    /// 宿主换的票，下一次重连必须真的带上——这是协议 §1.5 在客户端的落点。
+    ///
+    /// （「换票同时清零失败计数」那一半由 Web 端的 updateToken 用例守，
+    /// 两端同一份逻辑，这里不再多花两档退避去重复它。）
+    func testUpdateTokenIsUsedOnNextReconnect() async throws {
+        let (connection, socket) = makeConnection()
+        let first = try await handshake(connection, socket)
+
+        first.closeFromServer(IMCloseCode.unauthorized)
+        // 宿主在这里去换票：重连是已经排好的（第一档 1s），只要赶在它之前调到就行。
+        connection.updateToken("token-new")
+
+        // **必须等「另一条」socket**：盒子里一直有上一条，等「有 socket」会立刻拿到旧的，
+        // 而对一条已关闭的假 socket 再 open() 会把 connect() 的 continuation 重复唤醒。
+        let next = try await waitForNewSocket(socket, after: first)
+        next.open()
+        let hello = try await waitForFrame(next, ofType: IMFrameType.hello)
+        XCTAssertEqual(hello.data["token"]?.stringValue, "token-new")
+    }
+
     /// 退避档位三端同一份；抖动固定成 0 时应当**正好**等于档位值。
     func testBackoffSteps() {
         let noJitter: () -> Double = { 0.5 }
@@ -186,7 +279,7 @@ final class SignalingTests: XCTestCase {
     // MARK: - 辅助
 
     private func handshake(_ connection: IMSignalConnection,
-                           _ socket: () -> FakeWebSocket?) async throws -> FakeWebSocket {
+                           _ socket: SocketBox) async throws -> FakeWebSocket {
         async let hello = connection.connect()
         let ws = try await waitForSocket(socket)
         ws.open()
@@ -196,9 +289,21 @@ final class SignalingTests: XCTestCase {
         return ws
     }
 
-    private func waitForSocket(_ get: () -> FakeWebSocket?) async throws -> FakeWebSocket {
+    /// waitForNewSocket 等到 box 里换成了**另一条** socket（重连造的那条）。
+    ///
+    /// 不能只等「有 socket」：box 里一直有上一条，那样会立刻返回旧的。
+    private func waitForNewSocket(_ box: SocketBox,
+                                  after previous: FakeWebSocket) async throws -> FakeWebSocket {
+        for _ in 0..<800 {
+            if let socket = box.get(), socket !== previous { return socket }
+            try await Task.sleep(nanoseconds: 5_000_000)
+        }
+        throw IMRTCError(.internalError, "没等到重连建立的新连接")
+    }
+
+    private func waitForSocket(_ box: SocketBox) async throws -> FakeWebSocket {
         for _ in 0..<200 {
-            if let socket = get() { return socket }
+            if let socket = box.get() { return socket }
             try await Task.sleep(nanoseconds: 5_000_000)
         }
         throw IMRTCError(.internalError, "没有建立连接")
@@ -223,8 +328,11 @@ final class SignalingTests: XCTestCase {
 final class SocketBox: @unchecked Sendable {
     private let lock = NSLock()
     private var socket: FakeWebSocket?
-    func set(_ value: FakeWebSocket) { lock.lock(); socket = value; lock.unlock() }
+    private var made = 0
+    func set(_ value: FakeWebSocket) { lock.lock(); socket = value; made += 1; lock.unlock() }
     func get() -> FakeWebSocket? { lock.lock(); defer { lock.unlock() }; return socket }
+    /// count 是**一共造了几条** socket——「放弃之后没有再重连」只能靠它断言。
+    var count: Int { lock.lock(); defer { lock.unlock() }; return made }
 }
 
 final class EventBox: @unchecked Sendable {

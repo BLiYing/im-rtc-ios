@@ -15,10 +15,10 @@
 |---|---|---|
 | `Protocol/` | 严格 JSON 值模型、编码硬规则、信封、45 个错误码、reason、40 个帧的字段声明与注册表 | envelope 26+9 条向量、错误码全表、reason 全表 |
 | `StateMachine/` | 通话机（§5.1）、房间机（§5.3）、Engine 总状态 | `call_fsm` 16 条 + `room_fsm` 7 条向量 |
-| `Signaling/` | WS 客户端、握手、心跳、按 req_id 配对、退避重连 | 11 条假连接时序用例 + **一条真服务端联调** |
+| `Signaling/` | WS 客户端、握手、心跳、按 req_id 配对、退避重连、4401 三次上限 | 13 条假连接时序用例 + **一条真服务端联调** |
 | `Observability/` | `IMRTCLog` 与脱敏 | 日志纪律门禁（含自检） |
 
-**`./scripts/test.sh` 七步全绿**，31 个用例，**全程不需要模拟器**。
+**`./scripts/test.sh` 九步全绿**，34 个用例，**全程不需要模拟器**。
 
 真服务端联调（默认 XCTSkip，手动跑）：
 ```bash
@@ -43,6 +43,19 @@ RTC_LIVE_SERVER=http://127.0.0.1:8787 swift test --filter LiveServerTests
 `CallEngine` 把信令、三个状态机接起来，按设计文档 §7.5 抛回调；
 公开面要 **ObjC 友好**（首批宿主 IMProgram 是 Objective-C，见 CONVENTIONS §4）。
 这一刀做完，「自画 UI 的宿主」就已经能用了——它不需要媒体也能收全部事件。
+
+**门面落地时有两条 Web 端刚踩过的坑，别再踩一遍**（2026-09-03）：
+1. **`sys.hello.ok` 必须从 `IMConnectionEvents.onConnected` 进状态机，不能只在
+   `login()` 里手工喂一次**。重连是连接层自己发起的，那次握手的结果只从 `onConnected`
+   出来；漏掉的后果不是「少一个事件」而是**重连之后状态机不知道自己重连了**——
+   `resumed == false` 时房间不归零（之后每帧都发向一个已消失的房间）、
+   `resumed == true` 时攒下的意图不重放，宿主也收不到第二次 `onConnected`。
+   Web 端的症状是：换票重连其实成功了，界面一直停在「重连中」。
+   `onConnected` 已经补在 `SignalConnection` 上了，接住它就行。
+2. **门面要公开 `updateToken(_:)`**（转给 `IMSignalConnection`）。协议 §1.5 规定
+   `4401` 的处置是「换新 token 后重连」，而换票是宿主的事——门面不暴露这个口子，
+   宿主就**做不到**协议要求它做的事。设计文档 §7.5 的主动方法表里已列入。
+   **不要做「token provider 回调」**：那等于让 Engine 自己去宿主的账号体系要票。
 
 **P3 第五刀 —— 媒体（要真机）**
 `Media/WebRTCAdapter` + 独立的 iOS-only target 引 libwebrtc。
@@ -71,6 +84,10 @@ Web 端的 uikit 可以直接对照抄结构（`packages/call-uikit-react/src/la
 - **`JSONSerialization` 分不清 true 与 1**：两者都是 `NSNumber`，
   且 `NSNumber(value: 1) is Bool` 为 **true**。用 `is Bool` 判类型的话，
   「bool 不能写成 0/1」这条协议规则在 Swift 端等于不存在。本仓用 `CFBooleanGetTypeID` 判。
+- **4401 必须有重试上限**（`IMSignalConnection.maxAuthFailures = 3`，三端同一个数）：
+  重连**带的是同一枚 token**，没有上限就是拿同一把坏钥匙永远敲同一扇门。
+  Web 端实测过——服务端重启换了签名密钥，一个没关的标签页重试到第 19 次还在敲，
+  日志里全是 `token_invalid`，把真正的问题淹掉了。到顶抛 `onKickedOut` 让宿主回登录页。
 - **三端已知的两条真 bug，iOS 从第一天就带上了防线**：
   通话结束后房间必须回 idle（否则之后每一帧都发向已销毁的房间）；
   层上界要随订阅一起给到服务端（否则房间记 m、实际发 h）。
