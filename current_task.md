@@ -6,7 +6,8 @@
 
 ## 当前焦点
 
-**P3 第一、二刀已落地（2026-09-03）：协议层 + 三个状态机，四仓共用的一致性向量全过。**
+**P3 前三刀已落地（2026-09-03）：协议层 + 三个状态机 + 信令连接，
+向量全过，且**已经真连上服务端跑通进房离房**。
 
 服务端 P0~P4 与 Web P2 都已完成，本仓是四仓里最后开工的一个。
 
@@ -14,8 +15,19 @@
 |---|---|---|
 | `Protocol/` | 严格 JSON 值模型、编码硬规则、信封、45 个错误码、reason、40 个帧的字段声明与注册表 | envelope 26+9 条向量、错误码全表、reason 全表 |
 | `StateMachine/` | 通话机（§5.1）、房间机（§5.3）、Engine 总状态 | `call_fsm` 16 条 + `room_fsm` 7 条向量 |
+| `Signaling/` | WS 客户端、握手、心跳、按 req_id 配对、退避重连 | 11 条假连接时序用例 + **一条真服务端联调** |
+| `Observability/` | `IMRTCLog` 与脱敏 | 日志纪律门禁（含自检） |
 
-**`./scripts/test.sh` 七步全绿**，20 个用例，**全程不需要模拟器**。
+**`./scripts/test.sh` 七步全绿**，31 个用例，**全程不需要模拟器**。
+
+真服务端联调（默认 XCTSkip，手动跑）：
+```bash
+cd ../im-rtc-server && ./scripts/dev.sh
+RTC_LIVE_SERVER=http://127.0.0.1:8787 swift test --filter LiveServerTests
+```
+它验的是与 `rtc-cli -scenario room` 等价的流程：免密登录 → WS 握手 →
+建会议房 → 换票 → 进房 → 离房。**第一次跑就抓到一个服务端 bug**：
+主动 logout 发的 1000 被当成掉线，房里挂了半分钟幻影成员（已在 im-rtc-server 修）。
 
 两个刻意的工程决定：
 - **`IMCallEngine` 不依赖 libwebrtc**。它是 iOS-only 的预编译二进制包，
@@ -27,18 +39,17 @@
 
 ## 下一步
 
-**P3 第三刀 —— 信令连接（不需要真机）**
-`Signaling/`：`URLSessionWebSocketTask` + `sys.hello` 握手 + 心跳 +
-**按 req_id 配对**（pub 侧的 `room.offer` 由 `room.answer` 应答，只看类型对不上号）+
-退避重连（`1s,2s,4s,8s,15s,30s`，±20% 抖动，三端同一份）。
-验收：起 `../im-rtc-server/scripts/dev.sh`，Swift 侧跑通与 `rtc-cli -scenario room` 等价的流程。
+**P3 第四刀 —— 门面 + 回调表（不需要真机）**
+`CallEngine` 把信令、三个状态机接起来，按设计文档 §7.5 抛回调；
+公开面要 **ObjC 友好**（首批宿主 IMProgram 是 Objective-C，见 CONVENTIONS §4）。
+这一刀做完，「自画 UI 的宿主」就已经能用了——它不需要媒体也能收全部事件。
 
-**P3 第四刀 —— 媒体（要真机）**
+**P3 第五刀 —— 媒体（要真机）**
 `Media/WebRTCAdapter` + 独立的 iOS-only target 引 libwebrtc。
 **两条 PeerConnection，各有固定 offerer**（pub=本端、sub=服务端），
 所以不需要 perfect negotiation / rollback。
 
-**P3 第五刀 —— Kit + Demo**：1v1 四态 + 来电横幅 + 悬浮球（草图 §03/§04）、Demo 四屏。
+**P3 第六刀 —— Kit + Demo**：1v1 四态 + 来电横幅 + 悬浮球（草图 §03/§04）、Demo 四屏。
 **P4**：九宫格（草图 §05）。服务端的 simulcast 与带宽估计都已就绪，
 Web 端的 uikit 可以直接对照抄结构（`packages/call-uikit-react/src/layout/grid.ts`）。
 
