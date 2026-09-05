@@ -211,16 +211,17 @@ final class CameraButtonVisibilityTests: XCTestCase {
     }
 
     /**
-     **「以语音接听」之后按钮要留着。**
+     **视频通话里关掉摄像头之后，按钮要留着。**
 
-     那通电话的 media_type 仍然是 video——对方本来就知道这是视频通话，
-     中途打开自己的摄像头完全合理。判据是 media_type，不是「本端摄像头开没开」。
+     判据是 media_type，不是「本端摄像头开没开」——那通电话仍然是 video，
+     对方本来就知道这是视频通话，再打开完全合理。
+     来电页上先关掉摄像头再接听（= 以语音接听，拍板 §11-10）走的也是这条。
     */
-    func testAudioOnlyAcceptOfAVideoCallKeepsIt() {
+    func testVideoCallWithCameraOffStillKeepsIt() {
         var state = reduceCallView(IMCallViewState(),
                                    .callReceived(callID: "c-1", caller: "bob",
                                                  mediaType: "video", isGroup: false))
-        state = reduceCallView(state, .setCamera(false)) // 以语音接听
+        state = reduceCallView(state, .setCamera(false)) // 来电页上关掉摄像头
         XCTAssertFalse(state.selfState.cameraOn)
         XCTAssertTrue(imShowsCameraButton(for: state), "视频通话里关着摄像头，按钮仍然要有")
     }

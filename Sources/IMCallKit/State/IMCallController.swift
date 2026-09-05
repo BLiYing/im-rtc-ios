@@ -42,8 +42,6 @@ public final class IMCallController: NSObject {
     private var cameraCID = ""
     /// 已经为哪个房间发布过。防止同一个房间推两次流。
     private var publishedRoomID = ""
-    /// 「以语音接听」的记号：callBegin 之后推流时不带摄像头。
-    private var audioOnlyAccept = false
     /// 结束画面停留多久再自动收起。0 = 不自动收。
     public var endedHoldSeconds: TimeInterval = 1.5
     private var dismissTimer: DispatchSourceTimer?
@@ -110,22 +108,20 @@ public final class IMCallController: NSObject {
         }
     }
 
+    /**
+     接听。
+
+     **视频来电时，本端摄像头开着才起预览。** 来电页上有一个摄像头开关，
+     接听前关掉它就是「以语音接听」（拍板 §11-10：不另设那个按钮）——
+     既然用户表示不出镜，就连摄像头都不该去开。
+    */
     public func accept() {
         Task {
-            if state.mediaType == "video" { await startPreview() }
+            if state.mediaType == "video", state.selfState.cameraOn { await startPreview() }
             await engine.accept()
         }
     }
     public func reject() { Task { await engine.reject() } }
-
-    /// 以语音接听视频来电（草图 §03-F）：接了，但**本端不开摄像头**。
-    /// 对方照常推视频，我们照常收；只是自己不发。
-    public func acceptAudioOnly() {
-        apply(.setCamera(false))
-        apply(.setSpeaker(false))
-        audioOnlyAccept = true
-        Task { await engine.accept() }
-    }
 
     public func toggleSpeaker() {
         let on = !state.selfState.speakerOn
@@ -160,14 +156,24 @@ public final class IMCallController: NSObject {
         Task { await engine.setMuted(micCID, muted: !on) }
     }
 
+    /**
+     开关摄像头。
+
+     **还没进房时只改界面，不去发布。** 视频来电页上也有这个开关（接听前关掉
+     就是「以语音接听」），那时房间还不存在，`publishCamera` 会被不变量 R1
+     本地拒成 2005——宿主平白收到一条没头没尾的错误。真正的发布交给
+     `publishFor`，它只在本端摄像头开着时才推。
+    */
     public func toggleCamera() {
         let on = !state.selfState.cameraOn
         apply(.setCamera(on))
+        guard !state.roomID.isEmpty else { return }
         Task {
             // 第一次开摄像头要真的发布；之后只是开关，**不走 unpublish**——
             // 反复 publish/unpublish 会触发重协商风暴（协议 §3.2）。
             if cameraCID.isEmpty, on {
                 cameraCID = (try? await engine.publishCamera()) ?? ""
+                await MainActor.run { self.broadcast() }
             } else if !cameraCID.isEmpty {
                 await engine.setMuted(cameraCID, muted: !on)
             }
@@ -246,7 +252,6 @@ public final class IMCallController: NSObject {
             micCID = ""
             cameraCID = ""
             publishedRoomID = ""
-            audioOnlyAccept = false
         }
         /*
          3. 有房间号且还没为它发布过 → 推流。
@@ -259,7 +264,7 @@ public final class IMCallController: NSObject {
         guard isLive, !state.roomID.isEmpty, publishedRoomID != state.roomID else { return }
         publishedRoomID = state.roomID
         guard !state.isMeeting else { return } // 会议由 joinMeeting 自己推流
-        let mediaType = audioOnlyAccept ? "audio" : state.mediaType
+        let mediaType = state.mediaType
         // 接通那一刻把扬声器路由落到媒体层——之前只是界面上的默认值。
         engine.setSpeakerOn(state.selfState.speakerOn)
         Task { await publishFor(mediaType: mediaType) }
@@ -267,8 +272,15 @@ public final class IMCallController: NSObject {
 
     private func publishFor(mediaType: String) async {
         micCID = (try? await engine.publishMicrophone()) ?? ""
-        // 摄像头可能已经在预览了；publishCamera 会复用同一条轨道，不重开设备。
-        if mediaType == "video" {
+        /*
+         摄像头可能已经在预览了；publishCamera 会复用同一条轨道，不重开设备。
+
+         **本端摄像头是关着的就不推**：视频来电页上关掉摄像头再接听就是
+         「以语音接听」（拍板 §11-10）。这时连开都不开，而不是「开了再静音」——
+         用户表示不出镜，摄像头指示灯就不该亮。
+        */
+        let wantsCamera = await MainActor.run { self.state.selfState.cameraOn }
+        if mediaType == "video", wantsCamera {
             cameraCID = (try? await engine.publishCamera()) ?? cameraCID
         }
         /*

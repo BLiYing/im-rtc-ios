@@ -68,7 +68,7 @@ public final class IMControlButton: UIControl {
         captionLabel.font = .systemFont(ofSize: 11)
         captionLabel.textAlignment = .center
         captionLabel.textColor = theme.secondaryText
-        // 文案可能比按钮宽（"以语音接听"），让它自己缩一点而不是把布局撑歪。
+        // 文案可能比按钮宽（"取消静音"），让它自己缩一点而不是把布局撑歪。
         captionLabel.adjustsFontSizeToFitWidth = true
         captionLabel.minimumScaleFactor = 0.8
 

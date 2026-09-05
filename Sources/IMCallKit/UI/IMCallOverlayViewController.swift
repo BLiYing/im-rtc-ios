@@ -47,8 +47,6 @@ public final class IMCallOverlayViewController: UIViewController {
     private let acceptButton = IMControlButton(role: .accept, symbol: "phone.fill",
                                                caption: "接听")
     private let rejectButton = IMControlButton(role: .danger, symbol: "xmark", caption: "拒绝")
-    /// 视频来电才有：接了但本端不开摄像头（草图 §03-F）。
-    private let audioAcceptButton = IMControlButton(symbol: "phone.fill", caption: "以语音接听")
     private let speakerButton = IMControlButton(symbol: "speaker.fill", caption: "扬声器",
                                                 onSymbol: "speaker.wave.2.fill",
                                                 onCaption: "扬声器")
@@ -191,7 +189,6 @@ public final class IMCallOverlayViewController: UIViewController {
         endButton.addTarget(self, action: #selector(onEnd), for: .touchUpInside)
         acceptButton.addTarget(self, action: #selector(onAccept), for: .touchUpInside)
         rejectButton.addTarget(self, action: #selector(onReject), for: .touchUpInside)
-        audioAcceptButton.addTarget(self, action: #selector(onAudioAccept), for: .touchUpInside)
         speakerButton.addTarget(self, action: #selector(onSpeaker), for: .touchUpInside)
     }
 
@@ -203,7 +200,6 @@ public final class IMCallOverlayViewController: UIViewController {
     @objc private func onEnd() { controller.end() }
     @objc private func onAccept() { controller.accept() }
     @objc private func onReject() { controller.reject() }
-    @objc private func onAudioAccept() { controller.acceptAudioOnly() }
     @objc private func onSpeaker() { controller.toggleSpeaker() }
 
     // MARK: - 渲染
@@ -254,8 +250,15 @@ public final class IMCallOverlayViewController: UIViewController {
         if state.phase == .ended {
             wanted = []
         } else if state.phase == .incoming {
-            wanted = state.mediaType == "video"
-                ? [audioAcceptButton, rejectButton, acceptButton]
+            /*
+             **视频来电多一个摄像头开关，而不是「以语音接听」按钮。**
+
+             关掉它再接听就是同一件事，而且状态看得见、还能再打开；
+             两个「接听」并排放着，用户得先分辨哪个是哪个（拍板 §11-10）。
+             接听时 `publishFor` 只在摄像头开着才推流——关着就连开都不开。
+            */
+            wanted = imShowsCameraButton(for: state)
+                ? [cameraButton, rejectButton, acceptButton]
                 : [rejectButton, acceptButton]
         } else {
             // **语音通话不给摄像头按钮**——协议上没有「转视频」这回事，
