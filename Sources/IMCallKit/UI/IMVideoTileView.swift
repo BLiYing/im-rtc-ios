@@ -21,6 +21,9 @@ public final class IMVideoTileView: UIView {
     public override init(frame: CGRect) {
         super.init(frame: frame)
         build()
+        // 格子跟着网格走，不用自己的固有尺寸去撑布局。
+        setContentHuggingPriority(.defaultLow, for: .vertical)
+        setContentCompressionResistancePriority(.defaultLow, for: .vertical)
     }
 
     @available(*, unavailable)

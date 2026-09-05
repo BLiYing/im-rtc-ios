@@ -1,4 +1,7 @@
 import Foundation
+#if canImport(UIKit)
+import UIKit
+#endif
 import IMCallEngine
 
 /*
@@ -139,6 +142,34 @@ public final class IMCallController: NSObject {
         }
     }
 
+    #if canImport(UIKit)
+    /**
+     把某人的远端画面挂到一个视图上；传 nil 卸载。
+
+     **这条路一开始整条漏了**：格子画好了、媒体也协商通了，但没人调
+     `attachView`，于是画面永远不出现——而且不报任何错。
+     Kit 走的是门面的公开方法，与「宿主自画 UI」完全一样（CONVENTIONS §1）。
+     */
+    public func attachView(_ uid: String, to view: UIView?) {
+        engine.attachView(uid, to: view)
+    }
+
+    /// 把**本端摄像头**挂到视图上做预览；传 nil 卸载。
+    /// cid 由 controller 记着，界面不需要知道。
+    public func attachLocalPreview(to view: UIView?) {
+        guard !cameraCID.isEmpty else { return }
+        engine.attachLocalView(cameraCID, to: view)
+    }
+
+    /// 本端有没有摄像头轨道可预览。没有的话格子该显示头像。
+    public var hasLocalCamera: Bool { !cameraCID.isEmpty }
+    #endif
+
+    /// reportLayer 报某人画面的层上界（协议 §3.5）。格子越小报得越低，直接省带宽。
+    public func reportLayer(_ uid: String, _ layer: String) {
+        Task { await engine.setRemoteLayer(uid, layer: layer) }
+    }
+
     public func setMinimized(_ minimized: Bool) { apply(.setMinimized(minimized)) }
     public func dismiss() { apply(.dismiss) }
 
@@ -158,7 +189,8 @@ public final class IMCallController: NSObject {
         dismissTimer = nil
         if state.phase == .ended, endedHoldSeconds > 0 {
             let timer = DispatchSource.makeTimerSource(queue: .main)
-            timer.schedule(deadline: .now() + endedHoldSeconds)
+            // 「对方不在线」这类要让人看清，正常挂断不用停那么久。
+            timer.schedule(deadline: .now() + imEndedHoldSeconds(state.endReason))
             timer.setEventHandler { [weak self] in self?.apply(.dismiss) }
             dismissTimer = timer
             timer.resume()

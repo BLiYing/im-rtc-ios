@@ -1,5 +1,6 @@
 #if canImport(UIKit)
 import UIKit
+import IMCallEngine
 
 /*
  通话主界面。草图 §03 的四态一屏一个：拨出中 / 来电 / 通话中 / 群通话九宫格。
@@ -15,27 +16,37 @@ public final class IMCallOverlayViewController: UIViewController {
     private let titleLabel = UILabel()
     private let subtitleLabel = UILabel()
     private let minimizeButton = UIButton(type: .system)
-    private let gridView = UIView()
+    private let gridView = IMCallGridView()
+    /// 本端预览格子。群通话里它是格子之一；1v1 里浮在右上角。
+    private let selfTile = IMVideoTileView()
     private let controlsStack = UIStackView()
 
     /// 复用格子，按 uid 索引。**不每次重建**：重建会让媒体层挂上去的渲染视图跟着重来，
     /// 画面会闪。
     private var tiles: [String: IMVideoTileView] = [:]
+    /// 已经报过的层上界，避免每次刷新都往服务端发一遍 update_layer。
+    private var reportedLayers: [String: String] = [:]
 
-    private let micButton = IMControlButton(icon: "🎤", caption: "静音",
-                                            onIcon: "🔇", onCaption: "已静音")
-    private let cameraButton = IMControlButton(icon: "📷", caption: "开摄像头",
-                                               onIcon: "📹", onCaption: "关摄像头")
-    private let minimizeControl = IMControlButton(icon: "⌄", caption: "小窗")
-    private let endButton = IMControlButton(role: .danger, icon: "📵", caption: "挂断")
-    private let acceptButton = IMControlButton(role: .accept, icon: "📹", caption: "接听")
-    private let rejectButton = IMControlButton(role: .danger, icon: "✕", caption: "拒绝")
+    private let micButton = IMControlButton(symbol: "mic.fill", caption: "静音",
+                                            onSymbol: "mic.slash.fill", onCaption: "已静音")
+    private let cameraButton = IMControlButton(symbol: "video.slash.fill", caption: "开摄像头",
+                                               onSymbol: "video.fill", onCaption: "关摄像头")
+    private let minimizeControl = IMControlButton(
+        symbol: "arrow.down.right.and.arrow.up.left", caption: "小窗")
+    private let endButton = IMControlButton(role: .danger, symbol: "phone.down.fill",
+                                            caption: "挂断")
+    private let acceptButton = IMControlButton(role: .accept, symbol: "phone.fill",
+                                               caption: "接听")
+    private let rejectButton = IMControlButton(role: .danger, symbol: "xmark", caption: "拒绝")
     /// 视频来电才有：接了但本端不开摄像头（草图 §03-F）。
-    private let audioAcceptButton = IMControlButton(icon: "🎤", caption: "以语音接听")
-    private let speakerButton = IMControlButton(icon: "🔈", caption: "扬声器",
-                                                onIcon: "🔊", onCaption: "扬声器")
+    private let audioAcceptButton = IMControlButton(symbol: "phone.fill", caption: "以语音接听")
+    private let speakerButton = IMControlButton(symbol: "speaker.fill", caption: "扬声器",
+                                                onSymbol: "speaker.wave.2.fill",
+                                                onCaption: "扬声器")
     private let networkBars = IMNetworkBars()
 
+    /// 1v1 时把本端固定在右上角的那组约束；群通话时关掉，让它回到网格里。
+    private var selfPreviewConstraints: [NSLayoutConstraint] = []
     /// 计时器。**持有方释放时必须 cancel**（CONVENTIONS §5）。
     private var tickTimer: DispatchSourceTimer?
 
@@ -78,7 +89,7 @@ public final class IMCallOverlayViewController: UIViewController {
         minimizeButton.addTarget(self, action: #selector(onMinimize), for: .touchUpInside)
 
         controlsStack.axis = .horizontal
-        controlsStack.distribution = .equalSpacing
+        controlsStack.distribution = .fillEqually
         controlsStack.alignment = .top
         controlsStack.spacing = 12
 
@@ -87,9 +98,21 @@ public final class IMCallOverlayViewController: UIViewController {
         header.alignment = .center
         header.spacing = 2
 
-        for view in [minimizeButton, header, gridView, controlsStack] {
-            view.translatesAutoresizingMaskIntoConstraints = false
-            self.view.addSubview(view)
+        /*
+         **三段显式约束**：标题贴顶、控制条贴底、网格吃掉中间全部空间。
+
+         中间试过用一根竖直 UIStackView + hugging 优先级来分配空间，**那是错的**：
+         `UIStackView` 没有固有尺寸，`setContentHuggingPriority` 对它根本不起作用，
+         于是三个子视图各自按自己的贴合尺寸排在顶上，剩余空间没人认领——
+         实测就是「内容缩在顶部一条细带、下面空一大片」。
+
+         显式约束把网格的高度**完全确定**下来（上顶标题、下顶控制条），
+         不依赖任何优先级博弈。前提是网格内部那两条竖直边不能是 required
+         （见 IMCallGridView），否则它的固有高度会反过来把这条链顶开。
+        */
+        for child in [minimizeButton, header, gridView, controlsStack] as [UIView] {
+            child.translatesAutoresizingMaskIntoConstraints = false
+            view.addSubview(child)
         }
 
         let guide = view.safeAreaLayoutGuide
@@ -100,16 +123,47 @@ public final class IMCallOverlayViewController: UIViewController {
 
             header.topAnchor.constraint(equalTo: guide.topAnchor, constant: 12),
             header.centerXAnchor.constraint(equalTo: guide.centerXAnchor),
+            /*
+             标题区同样要钉高度，理由和控制条一模一样：它也是个 UIStackView，
+             也没有固有尺寸。只钉控制条的话，欠定就从控制条挪到了标题区——
+             实测就是标题跑到屏幕正中间去了。
+             64 = 标题 20 + 副标题 17 + 网络条 16 + 间距，够放且留一点余量。
+            */
+            header.heightAnchor.constraint(equalToConstant: 64),
 
             gridView.topAnchor.constraint(equalTo: header.bottomAnchor, constant: 16),
             gridView.leadingAnchor.constraint(equalTo: guide.leadingAnchor, constant: 12),
             gridView.trailingAnchor.constraint(equalTo: guide.trailingAnchor, constant: -12),
             gridView.bottomAnchor.constraint(equalTo: controlsStack.topAnchor, constant: -16),
 
-            controlsStack.leadingAnchor.constraint(equalTo: guide.leadingAnchor, constant: 24),
-            controlsStack.trailingAnchor.constraint(equalTo: guide.trailingAnchor, constant: -24),
+            /*
+             **控制条必须给一个显式高度。**
+
+             `header → grid → controls → 安全区底` 这条链里有**两个未知高度**
+             却只有一个等式——是欠定的。而 `UIStackView` 没有固有尺寸，
+             `setContentHuggingPriority` 对它不起作用，所以没有任何东西阻止它
+             把剩余空间全吃掉。实测（给三段上色看出来的）：控制条占满了下面三分之二，
+             网格被挤成一条细带。
+
+             把控制条钉死之后，网格的高度就被这条链完全确定了。
+             56（圆）+ 6（间距）+ 文案一行。
+            */
+            controlsStack.heightAnchor.constraint(equalToConstant: theme.controlSize + 26),
+
+            controlsStack.leadingAnchor.constraint(equalTo: guide.leadingAnchor, constant: 16),
+            controlsStack.trailingAnchor.constraint(equalTo: guide.trailingAnchor, constant: -16),
             controlsStack.bottomAnchor.constraint(equalTo: guide.bottomAnchor, constant: -24),
         ])
+
+        // 1v1 时本端浮在右上角；群通话里它进网格（约束在 renderTiles 里开关）。
+        selfTile.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(selfTile)
+        selfPreviewConstraints = [
+            selfTile.topAnchor.constraint(equalTo: gridView.topAnchor, constant: 12),
+            selfTile.trailingAnchor.constraint(equalTo: gridView.trailingAnchor, constant: -12),
+            selfTile.widthAnchor.constraint(equalToConstant: 96),
+            selfTile.heightAnchor.constraint(equalToConstant: 128),
+        ]
 
         micButton.addTarget(self, action: #selector(onMic), for: .touchUpInside)
         cameraButton.addTarget(self, action: #selector(onCamera), for: .touchUpInside)
@@ -180,15 +234,23 @@ public final class IMCallOverlayViewController: UIViewController {
         endButton.accessibilityLabel = state.isMeeting ? "离开会议" : "挂断"
     }
 
-    /// renderTiles 摆格子。**复用已有的格子**，只有名单变了才增删。
+    /// renderTiles 摆格子，**并把画面挂上去**。
+    ///
+    /// 挂画面这一步一开始整条漏了：格子画好了、媒体也协商通了，但没人调
+    /// `attachView`，于是画面永远不出现，而且不报任何错。
     private func renderTiles(_ state: IMCallViewState) {
         let visible = imVisibleTiles(state.participants)
         let wantedUIDs = Set(visible.map(\.uid))
 
         for (uid, tile) in tiles where !wantedUIDs.contains(uid) {
+            // 卸载要成对：不摘的话解码器还占着（CONVENTIONS §7）。
+            controller.attachView(uid, to: nil)
             tile.removeFromSuperview()
             tiles[uid] = nil
+            reportedLayers[uid] = nil
         }
+
+        var ordered: [IMVideoTileView] = []
         for participant in visible {
             let tile = tiles[participant.uid] ?? makeTile(for: participant.uid)
             tile.apply(uid: participant.uid,
@@ -197,43 +259,38 @@ public final class IMCallOverlayViewController: UIViewController {
                        hasVideo: participant.hasVideo,
                        hasAudio: participant.hasAudio,
                        isSpeaking: participant.isSpeaking)
+            ordered.append(tile)
         }
-        layoutTiles(visible.map(\.uid))
+
+        // 群通话/会议里本端占一格；1v1 里本端是右上角的小画面（草图 §03-H）。
+        let selfInGrid = state.isGroup || state.isMeeting
+        selfTile.apply(uid: "", label: "我",
+                       hasVideo: state.selfState.cameraOn && controller.hasLocalCamera,
+                       hasAudio: state.selfState.micOn, isSpeaking: false)
+        controller.attachLocalPreview(to: selfTile.renderView)
+        // 拨出/来电阶段还没有本端画面可看，**这时不给它占格子**——
+        // 占着但 isHidden 的话网格会为它空出一整行（3 人时下半屏全空）。
+        let showSelf = state.phase != .incoming && state.phase != .outgoing
+        selfTile.isHidden = !showSelf
+        if selfInGrid && showSelf { ordered.append(selfTile) }
+        selfPreviewConstraints.forEach { $0.isActive = !selfInGrid && showSelf }
+
+        gridView.layout(ordered)
+
+        // 格子大小变了就重报层上界。**这是省带宽的关键一步**：
+        // 九宫格里每个人都按 h 层收，一屏就是 8 路 720p。
+        let layer = imTileLayer(ordered.count)
+        for participant in visible where reportedLayers[participant.uid] != layer {
+            reportedLayers[participant.uid] = layer
+            controller.reportLayer(participant.uid, layer)
+        }
     }
 
     private func makeTile(for uid: String) -> IMVideoTileView {
         let tile = IMVideoTileView()
-        tile.translatesAutoresizingMaskIntoConstraints = false
-        gridView.addSubview(tile)
         tiles[uid] = tile
+        controller.attachView(uid, to: tile.renderView)
         return tile
-    }
-
-    /// layoutTiles 按行列摆格子，并**把每个格子该报的层上界告诉 Engine**。
-    ///
-    /// 这是省带宽的关键一步：九宫格里每个人都按 h 层收，一屏就是 8 路 720p。
-    private func layoutTiles(_ uids: [String]) {
-        gridView.constraints.forEach { gridView.removeConstraint($0) }
-        let dims = imGridDimensions(uids.count)
-        let gap = IMKitTheme.current.tileGap
-
-        for (index, uid) in uids.enumerated() {
-            guard let tile = tiles[uid] else { continue }
-            let row = index / dims.columns, column = index % dims.columns
-            let width = 1.0 / CGFloat(dims.columns), height = 1.0 / CGFloat(dims.rows)
-            NSLayoutConstraint.activate([
-                tile.widthAnchor.constraint(equalTo: gridView.widthAnchor,
-                                            multiplier: width, constant: -gap),
-                tile.heightAnchor.constraint(equalTo: gridView.heightAnchor,
-                                             multiplier: height, constant: -gap),
-                tile.leadingAnchor.constraint(
-                    equalTo: gridView.leadingAnchor,
-                    constant: CGFloat(column) * gap + gridView.bounds.width * width * CGFloat(column)),
-                tile.topAnchor.constraint(
-                    equalTo: gridView.topAnchor,
-                    constant: CGFloat(row) * gap + gridView.bounds.height * height * CGFloat(row)),
-            ])
-        }
     }
 
     private func title(_ state: IMCallViewState) -> String {
@@ -249,7 +306,12 @@ public final class IMCallOverlayViewController: UIViewController {
             return state.mediaType == "video" ? "邀请你视频通话" : "邀请你语音通话"
         case .outgoing:   return "正在呼叫…"
         case .connecting: return state.isMeeting ? "正在进入会议…" : "接通中…"
-        case .ended:      return state.isMeeting ? "已离开会议" : "通话结束"
+        case .ended:
+            // **必须说清为什么**：只写「通话结束」然后消失，用户不知道是拒接、
+            // 忙线还是对方压根不在线。
+            return state.isMeeting ? "已离开会议"
+                : imEndReasonText(state.endReason, role: state.role,
+                                  durationSec: Int(Date().timeIntervalSince1970 - state.beganAt))
         case .active:
             let elapsed = Int(Date().timeIntervalSince1970 - state.beganAt)
             return imFormatDuration(elapsed)

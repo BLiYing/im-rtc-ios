@@ -261,3 +261,49 @@ final class SpeakerDefaultTests: XCTestCase {
         XCTAssertTrue(state.selfState.speakerOn)
     }
 }
+
+/**
+ 结束原因的文案。**这是「界面消失得很快、还不说为什么」那条反馈的正面回答。**
+
+ 服务端对不在线的被叫是**立刻结束、不振铃**（协议 §4.3：被叫压根不知道有这通电话），
+ 那个行为是对的——对着不在的人响 30 秒没有意义。要修的是界面：得说清楚。
+ */
+final class EndReasonTextTests: XCTestCase {
+
+    func testOfflineSaysSo() {
+        XCTAssertEqual(imEndReasonText("offline", role: "caller", durationSec: 0), "对方当前不在线")
+    }
+
+    /// 同一个 reason 在主叫与被叫眼里是**两句话**。
+    func testReasonReadsDifferentlyPerRole() {
+        XCTAssertEqual(imEndReasonText("reject", role: "caller", durationSec: 0), "对方已拒接")
+        XCTAssertEqual(imEndReasonText("reject", role: "callee", durationSec: 0), "已拒接")
+        XCTAssertEqual(imEndReasonText("no_answer", role: "caller", durationSec: 0), "对方无人接听")
+        XCTAssertEqual(imEndReasonText("no_answer", role: "callee", durationSec: 0), "未接来电")
+        XCTAssertEqual(imEndReasonText("cancel", role: "callee", durationSec: 0), "对方已取消")
+    }
+
+    func testBusyAndNetwork() {
+        XCTAssertEqual(imEndReasonText("busy", role: "caller", durationSec: 0), "对方忙线中")
+        XCTAssertEqual(imEndReasonText("network", role: "caller", durationSec: 30), "网络中断")
+    }
+
+    /// 接通过才显示时长；没接通的不该显示 00:00。
+    func testHangupShowsDurationOnlyWhenConnected() {
+        XCTAssertEqual(imEndReasonText("hangup", role: "caller", durationSec: 65), "通话结束 · 01:05")
+        XCTAssertEqual(imEndReasonText("hangup", role: "caller", durationSec: 0), "通话结束")
+    }
+
+    /// 未知 reason **不能把原始英文抛给用户**——那是给日志看的。
+    func testUnknownReasonFallsBackToPlainChinese() {
+        XCTAssertEqual(imEndReasonText("something_new", role: "caller", durationSec: 0), "已结束")
+    }
+
+    /// 说不清的那几种要停久一点，让人看清；正常挂断谁都知道发生了什么。
+    func testHoldSeconds() {
+        XCTAssertEqual(imEndedHoldSeconds("hangup"), 1.5)
+        XCTAssertEqual(imEndedHoldSeconds("cancel"), 1.5)
+        XCTAssertEqual(imEndedHoldSeconds("offline"), 3.0)
+        XCTAssertEqual(imEndedHoldSeconds("busy"), 3.0)
+    }
+}

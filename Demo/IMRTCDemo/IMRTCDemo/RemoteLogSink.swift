@@ -77,6 +77,10 @@ final class RemoteLogSink: IMRTCLogSink, @unchecked Sendable {
 
         var request = URLRequest(url: endpoint)
         request.httpMethod = "POST"
+        // **必须设超时**：默认 60 秒，而 flushing 这个闩要等回调才放开——
+        // 一个卡住的请求就能让**后面所有日志静默丢掉**，而且完全看不出来
+        // （实测踩过：日志文件停在某个时间点不动，应用其实还活着）。
+        request.timeoutInterval = 5
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.httpBody = try? JSONEncoder().encode(Payload(client: client, entries: batch))
 
