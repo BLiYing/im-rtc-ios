@@ -79,6 +79,9 @@ RTC_LIVE_SERVER=http://127.0.0.1:8787 swift test --filter LiveServerTests
 3. 静音/关摄像头对端能收到 `userAudioAvailable` / `userVideoAvailable`；
 4. **九宫格里层上界真的降档**——服务端日志有「带宽估计调整下发层上界」。
 
+**模拟器上已经跑通到「已连接」**（2026-09-05）：登录 → 握手 → 日志回传落到
+`dev-logs/client-ios-alice.log` 并出现在 timeline 里。媒体仍未验（模拟器无摄像头）。
+
 跑法：
 - **模拟器**：直接跑，服务器默认 `http://127.0.0.1:8787` 就是对的（模拟器与 Mac 共用网络栈）。
 - **真机**：服务器框留空，填 Mac 的局域网 IP——`./scripts/dev.sh` 启动时会打印那一行。
@@ -165,6 +168,15 @@ Web 端的 uikit 可以直接对照抄结构（`packages/call-uikit-react/src/la
 - **Demo 的记录靠 `pendingPeer` 记主叫的对方**：`callBegin` 的载荷里没有 callee，
   主叫这边只有拨号那一刻知道对方是谁。这是宿主侧的记账，不是回调表缺字段——
   宿主拨号时本来就知道自己拨给了谁。
+
+- **「编得过」离「跑得起来」很远**：模拟器上第一次跑连着崩了两次，两个都是
+  编译期完全看不出来的——
+  ① Xcode 把 storyboard 引用同时放在 **build setting** `INFOPLIST_KEY_UIMainStoryboardFile`
+     里，删了 `Main.storyboard` 和 Info.plist 里的键还不够，那个 build setting 也要删，
+     否则启动即崩 `Could not find a storyboard named 'Main'`；
+  ② `RTCPeerConnection.delegate` 是 **weak**，`connection.delegate = IMPCDelegate(...)`
+     之后对象当场被释放。**必须先留强引用再赋值**。
+  以后动 Demo 的启动路径或媒体层，光看 `test.sh` 绿是不够的，要真的跑一次。
 
 ## 关联工程 / 常用命令
 

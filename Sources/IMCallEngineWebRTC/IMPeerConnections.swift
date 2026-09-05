@@ -67,13 +67,24 @@ final class IMPeerConnections: NSObject {
                                                       delegate: nil) else {
             fatalError("创建 RTCPeerConnection 失败——这在正常设备上不会发生")
         }
-        connection.delegate = IMPCDelegate(role: role, owner: self)
-        delegates.append(connection.delegate as! IMPCDelegate)
+        /*
+         **先留强引用再赋值，顺序不能反。**
+
+         `RTCPeerConnection.delegate` 是 weak：`connection.delegate = IMPCDelegate(...)`
+         之后那个新建的对象没有任何强引用，当场就被释放，`connection.delegate`
+         立刻读回 nil。真机/模拟器上第一次登录就崩在这里
+         （`as! IMPCDelegate` 对 nil 强解包）。
+
+         就算不崩——比如写成 `as?` ——症状会更糟：**所有 PC 回调静默消失**，
+         候选发不出去、连接状态没人报，界面上是「转圈但永远连不上」。
+         */
+        let delegate = IMPCDelegate(role: role, owner: self)
+        delegates.append(delegate)
+        connection.delegate = delegate
         return connection
     }
 
-    /// 强引用 delegate。`RTCPeerConnection.delegate` 是 weak 的，
-    /// 不自己留一份的话它会立刻被释放，然后**所有回调静默消失**。
+    /// 强引用 delegate。见上：`RTCPeerConnection.delegate` 是 weak 的。
     private var delegates: [IMPCDelegate] = []
 
     // MARK: - 描述与候选

@@ -27,6 +27,46 @@ import Foundation
     case roomJoined, roomLeft, roomClosed
 }
 
+extension IMCallEventName {
+    /**
+     事件的**公开名字**，与 Web/桌面同名（设计文档 §7.5）。
+
+     必须显式写这张表：`IMCallEventName` 是 `@objc enum ... : Int`，
+     字符串插值出来是 `IMCallEventName(rawValue: 0)` 这种东西——
+     日志里全是它的话，「四端合一条时间轴」那条链路就等于白做了。
+     （实测踩过：第一版回传上来的日志就是这个样子。）
+     */
+    public var name: String {
+        switch self {
+        case .connected: return "connected"
+        case .disconnected: return "disconnected"
+        case .kickedOut: return "kickedOut"
+        case .error: return "error"
+        case .callReceived: return "callReceived"
+        case .callBegin: return "callBegin"
+        case .callEnd: return "callEnd"
+        case .callCancelled: return "callCancelled"
+        case .callRejected: return "callRejected"
+        case .callBusy: return "callBusy"
+        case .callNoAnswer: return "callNoAnswer"
+        case .handledOnOtherDevice: return "handledOnOtherDevice"
+        case .userEnter: return "userEnter"
+        case .userLeave: return "userLeave"
+        case .userAccept: return "userAccept"
+        case .userReject: return "userReject"
+        case .userNoResponse: return "userNoResponse"
+        case .userAudioAvailable: return "userAudioAvailable"
+        case .userVideoAvailable: return "userVideoAvailable"
+        case .activeSpeakers: return "activeSpeakers"
+        case .networkQuality: return "networkQuality"
+        case .firstVideoFrame: return "firstVideoFrame"
+        case .roomJoined: return "roomJoined"
+        case .roomLeft: return "roomLeft"
+        case .roomClosed: return "roomClosed"
+        }
+    }
+}
+
 /// 一个公开事件。**block 接法拿到的就是它**。
 ///
 /// 常用字段给了具名属性；其余的从 `payload` 里按协议的 snake_case 键取
@@ -102,9 +142,9 @@ final class IMEventDispatcher {
          */
         let fields = event.payload.mapValues { Self.fieldText($0) }
         if Self.periodic.contains(event.name) {
-            IMRTCLog.debug("event \(event.name)", fields)
+            IMRTCLog.debug("event " + event.name.name, fields)
         } else {
-            IMRTCLog.info("event \(event.name)", fields)
+            IMRTCLog.info("event " + event.name.name, fields)
         }
 
         mu.lock()
