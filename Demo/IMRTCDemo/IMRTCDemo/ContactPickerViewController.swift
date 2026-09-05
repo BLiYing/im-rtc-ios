@@ -5,12 +5,16 @@ import UIKit
  不内置好友/联系人系统，Demo 的联系人来自本地文件，宿主用自己的。
 
  上限 8 个：自己 + 8 = 9 人，正好 3×3（拍板 §11-1）。
+
+ **名单要 9 个人。** 自己会被过滤掉，8 个名字只剩 7 个可选，
+ 于是最多凑出 8 格，**永远看不到真正的九宫格**。
  */
 final class ContactPickerViewController: UITableViewController {
 
     /// **把自己排除掉**：呼叫名单里含主叫的话，服务端会以 1004 拒掉整通电话。
-    private let contacts = ["alice", "bob", "carol", "dave", "erin", "frank", "grace", "heidi"]
-        .filter { $0 != DemoSession.shared.username }
+    private let contacts =
+        ["alice", "bob", "carol", "dave", "erin", "frank", "grace", "heidi", "ivan"]
+            .filter { $0 != DemoSession.shared.username }
     private var selected: Set<String>
     private let onDone: ([String]) -> Void
     private let limit = 8
