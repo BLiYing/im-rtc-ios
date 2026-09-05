@@ -14,7 +14,7 @@ final class DialerViewController: UIViewController {
     private let serverField = DemoUI.field(placeholder: DemoSession.serverPlaceholder,
                                            text: DemoSession.defaultServer)
     private let userField = DemoUI.field(placeholder: "用户 ID", text: DemoSession.defaultUsername)
-    private let calleeField = DemoUI.field(placeholder: "对方 ID", text: "bob")
+    private let calleeField = DemoUI.field(placeholder: "对方 ID", text: DemoSession.defaultCallee)
     private let roomField = DemoUI.field(placeholder: "房间号（留空则新建）", text: "")
     private let groupLabel = UILabel()
     private let statusLabel = UILabel()
@@ -22,7 +22,9 @@ final class DialerViewController: UIViewController {
     private let loginButton = UIButton(type: .system)
     private let logoutButton = UIButton(type: .system)
     private var callButtons: [UIButton] = []
-    private var groupPick: [String] = ["bob", "carol"]
+    /// 群呼默认名单。**不能含登录的那个人**——服务端会以 1004 拒掉整通电话
+    /// （"callee_ids 不能含主叫自己"）。登录后 refresh() 会把自己剔掉。
+    private var groupPick: [String] = ["alice", "carol"]
 
     override func viewDidLoad() {
         super.viewDidLoad()
@@ -31,6 +33,8 @@ final class DialerViewController: UIViewController {
         build()
         session.onChange = { [weak self] in self?.refresh() }
         refresh()
+        // 上次登录过就自动重登——**杀掉 app 再打开不该回到登录页**。
+        Task { await session.autoLogin() }
     }
 
     private func refresh() {
@@ -41,7 +45,12 @@ final class DialerViewController: UIViewController {
         serverField.isEnabled = !loggedIn
         userField.isEnabled = !loggedIn
         callButtons.forEach { $0.isEnabled = loggedIn }
-        groupLabel.text = "👥 " + groupPick.joined(separator: "、")
+        // 把自己从群呼名单里剔掉：带着自己发出去，服务端会拒掉**整通**电话。
+        let me = session.username
+        if !me.isEmpty, groupPick.contains(me) {
+            groupPick.removeAll { $0 == me }
+        }
+        groupLabel.text = groupPick.isEmpty ? "👥 （请选人）" : "👥 " + groupPick.joined(separator: "、")
     }
 
     // MARK: - 动作

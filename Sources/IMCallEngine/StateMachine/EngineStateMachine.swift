@@ -90,6 +90,16 @@ public enum IMEngineMachine {
                 IMEmittedEvent("onDisconnected"),
             ])
         }
+        if name == "join_failed" {
+            let room = IMRoomMachine.reduce(ctx.room, .internalEvent(name: name))
+            var next = ctx
+            next.room = room.state
+            return IMMachineOutput(next, send: room.send, emit: room.emit)
+        }
+        if name == "call_failed" {
+            // 交给通话机回 idle；它抛的 onCallEnd 会顺带把房间也清掉（见 liftCall）。
+            return liftCall(ctx, IMCallMachine.reduce(ctx.call, .internalEvent(name: name)))
+        }
         if name == "disconnected" {
             let room = IMRoomMachine.reduce(ctx.room, .internalEvent(name: name))
             var next = ctx

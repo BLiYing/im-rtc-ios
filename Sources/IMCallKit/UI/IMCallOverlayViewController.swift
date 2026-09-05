@@ -217,7 +217,17 @@ public final class IMCallOverlayViewController: UIViewController {
     /// renderControls 按阶段换按钮组。来电时是「拒绝 / 接听」，其余是常规四件套。
     private func renderControls(_ state: IMCallViewState) {
         let wanted: [UIView]
-        if state.phase == .incoming {
+        /*
+         **结束态不显示任何控制按钮。**
+
+         实测反馈：对端挂断之后，本端反而弹出了「扬声器 / 关摄像头」这些
+         接通后才该有的按钮——因为原先只把 `.incoming` 分了出去，
+         剩下的（含 `.ended`）一律走通话中那一组。
+         结束画面只需要说清为什么，停一两秒就收走。
+        */
+        if state.phase == .ended {
+            wanted = []
+        } else if state.phase == .incoming {
             wanted = state.mediaType == "video"
                 ? [audioAcceptButton, rejectButton, acceptButton]
                 : [rejectButton, acceptButton]
@@ -268,9 +278,16 @@ public final class IMCallOverlayViewController: UIViewController {
                        hasVideo: state.selfState.cameraOn && controller.hasLocalCamera,
                        hasAudio: state.selfState.micOn, isSpeaking: false)
         controller.attachLocalPreview(to: selfTile.renderView)
-        // 拨出/来电阶段还没有本端画面可看，**这时不给它占格子**——
-        // 占着但 isHidden 的话网格会为它空出一整行（3 人时下半屏全空）。
-        let showSelf = state.phase != .incoming && state.phase != .outgoing
+        /*
+         **拨出时就要能看见自己**（草图 §03-E：视频通话拨出中带本端画面）。
+
+         为此 Kit 在 `callPlaced` 之后就起本端采集（见 IMCallController.placeCall），
+         而不是等 `callBegin` 才推流——推流要先进房，而拨出中还没有房间。
+         采集与发布是两件事，这一条正是它们要分开的原因。
+
+         结束态不显示：那一屏只说结果。
+        */
+        let showSelf = state.phase != .ended && state.mediaType == "video"
         selfTile.isHidden = !showSelf
         if selfInGrid && showSelf { ordered.append(selfTile) }
         selfPreviewConstraints.forEach { $0.isActive = !selfInGrid && showSelf }

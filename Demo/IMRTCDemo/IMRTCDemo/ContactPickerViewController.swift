@@ -8,7 +8,9 @@ import UIKit
  */
 final class ContactPickerViewController: UITableViewController {
 
-    private let contacts = ["bob", "carol", "dave", "erin", "frank", "grace", "heidi", "ivan", "judy"]
+    /// **把自己排除掉**：呼叫名单里含主叫的话，服务端会以 1004 拒掉整通电话。
+    private let contacts = ["alice", "bob", "carol", "dave", "erin", "frank", "grace", "heidi"]
+        .filter { $0 != DemoSession.shared.username }
     private var selected: Set<String>
     private let onDone: ([String]) -> Void
     private let limit = 8

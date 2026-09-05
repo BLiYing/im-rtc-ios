@@ -87,9 +87,41 @@ final class DemoSession {
         #endif
     }
 
+    /// 默认 **bob**：Web Demo 默认 alice，两端刚好错开，双端联调不用改用户名。
     static var defaultUsername: String {
-        UserDefaults.standard.string(forKey: userKey) ?? "alice"
+        UserDefaults.standard.string(forKey: userKey) ?? "bob"
     }
+
+    /// 默认呼叫对象 **alice**（= Web 那边的默认登录名）。
+    static var defaultCallee: String {
+        UserDefaults.standard.string(forKey: userKey) == "alice" ? "bob" : "alice"
+    }
+
+    /**
+     上次登录过就自动重登。**杀掉 app 再打开不该回到登录页。**
+
+     记的是「用什么去换 token」而不是 token 本身：token 会过期，
+     重启后本来就该走一次正常的换票流程（真实宿主也一样——用自己的会话换新票）。
+     */
+    static var canAutoLogin: Bool {
+        UserDefaults.standard.bool(forKey: autoKey)
+            && !defaultServer.isEmpty
+            && !(UserDefaults.standard.string(forKey: userKey) ?? "").isEmpty
+    }
+
+    func autoLogin() async {
+        guard Self.canAutoLogin, !isLoggedIn else { return }
+        let server = Self.defaultServer
+        let user = UserDefaults.standard.string(forKey: Self.userKey) ?? ""
+        do {
+            try await login(server: server, username: user)
+        } catch {
+            // 自动重登失败就安静地留在登录页——不弹错误，用户没主动做这件事。
+            IMRTCLog.info("自动重登失败", ["err": String(describing: error)])
+        }
+    }
+
+    private static let autoKey = "im-rtc-demo.autoLogin"
 
     /// 真机上要提示人去改地址；模拟器上默认值就是对的，不用啰嗦。
     static var serverHint: String {
@@ -116,6 +148,7 @@ final class DemoSession {
         // 每次启动都带着那个错地址，还以为是默认值有问题。
         UserDefaults.standard.set(server, forKey: Self.serverKey)
         UserDefaults.standard.set(username, forKey: Self.userKey)
+        UserDefaults.standard.set(true, forKey: Self.autoKey)
 
         // 日志回传（仅开发）：Engine 会把每一个公开事件也写进日志，服务端按时间轴合并。
         let sink = RemoteLogSink(server: server, client: "ios-\(username)")
@@ -138,6 +171,8 @@ final class DemoSession {
     }
 
     func logout() async {
+        // 主动退出就别再自动重登了——那是用户的明确意思。
+        UserDefaults.standard.set(false, forKey: Self.autoKey)
         if let token = observerToken { engine?.removeEventObserver(token) }
         await engine?.logout()
         engine = nil
@@ -159,6 +194,8 @@ final class DemoSession {
             connectionText = will ? "重连中…" : "已断开"
         case .kickedOut:
             connectionText = "登录态失效，请重新登录"
+            // 被踢之后别再自动重登，否则重启就撞回同一个死胡同。
+            UserDefaults.standard.set(false, forKey: Self.autoKey)
             Task { await self.logout() }
         case .callReceived:
             current = (peer: event.payload["caller"] as? String ?? "",

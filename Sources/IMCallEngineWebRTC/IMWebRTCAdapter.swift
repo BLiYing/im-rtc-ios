@@ -11,7 +11,14 @@ import IMCallEngine
  */
 public final class IMWebRTCAdapter: NSObject, IMMediaAdapter, @unchecked Sendable {
 
-    private let pcs = IMPeerConnections()
+    /**
+     两条 PeerConnection。**通话结束后会被整个换掉，不是复用。**
+
+     `RTCPeerConnection` 一旦 `close()` 就报废了：再往上 `addTransceiver`
+     会抛 ObjC 异常，而 Swift 接不住——**进程直接挂掉**。
+     原先这里是 `let`，于是第一通电话结束后第二通必崩。
+    */
+    private var peers: IMPeerConnections?
     private let registry = IMVideoRegistry()
     private var events = IMMediaAdapterEvents()
 
@@ -20,6 +27,8 @@ public final class IMWebRTCAdapter: NSObject, IMMediaAdapter, @unchecked Sendabl
     /// 摄像头采集器。**必须持有**：不留引用的话它会被释放，画面直接停掉。
     private var capturer: RTCCameraVideoCapturer?
     private var videoSource: RTCVideoSource?
+    /// 已经在预览的那条摄像头轨道。发布时复用它，不重开设备。
+    private var previewTrack: IMLocalTrackInfo?
     /// 远端轨道的 track_id → uid 由上层告知；这里只按 track_id 记账。
     private let lock = NSLock()
 
@@ -31,6 +40,21 @@ public final class IMWebRTCAdapter: NSObject, IMMediaAdapter, @unchecked Sendabl
 
     public func open(_ events: IMMediaAdapterEvents) {
         self.events = events
+        configureAudioSession()
+    }
+
+    /// ensurePeers 拿一对可用的 PC；上一对被 close 过就现造一对并接好回调。
+    private func ensurePeers() -> IMPeerConnections {
+        lock.lock()
+        defer { lock.unlock() }
+        if let peers { return peers }
+        let fresh = IMPeerConnections()
+        wire(fresh)
+        peers = fresh
+        return fresh
+    }
+
+    private func wire(_ pcs: IMPeerConnections) {
         pcs.onLocalCandidate = { [weak self] role, candidate in
             self?.events.onLocalCandidate?(role, IMICECandidate(
                 candidate: candidate.sdp,
@@ -43,7 +67,6 @@ public final class IMWebRTCAdapter: NSObject, IMMediaAdapter, @unchecked Sendabl
         pcs.onRemoteTrack = { [weak self] track in
             self?.handleRemoteTrack(track)
         }
-        configureAudioSession()
     }
 
     /**
@@ -56,13 +79,13 @@ public final class IMWebRTCAdapter: NSObject, IMMediaAdapter, @unchecked Sendabl
      */
     public func acquireMicrophone() async throws -> IMLocalTrackInfo {
         let cid = "mic-\(UUID().uuidString.prefix(8))"
-        let source = pcs.factory.audioSource(with: RTCMediaConstraints(
+        let source = ensurePeers().factory.audioSource(with: RTCMediaConstraints(
             mandatoryConstraints: nil, optionalConstraints: nil))
-        let track = pcs.factory.audioTrack(with: source, trackId: cid)
+        let track = ensurePeers().factory.audioTrack(with: source, trackId: cid)
         let transceiverInit = RTCRtpTransceiverInit()
         transceiverInit.direction = .sendOnly
         transceiverInit.streamIds = ["im-rtc"]
-        pcs.pub.addTransceiver(with: track, init: transceiverInit)
+        ensurePeers().pub.addTransceiver(with: track, init: transceiverInit)
         remember(cid: cid, track: track)
         return IMLocalTrackInfo(cid: cid, kind: "audio", source: "microphone")
     }
@@ -73,52 +96,67 @@ public final class IMWebRTCAdapter: NSObject, IMMediaAdapter, @unchecked Sendabl
      `simulcast` 为真时**推三层**（rid = h/m/l，协议 §3.5）。三层的
      `scaleResolutionDownBy` 是 1/2/4，服务端按订阅侧报的层上界与带宽估计选一层转发。
      */
-    public func acquireCamera(simulcast: Bool) async throws -> IMLocalTrackInfo {
+    /// startLocalPreview 只起采集，不挂 transceiver。
+    public func startLocalPreview() async throws -> IMLocalTrackInfo {
+        if let existing = previewTrack { return existing }
         let cid = "cam-\(UUID().uuidString.prefix(8))"
-        let source = pcs.factory.videoSource()
+        let source = ensurePeers().factory.videoSource()
         let capturer = RTCCameraVideoCapturer(delegate: source)
-        let track = pcs.factory.videoTrack(with: source, trackId: cid)
-
+        let track = ensurePeers().factory.videoTrack(with: source, trackId: cid)
         self.videoSource = source
         self.capturer = capturer
         try await startCapture(capturer)
+        remember(cid: cid, track: track)
+        let info = IMLocalTrackInfo(cid: cid, kind: "video", source: "camera")
+        previewTrack = info
+        return info
+    }
 
+    public func acquireCamera(simulcast: Bool) async throws -> IMLocalTrackInfo {
+        // **复用预览那条轨道**：拨出时已经开过摄像头了，再开一次会抢设备。
+        let info = try await startLocalPreview()
+        let cid = info.cid
+        lock.lock()
+        let track = localTracks[cid] as? RTCVideoTrack
+        lock.unlock()
+        guard let track else {
+            throw IMRTCError(.deviceNotFound, "摄像头轨道丢失")
+        }
         let transceiverInit = RTCRtpTransceiverInit()
         transceiverInit.direction = .sendOnly
         transceiverInit.streamIds = ["im-rtc"]
         if simulcast {
             transceiverInit.sendEncodings = Self.simulcastEncodings()
         }
-        pcs.pub.addTransceiver(with: track, init: transceiverInit)
-        remember(cid: cid, track: track)
-        return IMLocalTrackInfo(cid: cid, kind: "video", source: "camera")
+        ensurePeers().pub.addTransceiver(with: track, init: transceiverInit)
+        return info
     }
 
     /// createPubOffer 生成上行 offer。**pub 的 offerer 恒为本端**（协议 §3.3）。
     public func createPubOffer() async throws -> String {
         let constraints = RTCMediaConstraints(mandatoryConstraints: nil, optionalConstraints: nil)
-        let offer = try await pcs.pub.offer(for: constraints)
-        try await pcs.pub.setLocalDescription(offer)
+        let offer = try await ensurePeers().pub.offer(for: constraints)
+        try await ensurePeers().pub.setLocalDescription(offer)
         return offer.sdp
     }
 
     public func applyPubAnswer(_ sdp: String) async throws {
-        try await pcs.setRemoteDescription(
+        try await ensurePeers().setRemoteDescription(
             RTCSessionDescription(type: .answer, sdp: sdp), for: .pub)
     }
 
     /// answerSubOffer 应答服务端下发的下行 offer。**sub 的 offerer 恒为服务端**。
     public func answerSubOffer(_ sdp: String) async throws -> String {
-        try await pcs.setRemoteDescription(
+        try await ensurePeers().setRemoteDescription(
             RTCSessionDescription(type: .offer, sdp: sdp), for: .sub)
         let constraints = RTCMediaConstraints(mandatoryConstraints: nil, optionalConstraints: nil)
-        let answer = try await pcs.sub.answer(for: constraints)
-        try await pcs.sub.setLocalDescription(answer)
+        let answer = try await ensurePeers().sub.answer(for: constraints)
+        try await ensurePeers().sub.setLocalDescription(answer)
         return answer.sdp
     }
 
     public func addRemoteCandidate(_ pc: IMPCRole, _ candidate: IMICECandidate) async throws {
-        try await pcs.addRemoteCandidate(
+        try await ensurePeers().addRemoteCandidate(
             RTCIceCandidate(sdp: candidate.candidate,
                             sdpMLineIndex: Int32(candidate.sdpMLineIndex),
                             sdpMid: candidate.sdpMid.isEmpty ? nil : candidate.sdpMid),
@@ -172,11 +210,17 @@ public final class IMWebRTCAdapter: NSObject, IMMediaAdapter, @unchecked Sendabl
         capturer?.stopCapture()
         capturer = nil
         videoSource = nil
+        previewTrack = nil
         lock.lock()
         localTracks = [:]
         lock.unlock()
         registry.removeAll()
-        pcs.close()
+        // **关掉就丢掉**：RTCPeerConnection 不能复用，下一通电话由 ensurePeers 现造一对。
+        lock.lock()
+        let old = peers
+        peers = nil
+        lock.unlock()
+        old?.close()
     }
 
     // MARK: - 内部

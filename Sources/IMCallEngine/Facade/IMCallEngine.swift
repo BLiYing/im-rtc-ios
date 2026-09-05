@@ -36,6 +36,8 @@ import Foundation
     /// connection 归 `stateQueue`。重连不会换 `IMSignalConnection` 对象，
     /// 但 login/logout 会——所以它是可变的。
     private var connection: IMSignalConnection?
+    /// 握手拿到的自己的 uid。用来挡「呼叫自己」，也供宿主读。
+    private var myUID = ""
     private let stateQueue = DispatchQueue(label: "com.imrtc.engine.facade")
 
     private var currentConnection: IMSignalConnection? {
@@ -136,9 +138,29 @@ import Foundation
 
     // MARK: - 通话
 
-    /// call 发起通话。`calleeIDs` 上限 8 个（自己 + 8 = 9 人，拍板 §11-1）。
+    /// uid 是当前登录的用户。未登录时是空串。
+    @objc public var uid: String { stateQueue.sync { myUID } }
+
+    /**
+     call 发起通话。`calleeIDs` 上限 8 个（自己 + 8 = 9 人，拍板 §11-1）。
+
+     **呼叫名单里不能有自己**——服务端会以 `1004 bad_params` 拒掉
+     （"callee_ids 不能含主叫自己"）。这里在发出去之前就拦下来：那条链路上的
+     失败很难看懂，界面已经乐观地进了「正在呼叫…」，而错误只是一条没头没尾的 1004。
+     就地拒掉能直接说清是哪个 uid 的问题。
+     （实测撞过：Demo 的群呼默认名单里正好有登录的那个人。）
+     */
     @objc public func call(_ calleeIDs: [String], mediaType: String,
                            isGroup: Bool = false) async {
+        let me = uid
+        if !me.isEmpty, calleeIDs.contains(me) {
+            dispatcher.emit(IMEmittedEvent("onError", [
+                "code": .int(Int64(IMErrorCode.badParams.rawValue)),
+                "name": .string(IMErrorCode.badParams.name),
+            ]))
+            IMRTCLog.warn("呼叫名单里含自己，已就地拒掉", ["uid": me])
+            return
+        }
         await loop.dispatch(.act(op: "call", args: [
             "callee_ids": .array(calleeIDs.map { .string($0) }),
             "media_type": .string(mediaType),
@@ -198,6 +220,16 @@ import Foundation
         let info = try await requireMedia().acquireMicrophone()
         await publish(info, simulcast: false)
         return info.cid
+    }
+
+    /**
+     startLocalPreview 只起本端采集、**不发布**，返回轨道 cid。
+
+     用来在拨出/来电阶段就让人看见自己——那时还没有房间，推流无从谈起。
+     随后的 `publishCamera()` 会复用同一条轨道，不会把摄像头开两次。
+     */
+    @objc public func startLocalPreview() async throws -> String {
+        try await requireMedia().startLocalPreview().cid
     }
 
     /// publishCamera 发布摄像头，返回轨道的 cid。
@@ -293,6 +325,7 @@ import Foundation
          */
         events.onConnected = { [weak self] hello in
             guard let self else { return }
+            self.stateQueue.sync { self.myUID = hello.uid }
             Task {
                 await self.loop.dispatch(.recv(type: IMEnvelope.okType(IMFrameType.hello), data: [
                     "session_id": .string(hello.sessionID),

@@ -119,6 +119,14 @@ actor IMFrameLoop {
             if frame.type == IMFrameType.roomJoin {
                 await dispatch(.internalEvent(name: "join_failed"))
             }
+            /*
+             同理，**发起呼叫被拒也要退回 idle**。不退的话界面停在「正在呼叫…」，
+             而服务端根本没有这通电话，之后每次挂断都换回 1401 call_not_found，
+             用户永远退不出那一屏。
+            */
+            if frame.type == IMFrameType.callInvite {
+                await dispatch(.internalEvent(name: "call_failed"))
+            }
         }
     }
 

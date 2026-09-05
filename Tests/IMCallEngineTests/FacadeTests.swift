@@ -38,6 +38,10 @@ final class FacadeTests: XCTestCase {
             note("acquireMic")
             return IMLocalTrackInfo(cid: "mic-1", kind: "audio", source: "microphone")
         }
+        func startLocalPreview() async throws -> IMLocalTrackInfo {
+            note("startLocalPreview")
+            return IMLocalTrackInfo(cid: "cam-1", kind: "video", source: "camera")
+        }
         func acquireCamera(simulcast: Bool) async throws -> IMLocalTrackInfo {
             note("acquireCam(simulcast=\(simulcast))")
             return IMLocalTrackInfo(cid: "cam-1", kind: "video", source: "camera")
@@ -420,5 +424,68 @@ final class FacadeTests: XCTestCase {
             try await Task.sleep(nanoseconds: 5_000_000)
         }
         throw IMRTCError(.internalError, "没等到帧 \(type)")
+    }
+}
+
+/**
+ 「失败要有出口」这一组。
+
+ 两条路以前都是**卡死**：状态机停在中间态，界面永远停在「正在呼叫…」/
+ 「正在进入会议…」，而之后每一次操作都换回一个没头没尾的错误码。
+ */
+final class FailureRollbackTests: XCTestCase {
+
+    /// 发起呼叫被拒 → 通话机回 idle，并抛唯一的结束出口。
+    func testInviteRejectedRollsBack() {
+        var ctx = IMEngineContext()
+        let placed = IMEngineMachine.reduce(ctx, .act(op: "call", args: [
+            "callee_ids": .array([.string("bob")]),
+            "media_type": .string("audio"),
+            "is_group": .bool(false),
+        ]))
+        ctx = placed.state
+        XCTAssertEqual(ctx.call.state, .inviting)
+
+        let failed = IMEngineMachine.reduce(ctx, .internalEvent(name: "call_failed"))
+        XCTAssertEqual(failed.state.call.state, .idle, "不回 idle 的话之后挂断永远是 1401")
+        XCTAssertEqual(failed.emit.map(\.callback), ["onCallEnd"])
+        XCTAssertEqual(failed.emit.first?.args["reason"]?.stringValue, "error")
+    }
+
+    /// 进房被拒 → 房间机回 idle，**并且抛 onRoomLeft**。
+    ///
+    /// iOS 上这个分支原先整个没有：FrameLoop 发了 join_failed 但没人接，
+    /// 于是进房失败之后这台 Engine 再也进不了任何房间。
+    func testJoinRejectedRollsBackAndTellsTheHost() {
+        var ctx = IMEngineContext()
+        let joining = IMEngineMachine.reduce(ctx, .act(op: "join", args: [
+            "room_id": .string("r-1"),
+            "room_token": .string("rt"),
+            "auto_subscribe": .bool(true),
+        ]))
+        ctx = joining.state
+        XCTAssertEqual(ctx.room.state, .joining)
+
+        let failed = IMEngineMachine.reduce(ctx, .internalEvent(name: "join_failed"))
+        XCTAssertEqual(failed.state.room.state, .idle)
+        XCTAssertEqual(failed.emit.map(\.callback), ["onRoomLeft"],
+                       "只清状态不抛回调的话，会议界面会一直停在「正在进入会议…」")
+    }
+
+    /// 退回 idle 之后能重来——这才是「退得出去」的证据。
+    func testCanRetryAfterRollback() {
+        var ctx = IMEngineContext()
+        ctx = IMEngineMachine.reduce(ctx, .act(op: "join", args: [
+            "room_id": .string("r-1"), "room_token": .string("rt"),
+            "auto_subscribe": .bool(true),
+        ])).state
+        ctx = IMEngineMachine.reduce(ctx, .internalEvent(name: "join_failed")).state
+
+        let again = IMEngineMachine.reduce(ctx, .act(op: "join", args: [
+            "room_id": .string("r-2"), "room_token": .string("rt2"),
+            "auto_subscribe": .bool(true),
+        ]))
+        XCTAssertEqual(again.state.room.state, .joining)
+        XCTAssertEqual(again.send.map(\.type), [IMFrameType.roomJoin])
     }
 }

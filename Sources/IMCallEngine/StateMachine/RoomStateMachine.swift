@@ -112,6 +112,21 @@ public enum IMRoomMachine {
             return out(next)
         case "ws_closed_4403", "reset":
             return out(cleared(.idle))
+        case "join_failed":
+            /*
+             进房被拒（房间没了、票过期、已在房里…）。**退回 idle**，
+             否则状态机永远停在 joining，之后每次 publish 都被 R1 本地拒成 2005。
+
+             **还要抛 onRoomLeft**：只清状态的话宿主什么都不知道，会议界面会一直停在
+             「正在进入会议…」——和「呼叫被拒却不回 idle」是同一类毛病，
+             界面需要一个明确的收场信号，房间的收场信号就是这一条。
+
+             （这个分支 iOS 上原先整个没有：FrameLoop 发了 join_failed，
+             但没人接——所以进房失败之后这台 Engine 就再也进不了任何房间了。）
+            */
+            guard ctx.state == .joining else { return out(ctx) }
+            return out(cleared(.idle),
+                       emit: [IMEmittedEvent("onRoomLeft", ["room_id": .string(ctx.roomID)])])
         default:
             return out(ctx)
         }

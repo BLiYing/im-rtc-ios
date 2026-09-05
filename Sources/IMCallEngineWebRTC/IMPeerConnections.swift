@@ -40,7 +40,7 @@ final class IMPeerConnections: NSObject {
     var onStateChange: ((IMPCRole, RTCPeerConnectionState) -> Void)?
 
     override init() {
-        RTCInitializeSSL()
+        Self.initializeSSLOnce()
         // 软编解码工厂：**VP8 是 MVP 基线**，同时放行 H.264 让硬编生效（设计文档 §7）。
         factory = RTCPeerConnectionFactory(
             encoderFactory: RTCDefaultVideoEncoderFactory(),
@@ -121,6 +121,9 @@ final class IMPeerConnections: NSObject {
         try await connection(for: role).add(candidate)
     }
 
+    /// close 关掉两条 PC。**关掉之后这个对象就报废了**——
+    /// RTCPeerConnection 关闭后不能复用，再往上 `addTransceiver` 会抛 ObjC 异常
+    /// （Swift 接不住，直接进程挂掉）。调用方负责换一个新的（见 IMWebRTCAdapter.ensurePeers）。
     func close() {
         pub.close()
         sub.close()
@@ -130,8 +133,20 @@ final class IMPeerConnections: NSObject {
         candidateLock.unlock()
     }
 
-    deinit {
-        RTCCleanupSSL()
+    /**
+     SSL **全进程只初始化一次，且永不清理**。
+
+     `RTCInitializeSSL` / `RTCCleanupSSL` 是全局的、**没有引用计数**。
+     原先写在 init/deinit 里：重新登录会造第二个适配器，而第一个析构时
+     `RTCCleanupSSL()` 会把**正在用的**那套 SSL 拆掉。
+     一次性初始化、进程退出时由系统回收，是 libwebrtc 上的标准做法。
+    */
+    private static let sslOnce: Void = {
+        RTCInitializeSSL()
+    }()
+
+    private static func initializeSSLOnce() {
+        _ = sslOnce
     }
 }
 

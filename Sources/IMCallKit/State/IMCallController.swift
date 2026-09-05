@@ -71,7 +71,23 @@ public final class IMCallController: NSObject {
 
     public func placeCall(_ calleeIDs: [String], mediaType: String, isGroup: Bool = false) {
         apply(.callPlaced(calleeIDs: calleeIDs, mediaType: mediaType, isGroup: isGroup))
-        Task { await engine.call(calleeIDs, mediaType: mediaType, isGroup: isGroup) }
+        Task {
+            // 视频呼出时**先把本端预览起起来**：拨出中还没有房间，推不了流，
+            // 但界面这时就该让人看见自己（草图 §03-E）。采集与发布是两件事。
+            if mediaType == "video" { await startPreview() }
+            await engine.call(calleeIDs, mediaType: mediaType, isGroup: isGroup)
+        }
+    }
+
+    /// startPreview 起本端采集（不发布）。失败只记日志——预览不该挡住通话。
+    private func startPreview() async {
+        guard cameraCID.isEmpty else { return }
+        do {
+            cameraCID = try await engine.startLocalPreview()
+            await MainActor.run { self.apply(.setCamera(true)) }
+        } catch {
+            IMRTCLog.info("本端预览起不来", ["err": String(describing: error)])
+        }
     }
 
     public func joinMeeting(roomID: String, roomToken: String) {
@@ -83,7 +99,12 @@ public final class IMCallController: NSObject {
         }
     }
 
-    public func accept() { Task { await engine.accept() } }
+    public func accept() {
+        Task {
+            if state.mediaType == "video" { await startPreview() }
+            await engine.accept()
+        }
+    }
     public func reject() { Task { await engine.reject() } }
 
     /// 以语音接听视频来电（草图 §03-F）：接了，但**本端不开摄像头**。
@@ -221,8 +242,9 @@ public final class IMCallController: NSObject {
 
     private func publishFor(mediaType: String) async {
         micCID = (try? await engine.publishMicrophone()) ?? ""
+        // 摄像头可能已经在预览了；publishCamera 会复用同一条轨道，不重开设备。
         if mediaType == "video" {
-            cameraCID = (try? await engine.publishCamera()) ?? ""
+            cameraCID = (try? await engine.publishCamera()) ?? cameraCID
         }
     }
 }

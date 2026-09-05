@@ -88,7 +88,18 @@ public protocol IMMediaAdapter: AnyObject, Sendable {
     /// acquireMicrophone 拿麦克风轨道挂到 pub PC 上，返回它的 cid。
     func acquireMicrophone() async throws -> IMLocalTrackInfo
 
+    /**
+     startLocalPreview 只**起采集**，不发布（设计文档 §7.5 的 `startLocalPreview`）。
+
+     拨出中还没有房间，推流无从谈起，但界面这时就该让人看见自己
+     （草图 §03-E）。所以「采集」与「发布」必须是两件事：
+     这个方法起摄像头并返回 cid，随后的 `acquireCamera` **复用同一条轨道**
+     再挂到 pub 上——否则会把摄像头开两次。
+     */
+    func startLocalPreview() async throws -> IMLocalTrackInfo
+
     /// acquireCamera 拿摄像头轨道挂到 pub PC 上，返回它的 cid。
+    /// 已经在预览的话**复用那条轨道**，不重开摄像头。
     func acquireCamera(simulcast: Bool) async throws -> IMLocalTrackInfo
 
     /// createPubOffer 生成上行 offer。
