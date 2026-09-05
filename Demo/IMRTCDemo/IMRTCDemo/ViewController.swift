@@ -1,5 +1,6 @@
 import UIKit
 import IMCallEngine
+import IMCallEngineWebRTC
 import IMCallKit
 
 /*
@@ -43,9 +44,10 @@ final class ViewController: UIViewController {
                 let token = try await demoLogin(server: server, username: user)
                 let wsURL = URL(string: server.replacingOccurrences(of: "http", with: "ws")
                     + "/v1/ws")!
-                // **不传媒体适配器**：这一刀还没有媒体实现，但登录、振铃、成员进出、
-                // 静音通知一个都不少——这正是「纯信令形态」的用法。
-                let engine = IMCallEngine(url: wsURL, deviceID: "ios-demo-\(user)")
+                // 传上媒体适配器就能出声出画。**不传也能跑**——登录、振铃、成员进出、
+                // 静音通知一个都不少，那是「只要信令、UI 自己画」的用法。
+                let engine = IMCallEngine(url: wsURL, deviceID: "ios-demo-\(user)",
+                                          media: IMWebRTCAdapter())
                 let kit = IMCallKit(engine: engine)
                 kit.start()          // ← 用法 B 的全部内容就是这一行
                 self.engine = engine

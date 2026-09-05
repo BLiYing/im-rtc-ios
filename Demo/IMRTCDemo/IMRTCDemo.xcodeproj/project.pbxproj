@@ -9,6 +9,7 @@
 /* Begin PBXBuildFile section */
 		B22C4AB63049C8C0008A1C5F /* IMCallEngine in Frameworks */ = {isa = PBXBuildFile; productRef = B22C4AB53049C8C0008A1C5F /* IMCallEngine */; };
 		B22C4AB83049C8C0008A1C5F /* IMCallKit in Frameworks */ = {isa = PBXBuildFile; productRef = B22C4AB73049C8C0008A1C5F /* IMCallKit */; };
+		B22C4ABA3049C8C0008A1C5F /* IMCallEngineWebRTC in Frameworks */ = {isa = PBXBuildFile; productRef = B22C4AB93049C8C0008A1C5F /* IMCallEngineWebRTC */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -53,6 +54,7 @@
 			files = (
 				B22C4AB63049C8C0008A1C5F /* IMCallEngine in Frameworks */,
 				B22C4AB83049C8C0008A1C5F /* IMCallKit in Frameworks */,
+				B22C4ABA3049C8C0008A1C5F /* IMCallEngineWebRTC in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -107,6 +109,7 @@
 			packageProductDependencies = (
 				B22C4AB53049C8C0008A1C5F /* IMCallEngine */,
 				B22C4AB73049C8C0008A1C5F /* IMCallKit */,
+				B22C4AB93049C8C0008A1C5F /* IMCallEngineWebRTC */,
 			);
 			productName = IMRTCDemo;
 			productReference = B22C4A7F3049C569008A1C5F /* IMRTCDemo.app */;
@@ -397,6 +400,11 @@
 			isa = XCSwiftPackageProductDependency;
 			package = B22C4AB33049C665008A1C5F /* XCLocalSwiftPackageReference "../.." */;
 			productName = IMCallKit;
+		};
+		B22C4AB93049C8C0008A1C5F /* IMCallEngineWebRTC */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = B22C4AB33049C665008A1C5F /* XCLocalSwiftPackageReference "../.." */;
+			productName = IMCallEngineWebRTC;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};

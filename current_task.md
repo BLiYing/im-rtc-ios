@@ -34,6 +34,10 @@
 
 Demo 已经接上 Kit——`kit.start()` **一行**就接管了通话界面（草图 §01 的用法 B）。
 
+`Sources/IMCallEngineWebRTC/` 是媒体实现（iOS-only，接 `stasel/WebRTC` 152.0.0）：
+两条 PeerConnection、候选缓冲、simulcast 三层、第一帧探针、画面挂载。
+**编译验过、真机没验过**——出声出画要你在真机上跑一次。
+
 **`./scripts/test.sh` 十步全绿**，47 个用例，**全程不需要模拟器**。
 第十步是新加的「Demo 为 iOS 编译」：`generic/platform=iOS Simulator` 只编译不跑，
 它验的是上面 `swift test`（跑在 macOS 上）验不到的两件事——Demo 还编不编得过、
@@ -58,27 +62,17 @@ RTC_LIVE_SERVER=http://127.0.0.1:8787 swift test --filter LiveServerTests
 
 ## 下一步
 
-**P3 第五刀 —— 媒体（要真机）**
-实现 `IMMediaAdapter`（接缝已经在了）+ 独立的 iOS-only target 引 libwebrtc。
-**两条 PeerConnection，各有固定 offerer**（pub=本端、sub=服务端），
-所以不需要 perfect negotiation / rollback。
+**P3 第五刀 —— 媒体：代码已落地，等真机验收**
 
-**libwebrtc 的分发已拍板（2026-09-05）：依赖 `stasel/WebRTC`，版本 `exact` 锁死。**
+`IMWebRTCAdapter` 实现了 `IMMediaAdapter` 的全部方法。**能证明的只有「编得过」**——
+音视频一律真机验收（模拟器无摄像头、麦克风受限）。第一次真机跑要看的四件事：
 
-```swift
-.package(url: "https://github.com/stasel/WebRTC.git", exact: "152.0.0")
-```
+1. 本端预览出画面（`attachLocalView`）；
+2. 与浏览器互打，两边都能听见、看见；
+3. 静音/关摄像头对端能收到 `userAudioAvailable` / `userVideoAvailable`；
+4. **九宫格里层上界真的降档**——服务端日志有「带宽估计调整下发层上界」。
 
-已核实（不是凭印象）：当前 152.0.0、在维护、支持 SPM、iOS 12+（我们要 15+，够）、
-BSD-3 + Google 的 WebRTC 许可（可商业再分发）。
-
-**关键事实：Google 从 M80 起就不再发布官方的移动端预编译产物了。**
-所以「自建 xcframework」不是「重新打包 Google 的产物」，而是**自己从源码编**
-（depot_tools + 几十 GB + 几小时），成本比原先估的高得多。
-
-选它的第三个理由是**这个决定可以随时反悔**：libwebrtc 被隔离在
-`IMCallEngineWebRTC` 一个 target 里，将来要换成自建产物只改 `Package.swift`
-一行依赖，**Engine / Kit / Demo 一行不动**。这正是当初把媒体挡在 Engine 之外的收益。
+真机跑法：Demo 选真机 target、填服务器地址（用局域网 IP，不是 127.0.0.1）、登录、拨号。
 
 **P3 第六刀 —— Kit 的剩余界面**：来电横幅（不是全屏页）、悬浮球/悬浮小画面、
 「以语音接听」、网络质量条、扬声器切换。通话页与九宫格已经有了。
@@ -136,6 +130,16 @@ Web 端的 uikit 可以直接对照抄结构（`packages/call-uikit-react/src/la
   `Task {}` 闭包捕获 self），macOS 的 `swift build` 看不到。它们**在 Swift 6
   语言模式下会变成错误**，属已知欠账，要单独一刀处理（大概是把
   `IMSignalConnection` 改成 actor 或补 `@unchecked Sendable` 并说明理由）。
+
+- **媒体那一层 macOS 上也编不到**：`IMCallEngineWebRTC` 整个包在
+  `#if canImport(WebRTC) && canImport(UIKit)` 里。验它的同样是 `test.sh` 第 10 步
+  （Demo 依赖它，为 iOS 编一遍）。已验证过这个闸门不是摆设：往里塞一行类型错误，
+  iOS 构建会真的失败。
+- **libwebrtc 的实际代价是 43 MB / 首次约 40 秒**（M152，量过的）。
+  之后缓存在 `~/Library/Caches/org.swift.swiftpm`，增量构建 0.9 秒、
+  `swift test` 12 秒不变。原先「几百 MB」的说法是高估。
+- **音频会话要配 `.voiceChat` 模式**：不配的话没有回声消除，自己会听到自己，
+  而那听起来像「对方设备有问题」，很容易查错方向。
 
 ## 关联工程 / 常用命令
 
