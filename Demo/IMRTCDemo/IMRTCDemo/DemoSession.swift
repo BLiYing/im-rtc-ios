@@ -158,7 +158,13 @@ final class DemoSession {
         logSink = sink
 
         let wsURL = URL(string: server.replacingOccurrences(of: "http", with: "ws") + "/v1/ws")!
-        let engine = IMCallEngine(url: wsURL, deviceID: deviceID, media: IMWebRTCAdapter())
+        /*
+         画质档位是**宿主策略**（见 IMVideoProfile 的说明）：真实宿主会从自己的
+         配置接口拿这个值——「后台可控」在产品上就是这个意思，不需要动 RTC 协议。
+         Demo 把它放在设置页里，换档位下一通电话生效。
+        */
+        let engine = IMCallEngine(url: wsURL, deviceID: deviceID,
+                                  media: IMWebRTCAdapter(videoProfile: videoProfile))
         let kit = IMCallKit(engine: engine, config: kitConfig)
         kit.start()
         self.engine = engine
@@ -168,6 +174,11 @@ final class DemoSession {
         connectionText = "连接中…"
         notify()
         try await engine.login(token)
+    }
+
+    /// 采集画质档位。**换了要重登才生效**——适配器是登录时造的。
+    var videoProfile: IMVideoProfile = .default {
+        didSet { notify() }
     }
 
     func logout() async {

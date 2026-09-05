@@ -79,12 +79,23 @@ public final class IMCallController: NSObject {
         }
     }
 
-    /// startPreview 起本端采集（不发布）。失败只记日志——预览不该挡住通话。
+    /**
+     startPreview 起本端采集（不发布）。失败只记日志——预览不该挡住通话。
+
+     采集起来之后**必须无条件通知一次界面**，不能只靠 `apply(.setCamera(true))`：
+     视频通话的 `cameraOn` 本来就是 true，那一次 apply 前后状态相等，
+     `state.didSet` 直接不发通知，于是**没人去调 `attachLocalPreview`**——
+     画面挂不上。真机上的表现是「拨出时看不见自己，随手点一下静音又出来了」，
+     因为静音真的改了状态，顺带触发了一次重挂。
+    */
     private func startPreview() async {
         guard cameraCID.isEmpty else { return }
         do {
             cameraCID = try await engine.startLocalPreview()
-            await MainActor.run { self.apply(.setCamera(true)) }
+            await MainActor.run {
+                self.apply(.setCamera(true))
+                self.broadcast()
+            }
         } catch {
             IMRTCLog.info("本端预览起不来", ["err": String(describing: error)])
         }
@@ -182,6 +193,9 @@ public final class IMCallController: NSObject {
         engine.attachLocalView(cameraCID, to: view)
     }
 
+    /// 本端摄像头轨道的 cid；结束时用来卸载预览。
+    var localCameraCID: String { cameraCID }
+
     /// 本端有没有摄像头轨道可预览。没有的话格子该显示头像。
     public var hasLocalCamera: Bool { !cameraCID.isEmpty }
     #endif
@@ -195,6 +209,17 @@ public final class IMCallController: NSObject {
     public func dismiss() { apply(.dismiss) }
 
     // MARK: - 内部
+
+    /// broadcast 无条件把当前状态推给观察者。
+    ///
+    /// `state.didSet` 只在**状态真的变了**时通知，这对渲染是对的，
+    /// 但「本端轨道好了」这类变化不在 state 里（cid 不参与渲染），
+    /// 靠 apply 一个恰好相等的状态是通知不出去的。
+    private func broadcast() {
+        observers.allObjects.forEach {
+            ($0 as? IMCallControllerObserver)?.callController(self, didChange: state)
+        }
+    }
 
     private func apply(_ action: IMCallViewAction) {
         let before = state
@@ -246,6 +271,16 @@ public final class IMCallController: NSObject {
         if mediaType == "video" {
             cameraCID = (try? await engine.publishCamera()) ?? cameraCID
         }
+        /*
+         发布是异步的，**这期间用户完全可能已经点过静音或关摄像头**——
+         那两个开关都以 `cid.isEmpty` 为由静默跳过了，只改了界面。
+         不在这里补一遍的话，界面显示「已静音」而对方照样听得见。
+        */
+        let wanted = await MainActor.run { self.state.selfState }
+        if !micCID.isEmpty, !wanted.micOn { await engine.setMuted(micCID, muted: true) }
+        if !cameraCID.isEmpty, !wanted.cameraOn { await engine.setMuted(cameraCID, muted: true) }
+        // cid 不在 state 里，状态相等时 didSet 不会通知——本端预览要靠这一下才挂得上。
+        await MainActor.run { self.broadcast() }
     }
 }
 

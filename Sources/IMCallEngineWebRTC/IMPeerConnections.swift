@@ -22,6 +22,7 @@ import IMCallEngine
  */
 final class IMPeerConnections: NSObject {
 
+    /// **全进程共用一个**，见 sharedFactory 的说明。
     let factory: RTCPeerConnectionFactory
     private(set) var pub: RTCPeerConnection!
     private(set) var sub: RTCPeerConnection!
@@ -40,11 +41,7 @@ final class IMPeerConnections: NSObject {
     var onStateChange: ((IMPCRole, RTCPeerConnectionState) -> Void)?
 
     override init() {
-        Self.initializeSSLOnce()
-        // 软编解码工厂：**VP8 是 MVP 基线**，同时放行 H.264 让硬编生效（设计文档 §7）。
-        factory = RTCPeerConnectionFactory(
-            encoderFactory: RTCDefaultVideoEncoderFactory(),
-            decoderFactory: RTCDefaultVideoDecoderFactory())
+        factory = Self.sharedFactory
         super.init()
         pub = makeConnection(role: .pub)
         sub = makeConnection(role: .sub)
@@ -134,20 +131,30 @@ final class IMPeerConnections: NSObject {
     }
 
     /**
-     SSL **全进程只初始化一次，且永不清理**。
+     SSL 与工厂**全进程只有一份，且永不销毁**。
 
-     `RTCInitializeSSL` / `RTCCleanupSSL` 是全局的、**没有引用计数**。
-     原先写在 init/deinit 里：重新登录会造第二个适配器，而第一个析构时
-     `RTCCleanupSSL()` 会把**正在用的**那套 SSL 拆掉。
-     一次性初始化、进程退出时由系统回收，是 libwebrtc 上的标准做法。
+     两条理由，都踩过：
+
+     1. `RTCInitializeSSL` / `RTCCleanupSSL` 是全局的、**没有引用计数**。
+        原先写在 init/deinit 里，重新登录会造第二个适配器，而第一个析构时
+        `RTCCleanupSSL()` 会把**正在用的**那套 SSL 拆掉。
+
+     2. **工厂必须活得比它造出来的 PeerConnection 久。**
+        工厂原先是本对象的存储属性，而本对象「一通电话一个」——通话结束时
+        整个丢掉，Swift 释放存储属性的顺序是**未定义的**：工厂先于 `pub`/`sub`
+        被释放时，libwebrtc 的 signaling/worker 线程已经没了，
+        PC 析构就落在一个不存在的线程上。表现是**挂断即闪退**，
+        而且崩在 libwebrtc 内部，看不出跟我们哪一行有关。
+
+     造工厂本身也不便宜（要起三条线程 + 编解码器枚举），一通电话造一次纯属浪费。
     */
-    private static let sslOnce: Void = {
+    private static let sharedFactory: RTCPeerConnectionFactory = {
         RTCInitializeSSL()
+        // 软编解码工厂：**VP8 是 MVP 基线**，同时放行 H.264 让硬编生效（设计文档 §7）。
+        return RTCPeerConnectionFactory(
+            encoderFactory: RTCDefaultVideoEncoderFactory(),
+            decoderFactory: RTCDefaultVideoDecoderFactory())
     }()
-
-    private static func initializeSSLOnce() {
-        _ = sslOnce
-    }
 }
 
 /// PC 的回调。**每条 PC 一个实例**，这样回调里天然知道自己是 pub 还是 sub——

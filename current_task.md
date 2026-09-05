@@ -67,6 +67,22 @@ RTC_LIVE_SERVER=http://127.0.0.1:8787 swift test --filter LiveServerTests
 - **「协议里没有 null、没有浮点」编进了类型系统**：`IMJSON` 这个枚举里压根没有
   `.null` 与 `.double` 两个 case，解析阶段就挡掉。
 
+**2026-09-05 真机联调修掉的（本仓这一侧）**：
+
+| 症状 | 根因 |
+|---|---|
+| **九宫格里一格远端画面都没有**（协商全通、`firstVideoFrame` 照抛、日志全绿） | 挂载登记表**按 track_id 当 uid 用**，而 `attachView` 传的是真 uid，两把钥匙永远对不上。Web 端一直是对的（`viewRegistry.ts` 有 orphans + claim 两张表），iOS 这边缺了整个「认领」环节。现补 `IMMediaAdapter.claimRemoteTracks`，由核心循环每推进一步同步一次 |
+| **挂断即闪退** | `RTCPeerConnectionFactory` 原先是「一通电话一个」的存储属性，通话结束时整个丢掉。Swift 释放存储属性的顺序**未定义**：工厂先于 `pub`/`sub` 被释放时，PC 析构落在一个已经没了的 libwebrtc 线程上。改成全进程共用一个、永不销毁（SSL 也一并挪过去）。另外 `close()` 里在**后台线程**动 `RTCMTLVideoView` 的 UIKit——登记表改成主线程独占 |
+| **拨出时看不见自己，随手点一下静音又出来了** | 采集起来之后只 `apply(.setCamera(true))`，而视频通话的 `cameraOn` 本来就是 true，前后状态相等 → `didSet` 不发通知 → 没人去调 `attachLocalPreview`。点静音真的改了状态，顺带触发了一次重挂 |
+| 界面显示「已静音」而对方照样听得见 | 发布是异步的，这期间点的静音/关摄像头都以 `cid.isEmpty` 为由静默跳过了，只改了界面。现在发布完成后把界面上的意图补应用一遍 |
+| **一枚废票会无限重连**（服务端日志里全是 `token_invalid`，客户端一次 4401 都没看见） | `receive` 失败与 `didCloseWith` 是两条独立的路，谁先到没保证。原先失败时直接按 1001 收尾，而 1001 的语义是「服务端下线，立刻重连」。现在先读 `task.closeCode`，读不到就给代理回调留 150ms |
+| 「呼叫名单里含自己」被就地拒掉后卡在「正在呼叫…」 | 只抛 error，界面不知道该退回哪儿。补抛 `onCallEnd{reason:error}` |
+
+**新增：采集画质档位** `IMVideoProfile`（360p / 720p / 1080p，默认 720p），
+`IMWebRTCAdapter(videoProfile:)`；simulcast 三层码率跟着档位走，单层发布也压上限。
+Demo 的设置页里可选（换档位下一通电话生效）。**画质是宿主策略，不是服务端下发的**——
+与换 token 同一条边界（协议 §1.5）。
+
 ## 下一步
 
 **P3 第五刀 —— 媒体：代码已落地，等真机验收**
@@ -191,6 +207,20 @@ Web 端的 uikit 可以直接对照抄结构（`packages/call-uikit-react/src/la
 - **日志回传要给请求设超时**：`URLRequest` 默认 60 秒，而 `flushing` 那个闩要等回调
   才放开——一个卡住的请求就能让后面**所有日志静默丢掉**，症状是日志文件停在
   某个时间点不动而应用还活着。已设 5 秒。
+
+- **`RTCPeerConnectionFactory` 必须活得比它造出来的 PC 久**，所以它是全进程一份的
+  `static let`（`IMPeerConnections.sharedFactory`）。做成实例属性会在通话结束时
+  跟着 PC 一起被释放，而 Swift 释放存储属性的顺序未定义——工厂先走就是**挂断即闪退**，
+  而且崩在 libwebrtc 内部，看不出跟自己哪一行有关。`RTCInitializeSSL` 同理（全局、无引用计数）。
+- **挂载登记表只在主线程上动**（`IMVideoRegistry`）：里面存的是 `RTCMTLVideoView`
+  （背后是 `CAMetalLayer`）。锁保护得了字典，保护不了 UIKit——
+  在后台线程 `removeFromSuperview()` 一个正在渲染的 Metal 视图，进程是要挂的。
+- **远端轨道要「认领」**：`didAdd rtpReceiver` 只带 track_id，归属写在信令帧里，
+  **谁先到都可能**。少了 `claimRemoteTracks` 这一步就是「协商全通、首帧照抛、
+  但一格画面都不出来」。改媒体层时别把这条丢了。
+- **画质是宿主策略**：`IMVideoProfile` 由宿主给，宿主要「后台可控」就把它放进自己的
+  配置接口。**改档位要同步服务端 `internal/sfu/bwe.go` 的 `bitrateHigh`**，
+  两边对不上会让降层判断按一个错的数字做。
 
 ## 关联工程 / 常用命令
 

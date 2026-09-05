@@ -123,6 +123,20 @@ public protocol IMMediaAdapter: AnyObject, Sendable {
     /// setSpeakerOn 切换扬声器 / 听筒。**只改路由不改采集**，通话不中断。
     func setSpeakerOn(_ on: Bool)
 
+    /**
+     claimRemoteTracks 告诉媒体层「哪条 track_id 属于哪个 uid」（`[track_id: uid]`）。
+
+     **这一步不能省。** 媒体层拿到下行轨道时只知道 track_id（msid 第二段），
+     而归属写在信令帧 `room.track_published` 里，两者**谁先到都可能**。
+     少了认领这一步，媒体层就只能把 track_id 当 uid 用，
+     而挂载侧 `attachRemoteView` 传的是真 uid——两把钥匙对不上，
+     协商全通、首帧照抛，**但一格画面都不出来**。
+     （Web 端的 `MediaBridge.claim` 是同一件事。）
+
+     实现要幂等：每次状态机推进都会调它一次。
+    */
+    func claimRemoteTracks(_ owners: [String: String])
+
     /// attachRemoteView 把某个 uid 的远端画面挂到一个视图上；传 nil 卸载。
     func attachRemoteView(_ uid: String, _ view: AnyObject?)
 

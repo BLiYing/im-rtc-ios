@@ -277,7 +277,10 @@ public final class IMCallOverlayViewController: UIViewController {
         selfTile.apply(uid: "", label: "我",
                        hasVideo: state.selfState.cameraOn && controller.hasLocalCamera,
                        hasAudio: state.selfState.micOn, isSpeaking: false)
-        controller.attachLocalPreview(to: selfTile.renderView)
+        // 结束态那一屏不显示本端画面，**卸载要成对**：不摘的话摄像头的渲染器
+        // 还挂在一个已经隐藏的视图上，解码/渲染照跑（CONVENTIONS §7）。
+        let wantsSelfPreview = state.phase != .ended && state.mediaType == "video"
+        controller.attachLocalPreview(to: wantsSelfPreview ? selfTile.renderView : nil)
         /*
          **拨出时就要能看见自己**（草图 §03-E：视频通话拨出中带本端画面）。
 
@@ -287,7 +290,7 @@ public final class IMCallOverlayViewController: UIViewController {
 
          结束态不显示：那一屏只说结果。
         */
-        let showSelf = state.phase != .ended && state.mediaType == "video"
+        let showSelf = wantsSelfPreview
         selfTile.isHidden = !showSelf
         if selfInGrid && showSelf { ordered.append(selfTile) }
         selfPreviewConstraints.forEach { $0.isActive = !selfInGrid && showSelf }

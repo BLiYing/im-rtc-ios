@@ -24,7 +24,12 @@ final class FacadeTests: XCTestCase {
         private var log: [String] = []
         private var muted: [String: Bool] = [:]
 
+        /// 最后一次收到的「track_id → uid」。**不进 log**：门面每推进一步都会调它一次，
+        /// 混进 log 会把「门面碰了哪些方法」这份清单淹掉。
+        private var claimed: [String: String] = [:]
+
         func calls() -> [String] { lock.lock(); defer { lock.unlock() }; return log }
+        func claims() -> [String: String] { lock.lock(); defer { lock.unlock() }; return claimed }
         func isMuted(_ cid: String) -> Bool {
             lock.lock(); defer { lock.unlock() }; return muted[cid] ?? false
         }
@@ -57,6 +62,9 @@ final class FacadeTests: XCTestCase {
         }
         func setMuted(_ cid: String, _ isMuted: Bool) {
             lock.lock(); muted[cid] = isMuted; log.append("setMuted(\(cid),\(isMuted))"); lock.unlock()
+        }
+        func claimRemoteTracks(_ owners: [String: String]) {
+            lock.lock(); claimed = owners; lock.unlock()
         }
         func attachRemoteView(_ uid: String, _ view: AnyObject?) {
             note("attachRemote(\(uid),\(view == nil ? "nil" : "view"))")
@@ -318,6 +326,28 @@ final class FacadeTests: XCTestCase {
 
         XCTAssertFalse(h.media.calls().contains { $0.hasPrefix("addRemoteCandidate") })
         XCTAssertEqual(h.events.count(.error), 0)
+    }
+
+    /**
+     媒体层必须知道**每条下行轨道属于谁**。
+
+     少了这一步，媒体层就只能拿 track_id 当 uid 用，而挂载侧
+     `attachView(uid:)` 传的是真 uid——两把钥匙对不上，
+     于是**协商全通、首帧照抛，但一格画面都不出来**。真机三人互相看不见就是它。
+    */
+    func testRemoteTrackOwnerReachesMedia() async throws {
+        let h = makeEngine()
+        let ws = try await login(h)
+        try await joinRoom(h, ws)
+
+        ws.receive("""
+        {"type":"room.track_published","req_id":"","ts":1,"data":{\
+        "room_id":"r-1","participant_id":"r-1-p2","uid":"alice",\
+        "track_id":"t-9","kind":"video","source":"camera","simulcast":false,"muted":false}}
+        """)
+        try await settle()
+
+        XCTAssertEqual(h.media.claims()["t-9"], "alice")
     }
 
     /// 离房要把媒体面归零，否则下一次进房带着上一轮的 PeerConnection。

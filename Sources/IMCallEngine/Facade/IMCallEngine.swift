@@ -158,6 +158,23 @@ import Foundation
                 "code": .int(Int64(IMErrorCode.badParams.rawValue)),
                 "name": .string(IMErrorCode.badParams.name),
             ]))
+            /*
+             **本地拒掉也要给界面一个出口。**
+
+             调用方（Kit / 宿主）在调 `call()` 之前就已经切到「正在呼叫…」了——
+             这是对的，不然按下去几百毫秒没反应。但只抛一个 error，
+             界面不知道该退回哪儿：卡在「正在呼叫…」，点挂断只会收到 2005
+             （状态机是 idle，没有 call 可挂），除了杀进程没有别的出路。
+
+             `onCallEnd` 是所有结束分支的唯一出口（设计 §7.5），
+             这一条与「服务端拒了 invite」（call_failed）走同一个出口。
+            */
+            dispatcher.emit(IMEmittedEvent("onCallEnd", [
+                "call_id": .string(""),
+                "reason": .string(IMCallEndReason.error.wireValue),
+                "duration_sec": .int(0),
+                "ended_by": .string(""),
+            ]))
             IMRTCLog.warn("呼叫名单里含自己，已就地拒掉", ["uid": me])
             return
         }

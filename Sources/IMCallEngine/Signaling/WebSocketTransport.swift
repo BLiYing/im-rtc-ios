@@ -93,6 +93,8 @@ final class IMURLSessionWebSocket: NSObject, IMWebSocket, URLSessionWebSocketDel
     private let lock = NSLock()
     private var opened = false
     private var closed = false
+    /// 等 `didCloseWith` 把关闭码送到的宽限时间。见 finishWithServerCode。
+    private let closeCodeGraceMS = 150
 
     init(url: URL) {
         self.url = url
@@ -146,9 +148,41 @@ final class IMURLSessionWebSocket: NSObject, IMWebSocket, URLSessionWebSocketDel
                 // **必须重新挂上去**：receive 一次只回一帧。
                 self.receiveNext()
             case let .failure(error):
-                self.finish(code: IMCloseCode.goingAway, reason: error.localizedDescription)
+                self.finishWithServerCode(fallbackReason: error.localizedDescription)
             }
         }
+    }
+
+    /**
+     finishWithServerCode 收尾，**尽量带上服务端真正给的关闭码**。
+
+     服务端关闭连接时，`receive` 的失败回调与 `didCloseWith` 代理回调是**两条独立的路**，
+     谁先到没有保证。原先这里在失败回调里直接按 1001 收尾，而 1001 的语义是
+     「服务端下线，立刻重连」——于是一枚**已经失效的 token**（服务端重启换了签名密钥）
+     会被当成网络抖动无限重试：实测一个没关的客户端敲了 40 多次，
+     服务端日志里全是 token_invalid，而客户端那边**连一次 4401 都没看见**，
+     §1.5 的「连续 3 次鉴权失败就放弃」永远够不着。
+
+     所以失败时先看 `task.closeCode`：拿到了就用它；
+     还没解析出来（`.invalid`）就给代理回调留一小段时间，之后再按 1001 收尾。
+    */
+    private func finishWithServerCode(fallbackReason: String) {
+        if let code = serverCloseCode() {
+            finish(code: code, reason: fallbackReason)
+            return
+        }
+        DispatchQueue.global().asyncAfter(deadline: .now() + .milliseconds(closeCodeGraceMS)) {
+            [weak self] in
+            guard let self else { return }
+            self.finish(code: self.serverCloseCode() ?? IMCloseCode.goingAway,
+                        reason: fallbackReason)
+        }
+    }
+
+    /// serverCloseCode 读服务端关闭帧里的码；还没解析出来时返回 nil。
+    private func serverCloseCode() -> Int? {
+        guard let raw = task?.closeCode.rawValue, raw != 0 else { return nil }
+        return raw
     }
 
     private func finish(code: Int, reason: String) {
@@ -157,6 +191,7 @@ final class IMURLSessionWebSocket: NSObject, IMWebSocket, URLSessionWebSocketDel
         closed = true
         lock.unlock()
         guard !alreadyClosed else { return }
+        IMRTCLog.debug("连接关闭", ["code": String(code), "reason": reason])
         handlers?.onClose(code, reason)
     }
 

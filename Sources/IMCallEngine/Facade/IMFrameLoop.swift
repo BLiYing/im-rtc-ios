@@ -64,6 +64,10 @@ actor IMFrameLoop {
         let result = IMEngineMachine.reduce(ctx, input)
         ctx = result.state
 
+        // 每推进一步就把「哪条轨道是谁的」同步给媒体层。**轨道与归属谁先到都可能**，
+        // 所以这一步不能只在 track_published 那一支上做（Web 端同一处：`frameLoop.ts`）。
+        media?.claimRemoteTracks(ctx.room.remoteTracks.mapValues(\.uid))
+
         // **一通结束就把媒体面归零**，而且在抛事件之前：宿主收到 callDidEnd 时
         // Engine 已经是干净的，下一通不会带着上一通的 PeerConnection。
         if result.emit.contains(where: { Self.leaveCallbacks.contains($0.callback) }) {

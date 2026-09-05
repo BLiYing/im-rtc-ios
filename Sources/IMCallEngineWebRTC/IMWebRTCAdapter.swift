@@ -32,8 +32,17 @@ public final class IMWebRTCAdapter: NSObject, IMMediaAdapter, @unchecked Sendabl
     /// 远端轨道的 track_id → uid 由上层告知；这里只按 track_id 记账。
     private let lock = NSLock()
 
-    public override init() {
+    /// 采集画质档位。见 `IMVideoProfile`：**策略归宿主**，不是服务端下发的。
+    private let profile: IMVideoProfile
+
+    /// - Parameter videoProfile: 画质档位，默认 720p。
+    @objc public init(videoProfile: IMVideoProfile = .default) {
+        self.profile = videoProfile
         super.init()
+    }
+
+    public override convenience init() {
+        self.init(videoProfile: .default)
     }
 
     // MARK: - IMMediaAdapter
@@ -126,7 +135,14 @@ public final class IMWebRTCAdapter: NSObject, IMMediaAdapter, @unchecked Sendabl
         transceiverInit.direction = .sendOnly
         transceiverInit.streamIds = ["im-rtc"]
         if simulcast {
-            transceiverInit.sendEncodings = Self.simulcastEncodings()
+            transceiverInit.sendEncodings = Self.simulcastEncodings(profile)
+        } else {
+            // 单层也要压上限：不压的话 libwebrtc 会往上飙到远高于服务端预算的码率，
+            // 而 `bwe.go` 的降层判断正是拿那个预算算的。
+            let encoding = RTCRtpEncodingParameters()
+            encoding.isActive = true
+            encoding.maxBitrateBps = NSNumber(value: profile.maxBitrateBps)
+            transceiverInit.sendEncodings = [encoding]
         }
         ensurePeers().pub.addTransceiver(with: track, init: transceiverInit)
         return info
@@ -185,25 +201,40 @@ public final class IMWebRTCAdapter: NSObject, IMMediaAdapter, @unchecked Sendabl
     }
 
     public func attachRemoteView(_ uid: String, _ view: AnyObject?) {
-        // 视图操作必须在主线程。**用 async 不用 sync**（CONVENTIONS §5 禁止 main.sync）。
-        DispatchQueue.main.async { [weak self] in
-            self?.registry.attach(uid: uid, to: view as? UIView)
-        }
+        // 线程由登记表自己管（它整张表只在主线程上动）。
+        registry.attach(owner: uid, to: view as? UIView)
     }
 
+    /**
+     attachLocalView 把本端某条轨道挂到视图上做预览；传 nil 卸载。
+
+     **走的是同一张登记表**（键加 `:local:` 前缀），不是另起一套。
+     原先这里每调一次就 `addSubview` 一个新的 `RTCMTLVideoView`，
+     而 Kit 每次界面状态变化都会重挂一遍——格子里叠了一摞渲染视图，
+     且传 nil 时什么都不做，卸载不掉。
+    */
     public func attachLocalView(_ cid: String, _ view: AnyObject?) {
-        DispatchQueue.main.async { [weak self] in
-            guard let self else { return }
-            self.lock.lock()
-            let track = self.localTracks[cid] as? RTCVideoTrack
-            self.lock.unlock()
-            guard let track, let container = view as? UIView else { return }
-            let renderView = RTCMTLVideoView(frame: container.bounds)
-            renderView.videoContentMode = .scaleAspectFill
-            renderView.autoresizingMask = [.flexibleWidth, .flexibleHeight]
-            container.addSubview(renderView)
-            track.add(renderView)
+        let key = imLocalViewKey(cid)
+        guard let container = view as? UIView else {
+            registry.attach(owner: key, to: nil)
+            return
         }
+        lock.lock()
+        let track = localTracks[cid] as? RTCVideoTrack
+        lock.unlock()
+        if let track { registry.addTrack(cid, track, owner: key) }
+        registry.attach(owner: key, to: container)
+    }
+
+    /**
+     claimRemoteTracks 告诉媒体层「哪条 track_id 是谁的」。
+
+     媒体层自己**无从知道**这件事：`didAdd rtpReceiver` 只带 track_id，
+     归属写在信令帧 `room.track_published` 里。两者谁先到都可能，
+     所以轨道先按 track_id 收下，归属到了再认领。
+    */
+    public func claimRemoteTracks(_ owners: [String: String]) {
+        for (trackID, uid) in owners { registry.claim(trackID, owner: uid) }
     }
 
     public func close() {
@@ -238,30 +269,43 @@ public final class IMWebRTCAdapter: NSObject, IMMediaAdapter, @unchecked Sendabl
         let trackID = track.trackId
         events.onRemoteTrack?(trackID)
         guard let video = track as? RTCVideoTrack else { return }
+        // **归属这时候通常还不知道**（信令帧可能后到），先按 track_id 收着，
+        // 等 claimRemoteTracks 认领。这里原先直接把 track_id 当 uid 挂进去，
+        // 而挂载侧传的是真 uid，两把钥匙永远对不上——协商全通但一格画面都没有。
+        registry.addTrack(trackID, video, owner: "")
         // 第一帧探针。**判据是真的出帧**，不是协商完成——提前抛等于让 UI 撤了 loading 去露黑屏。
         let probe = IMFirstFrameProbe { [weak self] in
             self?.events.onFirstVideoFrame?(trackID)
         }
         video.add(probe)
-        registry.bind(uid: trackID, track: video)
     }
 
-    /// startCapture 起摄像头。挑**前置 + 最接近 720p 的格式**（草图 §02 的默认分辨率）。
+    /// startCapture 起摄像头，挑**前置 + 最接近档位分辨率**的格式。
+    ///
+    /// 挑「最接近」而不是「必须等于」：设备支持的格式表是离散的，
+    /// 要求精确匹配会在某些机型上一个格式都挑不出来，通话直接打不出去。
     private func startCapture(_ capturer: RTCCameraVideoCapturer) async throws {
         let devices = RTCCameraVideoCapturer.captureDevices()
         guard let device = devices.first(where: { $0.position == .front }) ?? devices.first else {
             throw IMRTCError(.deviceNotFound, "没有可用的摄像头")
         }
+        let wanted = profile.width
         let formats = RTCCameraVideoCapturer.supportedFormats(for: device)
         guard let format = formats.min(by: { lhs, rhs in
             let l = CMVideoFormatDescriptionGetDimensions(lhs.formatDescription)
             let r = CMVideoFormatDescriptionGetDimensions(rhs.formatDescription)
-            return abs(Int(l.width) - 1280) < abs(Int(r.width) - 1280)
+            return abs(Int(l.width) - wanted) < abs(Int(r.width) - wanted)
         }) else {
             throw IMRTCError(.deviceNotFound, "摄像头没有可用格式")
         }
         let fps = format.videoSupportedFrameRateRanges
-            .map(\.maxFrameRate).max().map { Int(min($0, 30)) } ?? 30
+            .map(\.maxFrameRate).max().map { Int(min($0, Double(profile.frameRate))) }
+            ?? profile.frameRate
+        let size = CMVideoFormatDescriptionGetDimensions(format.formatDescription)
+        IMRTCLog.info("摄像头已开", [
+            "profile": profile.name, "width": String(size.width),
+            "height": String(size.height), "fps": String(fps),
+        ])
         try await capturer.startCapture(with: device, format: format, fps: fps)
     }
 
@@ -284,17 +328,16 @@ public final class IMWebRTCAdapter: NSObject, IMMediaAdapter, @unchecked Sendabl
         }
     }
 
-    /// simulcastEncodings 是 simulcast 三层（协议 §3.5：rid 为 h/m/l）。
-    private static func simulcastEncodings() -> [RTCRtpEncodingParameters] {
-        [("h", 1.0, 1_700_000), ("m", 2.0, 500_000), ("l", 4.0, 150_000)]
-            .map { rid, scale, bitrate in
-                let encoding = RTCRtpEncodingParameters()
-                encoding.rid = rid
-                encoding.isActive = true
-                encoding.scaleResolutionDownBy = NSNumber(value: scale)
-                encoding.maxBitrateBps = NSNumber(value: bitrate)
-                return encoding
-            }
+    /// simulcastEncodings 是 simulcast 三层（协议 §3.5：rid 为 h/m/l），码率跟着档位走。
+    private static func simulcastEncodings(_ profile: IMVideoProfile) -> [RTCRtpEncodingParameters] {
+        profile.simulcastLayers.map { layer in
+            let encoding = RTCRtpEncodingParameters()
+            encoding.rid = layer.rid
+            encoding.isActive = true
+            encoding.scaleResolutionDownBy = NSNumber(value: layer.scaleDownBy)
+            encoding.maxBitrateBps = NSNumber(value: layer.bitrateBps)
+            return encoding
+        }
     }
 
     private static func stateName(_ state: RTCPeerConnectionState) -> String {
