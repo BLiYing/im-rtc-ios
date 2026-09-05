@@ -17,6 +17,15 @@ public final class IMCallOverlayViewController: UIViewController {
     private let subtitleLabel = UILabel()
     private let minimizeButton = UIButton(type: .system)
     private let gridView = IMCallGridView()
+    /**
+     结束画面那一句话。**结束态不复用通话页的骨架**。
+
+     原先结束态只是「把控制按钮清空」，标题、九宫格、本端预览还都在——
+     被叫那边看上去就是「来电页忽然变成了通话页」，停一两秒再消失。
+     实测反馈：「为何还弹出一个那个接通才有的界面」。
+     现在结束态只留这一句居中的话（还在响铃的来电则根本不进结束态，直接收起）。
+    */
+    private let endedLabel = UILabel()
     /// 本端预览格子。群通话里它是格子之一；1v1 里浮在右上角。
     private let selfTile = IMVideoTileView()
     private let controlsStack = UIStackView()
@@ -110,7 +119,12 @@ public final class IMCallOverlayViewController: UIViewController {
          不依赖任何优先级博弈。前提是网格内部那两条竖直边不能是 required
          （见 IMCallGridView），否则它的固有高度会反过来把这条链顶开。
         */
-        for child in [minimizeButton, header, gridView, controlsStack] as [UIView] {
+        endedLabel.font = .systemFont(ofSize: 17)
+        endedLabel.textColor = theme.primaryText
+        endedLabel.textAlignment = .center
+        endedLabel.numberOfLines = 0
+
+        for child in [minimizeButton, header, gridView, endedLabel, controlsStack] as [UIView] {
             child.translatesAutoresizingMaskIntoConstraints = false
             view.addSubview(child)
         }
@@ -135,6 +149,12 @@ public final class IMCallOverlayViewController: UIViewController {
             gridView.leadingAnchor.constraint(equalTo: guide.leadingAnchor, constant: 12),
             gridView.trailingAnchor.constraint(equalTo: guide.trailingAnchor, constant: -12),
             gridView.bottomAnchor.constraint(equalTo: controlsStack.topAnchor, constant: -16),
+
+            // 结束语占网格那块地方，居中。它和网格互斥显示。
+            endedLabel.centerXAnchor.constraint(equalTo: gridView.centerXAnchor),
+            endedLabel.centerYAnchor.constraint(equalTo: gridView.centerYAnchor),
+            endedLabel.leadingAnchor.constraint(equalTo: gridView.leadingAnchor, constant: 24),
+            endedLabel.trailingAnchor.constraint(equalTo: gridView.trailingAnchor, constant: -24),
 
             /*
              **控制条必须给一个显式高度。**
@@ -201,9 +221,15 @@ public final class IMCallOverlayViewController: UIViewController {
     }
 
     private func render(_ state: IMCallViewState) {
+        let isEnded = state.phase == .ended
         titleLabel.text = title(state)
         subtitleLabel.text = statusLine(state)
-        minimizeButton.isHidden = state.phase == .incoming || state.phase == .ended
+        // 结束态只留居中那一句，不再显示通话页的骨架（标题下的副标题会重复同一句话）。
+        subtitleLabel.isHidden = isEnded
+        gridView.isHidden = isEnded
+        endedLabel.isHidden = !isEnded
+        endedLabel.text = statusLine(state)
+        minimizeButton.isHidden = state.phase == .incoming || isEnded
         micButton.isOn = !state.selfState.micOn
         cameraButton.isOn = state.selfState.cameraOn
         speakerButton.isOn = state.selfState.speakerOn

@@ -142,6 +142,8 @@ public enum IMCallViewAction: Sendable {
     case userEnter(uid: String)
     case userLeave(uid: String)
     case userAccept(uid: String)
+    /// 某人给出了终局裁决（拒接 / 无应答），格子该收掉了。
+    case userSettled(uid: String)
     case userAudio(uid: String, available: Bool)
     case userVideo(uid: String, available: Bool)
     case activeSpeakers([(uid: String, volume: Int)])
@@ -207,7 +209,20 @@ public func reduceCallView(_ state: IMCallViewState,
         next.selfState = IMSelfState(micOn: true, cameraOn: true, speakerOn: true)
 
     case let .callEnd(reason):
-        // **振铃通话的结束出口**（会议走 roomLeft）。
+        /*
+         **振铃通话的结束出口**（会议走 roomLeft）。
+
+         # 还在响铃的来电直接收起，不留结束画面
+
+         被叫这一侧什么都还没做，界面上只有一个来电页。对方取消 / 自己拒接 /
+         振铃超时之后，**该做的就是让它消失**——原先统一进 ended，
+         于是来电页当场变成通话页的骨架（标题 + 格子 + 本端预览），
+         停一两秒再收走。实测反馈是「怎么还弹出一个接通才有的界面」。
+
+         主叫那一侧不一样：拨出去没打通，人是需要知道为什么的
+         （对方拒接 / 无人接听 / 不在线），所以那边仍然停一下说明原因。
+        */
+        if state.phase == .incoming { return IMCallViewState() }
         next.phase = .ended
         next.endReason = reason
         next.isMinimized = false
@@ -230,6 +245,17 @@ public func reduceCallView(_ state: IMCallViewState,
         next = withParticipant(next, uid) { $0.hasAccepted = true }
 
     case let .userLeave(uid):
+        next.participants.removeAll { $0.uid == uid }
+
+    case let .userSettled(uid):
+        /*
+         群通话里某人拒接 / 没接：**把他的格子收掉**。
+
+         不收的话那一格会一直挂着「（响铃中）」——从主叫的角度看，
+         对方拒接就跟什么都没发生一样。**这在群通话里是唯一的信号**：
+         那边没有便利事件（不变量 I7），只有 onUser*。
+         1v1 也会抛，但紧跟着就是 callEnd，界面整个收走，收不收格子都一样。
+        */
         next.participants.removeAll { $0.uid == uid }
 
     case let .userAccept(uid):

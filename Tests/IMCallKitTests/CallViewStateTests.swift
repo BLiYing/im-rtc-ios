@@ -164,9 +164,33 @@ final class CallViewStateTests: XCTestCase {
     }
 }
 
+/*
+ 群通话里有人拒接 / 没接，**格子要收掉**。
+
+ 不收的话那一格一直挂着「（响铃中）」——从主叫的角度看，
+ 对方拒接就跟什么都没发生一样。群通话里没有便利事件（不变量 I7），
+ `onUserReject` / `onUserNoResponse` 是唯一的信号。
+ */
+final class GroupOutcomeTests: XCTestCase {
+
+    func testRejectedMemberLeavesTheGrid() {
+        var state = reduceCallView(IMCallViewState(),
+                                   .callPlaced(calleeIDs: ["bob", "carol"],
+                                               mediaType: "video", isGroup: true))
+        XCTAssertEqual(state.participants.map(\.uid), ["bob", "carol"])
+
+        state = reduceCallView(state, .userSettled(uid: "bob"))
+        XCTAssertEqual(state.participants.map(\.uid), ["carol"], "拒接的人不该还占着格子")
+
+        state = reduceCallView(state, .userSettled(uid: "carol"))
+        XCTAssertTrue(state.participants.isEmpty)
+    }
+}
+
 /// 布局与层上界。**这段算术直接决定带宽**，所以单独测。
 final class GridTests: XCTestCase {
 
+    /// 正方形容器（aspect = 1）：退化成老的「尽量接近正方形」。
     func testGridPrefersSquareShapes() {
         XCTAssertEqual(imGridDimensions(1), IMGridDimensions(columns: 1, rows: 1))
         XCTAssertEqual(imGridDimensions(2), IMGridDimensions(columns: 2, rows: 1))
@@ -174,6 +198,52 @@ final class GridTests: XCTestCase {
         XCTAssertEqual(imGridDimensions(3), IMGridDimensions(columns: 2, rows: 2))
         XCTAssertEqual(imGridDimensions(4), IMGridDimensions(columns: 2, rows: 2))
         XCTAssertEqual(imGridDimensions(9), IMGridDimensions(columns: 3, rows: 3))
+    }
+
+    /**
+     **决定列数的不是人数，是容器形状。**
+
+     竖屏手机（宽/高 ≈ 0.7）上 2 个人必须是「上下摞」——原先固定
+     `ceil(sqrt(n))` 会排成 1 行 2 列，每格半个屏宽、整个屏高，
+     画面被拉成两条细长条（真机实测反馈：「很丑」）。
+     同样是 2 个人，横屏电脑上 2 列才是对的。
+    */
+    func testGridFollowsContainerShape() {
+        let phone = 0.7, desktop = 1.8
+
+        XCTAssertEqual(imGridDimensions(2, aspect: phone),
+                       IMGridDimensions(columns: 1, rows: 2), "竖屏两人要上下摞")
+        XCTAssertEqual(imGridDimensions(2, aspect: desktop),
+                       IMGridDimensions(columns: 2, rows: 1), "横屏两人要左右排")
+
+        // 人多了两种形状都收敛到方阵——那时候是行列都不够用，形状说了不算。
+        XCTAssertEqual(imGridDimensions(4, aspect: phone), IMGridDimensions(columns: 2, rows: 2))
+        XCTAssertEqual(imGridDimensions(4, aspect: desktop), IMGridDimensions(columns: 2, rows: 2))
+        XCTAssertEqual(imGridDimensions(9, aspect: phone), IMGridDimensions(columns: 3, rows: 3))
+    }
+
+    /// 挑出来的排法必须**真的是格子最大的那一种**（这是这条规则的全部意义）。
+    func testGridMaximisesSquareCellSide() {
+        for count in 1...IMMaxTiles {
+            for aspect in [0.5, 0.7, 1.0, 1.4, 2.0] {
+                let chosen = imGridDimensions(count, aspect: aspect)
+                let best = squareSide(count: count, aspect: aspect, dims: chosen)
+                for columns in 1...count {
+                    let rows = Int(ceil(Double(count) / Double(columns)))
+                    let side = squareSide(count: count, aspect: aspect,
+                                          dims: IMGridDimensions(columns: columns, rows: rows))
+                    XCTAssertLessThanOrEqual(side, best + 1e-9,
+                        "count=\(count) aspect=\(aspect)：\(columns)×\(rows) 的格子更大")
+                }
+            }
+        }
+    }
+
+    private func squareSide(count: Int, aspect: Double, dims: IMGridDimensions) -> Double {
+        let gap = min(aspect, 1.0) * 0.02
+        let cellWidth = (aspect - Double(dims.columns - 1) * gap) / Double(dims.columns)
+        let cellHeight = (1.0 - Double(dims.rows - 1) * gap) / Double(dims.rows)
+        return min(cellWidth, cellHeight)
     }
 
     func testGridClampsToOneScreen() {

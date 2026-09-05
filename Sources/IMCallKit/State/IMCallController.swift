@@ -335,6 +335,16 @@ extension IMCallController: IMCallEngineDelegate {
         apply(.userAccept(uid: uid))
     }
 
+    // 拒接与无应答要把格子收掉——不收的话那一格一直挂着「（响铃中）」，
+    // 从主叫的角度看，对方拒接就跟什么都没发生一样。
+    public func callEngine(_ engine: IMCallEngine, userDidReject uid: String) {
+        apply(.userSettled(uid: uid))
+    }
+
+    public func callEngine(_ engine: IMCallEngine, userDidNotRespond uid: String) {
+        apply(.userSettled(uid: uid))
+    }
+
     public func callEngine(_ engine: IMCallEngine, user uid: String, audioAvailable available: Bool) {
         apply(.userAudio(uid: uid, available: available))
     }
