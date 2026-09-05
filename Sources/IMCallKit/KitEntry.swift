@@ -33,6 +33,10 @@ public let IMCallKitVersion = "0.0.1"
 @objc public final class IMCallKitConfig: NSObject {
     /// 通话页固定深色、不随宿主主题（对齐草图 §01；FaceTime / Telegram 同做法）。
     @objc public var forcesDarkAppearance: Bool = true
+    /// 来电先出顶部横幅，点横幅再展开全屏（草图 §04）。关掉则直接全屏。
+    @objc public var bannerFirst: Bool = true
+    /// 允许收进悬浮球（草图 §04）。关掉则通话页没有「小窗」按钮。
+    @objc public var floatingWindow: Bool = true
 
     @objc public override init() {
         super.init()
@@ -62,7 +66,7 @@ public let IMCallKitVersion = "0.0.1"
     public let controller: IMCallController
 
     #if canImport(UIKit)
-    private lazy var callWindow = IMCallWindow(controller: controller)
+    private lazy var callWindow = IMCallWindow(controller: controller, config: config)
     #endif
 
     /**

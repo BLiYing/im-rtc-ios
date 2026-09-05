@@ -224,6 +224,13 @@ import Foundation
         ]))
     }
 
+    /// setSpeakerOn 切换扬声器 / 听筒（设计文档 §7.5 的 `setAudioRoute`）。
+    ///
+    /// 没有媒体适配器时静默忽略：纯信令形态的 Engine 没有音频可路由。
+    @objc public func setSpeakerOn(_ on: Bool) {
+        media?.setSpeakerOn(on)
+    }
+
     /// attachView 把某个 uid 的远端画面挂到视图上；传 nil 卸载。
     ///
     /// **这是 UI 拿到画面的唯一途径**（CONVENTIONS §1）：Kit 不许自己碰

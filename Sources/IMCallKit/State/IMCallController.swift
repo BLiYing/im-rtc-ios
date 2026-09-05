@@ -39,6 +39,8 @@ public final class IMCallController: NSObject {
     private var cameraCID = ""
     /// 已经为哪个房间发布过。防止同一个房间推两次流。
     private var publishedRoomID = ""
+    /// 「以语音接听」的记号：callBegin 之后推流时不带摄像头。
+    private var audioOnlyAccept = false
     /// 结束画面停留多久再自动收起。0 = 不自动收。
     public var endedHoldSeconds: TimeInterval = 1.5
     private var dismissTimer: DispatchSourceTimer?
@@ -80,6 +82,21 @@ public final class IMCallController: NSObject {
 
     public func accept() { Task { await engine.accept() } }
     public func reject() { Task { await engine.reject() } }
+
+    /// 以语音接听视频来电（草图 §03-F）：接了，但**本端不开摄像头**。
+    /// 对方照常推视频，我们照常收；只是自己不发。
+    public func acceptAudioOnly() {
+        apply(.setCamera(false))
+        apply(.setSpeaker(false))
+        audioOnlyAccept = true
+        Task { await engine.accept() }
+    }
+
+    public func toggleSpeaker() {
+        let on = !state.selfState.speakerOn
+        apply(.setSpeaker(on))
+        engine.setSpeakerOn(on)
+    }
 
     /**
      结束当前这一场，不管它是通话还是会议。
@@ -151,6 +168,7 @@ public final class IMCallController: NSObject {
             micCID = ""
             cameraCID = ""
             publishedRoomID = ""
+            audioOnlyAccept = false
         }
         /*
          3. 有房间号且还没为它发布过 → 推流。
@@ -163,7 +181,9 @@ public final class IMCallController: NSObject {
         guard isLive, !state.roomID.isEmpty, publishedRoomID != state.roomID else { return }
         publishedRoomID = state.roomID
         guard !state.isMeeting else { return } // 会议由 joinMeeting 自己推流
-        let mediaType = state.mediaType
+        let mediaType = audioOnlyAccept ? "audio" : state.mediaType
+        // 接通那一刻把扬声器路由落到媒体层——之前只是界面上的默认值。
+        engine.setSpeakerOn(state.selfState.speakerOn)
         Task { await publishFor(mediaType: mediaType) }
     }
 

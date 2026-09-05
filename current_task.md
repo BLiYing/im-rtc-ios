@@ -27,12 +27,19 @@
 | `State/IMCallViewState` | 纯值语义的视图模型 + reducer + 红按钮四向分派 |
 | `State/IMCallController` | 把 `IMCallEngineDelegate` 接成视图状态；界面动作也在这里 |
 | `Layout/IMGrid` | 九宫格行列、层上界、时长格式化 |
-| `UI/` | 主题、控制按钮、成员格子、通话页、**独立 window 层** |
+| `UI/` | 主题、控制按钮、成员格子、通话页、来电横幅、悬浮球、网络条、**独立 window 层** |
 
 **Kit 只消费公开回调表**：`IMCallController` 实现的就是 `IMCallEngineDelegate`，
 与「宿主自画 UI」拿到的完全一致，没有一处私有通道。
 
 Demo 已经接上 Kit——`kit.start()` **一行**就接管了通话界面（草图 §01 的用法 B）。
+Demo 有草图 §02 的三个 tab：拨号（1v1 / 群呼选人 / 会议）、通话记录、设置。
+通话记录**完全由 `callDidEnd` 拼出来**，走的是 block 接法（delegate 被 Kit 占着）。
+
+**客户端日志回传已接上**：Demo 登录后装 `RemoteLogSink`，Engine 的每一个公开事件
+都进日志，落在 `im-rtc-server/dev-logs/client-ios-<用户名>.log`；
+`scripts/timeline.py` 把它与服务端、浏览器端合到一条时间轴。
+线路格式对着真服务端 curl 验过（HTTP 200，timeline 能读）。
 
 `Sources/IMCallEngineWebRTC/` 是媒体实现（iOS-only，接 `stasel/WebRTC` 152.0.0）：
 两条 PeerConnection、候选缓冲、simulcast 三层、第一帧探针、画面挂载。
@@ -74,9 +81,13 @@ RTC_LIVE_SERVER=http://127.0.0.1:8787 swift test --filter LiveServerTests
 
 真机跑法：Demo 选真机 target、填服务器地址（用局域网 IP，不是 127.0.0.1）、登录、拨号。
 
-**P3 第六刀 —— Kit 的剩余界面**：来电横幅（不是全屏页）、悬浮球/悬浮小画面、
-「以语音接听」、网络质量条、扬声器切换。通话页与九宫格已经有了。
-Demo 还差三屏：通话记录、设置、群呼选人。
+**P3 第六刀 —— Kit 剩余界面 + Demo 三屏：已落地（2026-09-05）**
+来电横幅（`bannerFirst`）、悬浮球（`floatingWindow`，可拖、吸边、点开还原）、
+「以语音接听」、扬声器切换（新公开方法 `setSpeakerOn`，四处同步：协议/门面/实现/ObjC 检查）、
+网络质量条。全部**只编译验过，真机没验过**。
+
+**还没做的**：iOS Demo 的「自画 UI」模式（草图 §02-D 那个总开关）。用法 A 在
+Web Demo 里已经完整示范，iOS 等回调表稳定后再补一份。
 
 **P4 —— 九宫格的打磨**：格子布局现在是等分网格，草图 §05 还要主讲人放大、
 双击切焦点。服务端的 simulcast 与带宽估计都已就绪。
@@ -140,6 +151,12 @@ Web 端的 uikit 可以直接对照抄结构（`packages/call-uikit-react/src/la
   `swift test` 12 秒不变。原先「几百 MB」的说法是高估。
 - **音频会话要配 `.voiceChat` 模式**：不配的话没有回声消除，自己会听到自己，
   而那听起来像「对方设备有问题」，很容易查错方向。
+
+- **横幅 / 悬浮球模式下 window 铺满全屏但只有那一小块吃触摸**（`IMPassthroughWindow`
+  的 `hitTest`），其余点击穿透给宿主。不做这个的话一个 56pt 的小球把整个 App 都挡住。
+- **Demo 的记录靠 `pendingPeer` 记主叫的对方**：`callBegin` 的载荷里没有 callee，
+  主叫这边只有拨号那一刻知道对方是谁。这是宿主侧的记账，不是回调表缺字段——
+  宿主拨号时本来就知道自己拨给了谁。
 
 ## 关联工程 / 常用命令
 

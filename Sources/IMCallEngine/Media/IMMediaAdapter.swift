@@ -109,6 +109,9 @@ public protocol IMMediaAdapter: AnyObject, Sendable {
     /// 反复开关摄像头走 unpublish 会触发重协商风暴（协议 §3.2）。
     func setMuted(_ cid: String, _ muted: Bool)
 
+    /// setSpeakerOn 切换扬声器 / 听筒。**只改路由不改采集**，通话不中断。
+    func setSpeakerOn(_ on: Bool)
+
     /// attachRemoteView 把某个 uid 的远端画面挂到一个视图上；传 nil 卸载。
     func attachRemoteView(_ uid: String, _ view: AnyObject?)
 

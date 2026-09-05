@@ -39,6 +39,9 @@
     }];
     [_engine removeEventObserver:token];
 
+    // 扬声器：设计文档 §7.5 的 setAudioRoute。
+    [_engine setSpeakerOn:YES];
+
     // 挂画面：UI 拿到画面的唯一途径（CONVENTIONS §1）。
     [_engine attachView:@"bob" to:nil];
     [_engine attachLocalView:@"cam-1" to:nil];

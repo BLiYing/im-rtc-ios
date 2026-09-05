@@ -90,7 +90,23 @@ final class IMEventDispatcher {
         deliver(IMCallEvent(name, payload))
     }
 
+    /// 周期性事件：主讲人 300ms 一次、网络质量 2s 一次。**降到 debug**，
+    /// 否则一通电话几百条，把状态跃迁那几条淹掉。
+    private static let periodic: Set<IMCallEventName> = [.activeSpeakers, .networkQuality]
+
     private func deliver(_ event: IMCallEvent) {
+        /*
+         **每一个公开事件都进日志。** 这是「四端日志合到一条时间轴」那条链路的前提：
+         宿主装一个 sink 就能拿到完整事件流，不用再从事件面板里手动复制粘贴。
+         （Web 端同一处：engineBus.ts。）
+         */
+        let fields = event.payload.mapValues { Self.fieldText($0) }
+        if Self.periodic.contains(event.name) {
+            IMRTCLog.debug("event \(event.name)", fields)
+        } else {
+            IMRTCLog.info("event \(event.name)", fields)
+        }
+
         mu.lock()
         let handlers = Array(observers.values)
         mu.unlock()
@@ -190,6 +206,18 @@ final class IMEventDispatcher {
         "onFirstVideoFrame": .firstVideoFrame,
         "onRoomJoined": .roomJoined, "onRoomLeft": .roomLeft, "onRoomClosed": .roomClosed,
     ]
+
+    /// fieldText 把载荷压成一行文本进日志；数组/字典走 JSON。
+    private static func fieldText(_ value: Any) -> String {
+        if let text = value as? String { return text }
+        if let number = value as? NSNumber { return number.stringValue }
+        if JSONSerialization.isValidJSONObject(value),
+           let data = try? JSONSerialization.data(withJSONObject: value),
+           let text = String(data: data, encoding: .utf8) {
+            return text
+        }
+        return String(describing: value)
+    }
 
     /// plain 把 `IMJSON` 摊成 ObjC 能读的普通值。
     private static func plain(_ value: IMJSON) -> Any {

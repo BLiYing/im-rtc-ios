@@ -133,6 +133,19 @@ public final class IMWebRTCAdapter: NSObject, IMMediaAdapter, @unchecked Sendabl
         track?.isEnabled = !muted
     }
 
+    /// setSpeakerOn 切扬声器。走 `RTCAudioSession` 而不是直接碰 `AVAudioSession`——
+    /// libwebrtc 自己也在管这个 session，绕开它会两边打架。
+    public func setSpeakerOn(_ on: Bool) {
+        let session = RTCAudioSession.sharedInstance()
+        session.lockForConfiguration()
+        defer { session.unlockForConfiguration() }
+        do {
+            try session.overrideOutputAudioPort(on ? .speaker : .none)
+        } catch {
+            IMRTCLog.warn("切换扬声器失败", ["on": String(on), "err": String(describing: error)])
+        }
+    }
+
     public func attachRemoteView(_ uid: String, _ view: AnyObject?) {
         // 视图操作必须在主线程。**用 async 不用 sync**（CONVENTIONS §5 禁止 main.sync）。
         DispatchQueue.main.async { [weak self] in

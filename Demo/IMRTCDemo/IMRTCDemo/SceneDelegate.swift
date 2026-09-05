@@ -18,8 +18,21 @@ final class SceneDelegate: UIResponder, UIWindowSceneDelegate {
                options connectionOptions: UIScene.ConnectionOptions) {
         guard let windowScene = scene as? UIWindowScene else { return }
         let window = UIWindow(windowScene: windowScene)
-        window.rootViewController = UINavigationController(rootViewController: ViewController())
+        // 草图 §02 的三个 tab：拨号 / 记录 / 设置。登录也在拨号页的身份卡里。
+        let tabs = UITabBarController()
+        tabs.viewControllers = [
+            nav(DialerViewController(), "拨号", "phone"),
+            nav(HistoryViewController(), "记录", "clock"),
+            nav(SettingsViewController(), "设置", "gearshape"),
+        ]
+        window.rootViewController = tabs
         window.makeKeyAndVisible()
         self.window = window
+    }
+
+    private func nav(_ root: UIViewController, _ title: String, _ icon: String) -> UINavigationController {
+        let nav = UINavigationController(rootViewController: root)
+        nav.tabBarItem = UITabBarItem(title: title, image: UIImage(systemName: icon), tag: 0)
+        return nav
     }
 }

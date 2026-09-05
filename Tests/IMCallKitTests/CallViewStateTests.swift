@@ -237,3 +237,27 @@ final class EndActionTests: XCTestCase {
         XCTAssertEqual(imEndAction(for: state { $0.phase = .connecting }), .hangup)
     }
 }
+
+/// 扬声器默认值。**视频通话默认外放**：举着手机看画面时不可能贴耳朵听筒。
+final class SpeakerDefaultTests: XCTestCase {
+    func testVideoCallDefaultsToSpeaker() {
+        let video = reduceCallView(IMCallViewState(),
+                                   .callReceived(callID: "c", caller: "a", mediaType: "video", isGroup: false))
+        let audio = reduceCallView(IMCallViewState(),
+                                   .callReceived(callID: "c", caller: "a", mediaType: "audio", isGroup: false))
+        XCTAssertTrue(video.selfState.speakerOn)
+        XCTAssertFalse(audio.selfState.speakerOn, "语音通话默认听筒，跟系统电话一致")
+    }
+
+    func testMeetingDefaultsToSpeaker() {
+        let meeting = reduceCallView(IMCallViewState(), .meetingJoined(roomID: "r", now: 1))
+        XCTAssertTrue(meeting.selfState.speakerOn)
+    }
+
+    func testToggleSpeaker() {
+        var state = reduceCallView(IMCallViewState(),
+                                   .callReceived(callID: "c", caller: "a", mediaType: "audio", isGroup: false))
+        state = reduceCallView(state, .setSpeaker(true))
+        XCTAssertTrue(state.selfState.speakerOn)
+    }
+}

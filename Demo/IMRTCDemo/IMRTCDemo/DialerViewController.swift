@@ -1,0 +1,140 @@
+import UIKit
+import IMCallKit
+
+/*
+ 拨号页（草图 §02-B）：顶部身份卡 + 三块对应三种玩法：1v1 / 群通话 / 会议房间。
+
+ **这一整屏都是宿主代码**——联系人从哪来、群怎么组织，SDK 一概不管。
+ 它只调 `kit.controller.placeCall` 与 `joinMeeting`。通话界面一行都不在这里。
+ */
+final class DialerViewController: UIViewController {
+
+    private let session = DemoSession.shared
+
+    private let serverField = DemoUI.field(placeholder: "服务器", text: "http://127.0.0.1:8787")
+    private let userField = DemoUI.field(placeholder: "用户 ID", text: "alice")
+    private let calleeField = DemoUI.field(placeholder: "对方 ID", text: "bob")
+    private let roomField = DemoUI.field(placeholder: "房间号（留空则新建）", text: "")
+    private let groupLabel = UILabel()
+    private let statusLabel = UILabel()
+    private let errorLabel = UILabel()
+    private let loginButton = UIButton(type: .system)
+    private let logoutButton = UIButton(type: .system)
+    private var callButtons: [UIButton] = []
+    private var groupPick: [String] = ["bob", "carol"]
+
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        title = "拨号"
+        view.backgroundColor = .systemGroupedBackground
+        build()
+        session.onChange = { [weak self] in self?.refresh() }
+        refresh()
+    }
+
+    private func refresh() {
+        statusLabel.text = session.connectionText
+        let loggedIn = session.isLoggedIn
+        loginButton.isHidden = loggedIn
+        logoutButton.isHidden = !loggedIn
+        serverField.isEnabled = !loggedIn
+        userField.isEnabled = !loggedIn
+        callButtons.forEach { $0.isEnabled = loggedIn }
+        groupLabel.text = "👥 " + groupPick.joined(separator: "、")
+    }
+
+    // MARK: - 动作
+
+    @objc private func onLogin() {
+        errorLabel.text = ""
+        let server = serverField.text?.trimmingCharacters(in: .whitespaces) ?? ""
+        let user = userField.text?.trimmingCharacters(in: .whitespaces) ?? ""
+        guard !server.isEmpty, !user.isEmpty else { return }
+        run { try await self.session.login(server: server, username: user) }
+    }
+
+    @objc private func onLogout() { run { await self.session.logout() } }
+
+    @objc private func onAudio() { place(mediaType: "audio") }
+    @objc private func onVideo() { place(mediaType: "video") }
+
+    private func place(mediaType: String) {
+        let callee = calleeField.text?.trimmingCharacters(in: .whitespaces) ?? ""
+        guard !callee.isEmpty, let kit = session.kit else { return }
+        session.pendingPeer = callee
+        kit.controller.placeCall([callee], mediaType: mediaType)
+    }
+
+    @objc private func onPickGroup() {
+        let picker = ContactPickerViewController(selected: groupPick) { [weak self] picked in
+            self?.groupPick = picked
+            self?.refresh()
+        }
+        navigationController?.pushViewController(picker, animated: true)
+    }
+
+    @objc private func onGroupCall() {
+        guard !groupPick.isEmpty, let kit = session.kit else { return }
+        session.pendingPeer = "群通话 · \(groupPick.count + 1) 人"
+        kit.controller.placeCall(groupPick, mediaType: "video", isGroup: true)
+    }
+
+    @objc private func onJoinMeeting() {
+        errorLabel.text = ""
+        guard let kit = session.kit else { return }
+        let typed = roomField.text?.trimmingCharacters(in: .whitespaces) ?? ""
+        run {
+            let roomID = typed.isEmpty
+                ? try await DemoAPI.createMeetingRoom(server: self.session.server,
+                                                      token: self.session.token)
+                : typed
+            let roomToken = try await DemoAPI.fetchRoomToken(
+                server: self.session.server, token: self.session.token,
+                roomID: roomID, deviceID: self.session.deviceID)
+            await MainActor.run {
+                // 把房间号留在框里，方便复制给另一台设备。
+                self.roomField.text = roomID
+                kit.controller.joinMeeting(roomID: roomID, roomToken: roomToken)
+            }
+        }
+    }
+
+    /// run 跑一段异步动作，失败就把错误摆在页面上——不弹 alert，弹窗会挡住通话页。
+    private func run(_ body: @escaping () async throws -> Void) {
+        Task { @MainActor in
+            do { try await body() } catch { errorLabel.text = error.localizedDescription }
+        }
+    }
+
+    // MARK: - 搭界面
+
+    private func build() {
+        statusLabel.font = .systemFont(ofSize: 13)
+        statusLabel.textColor = .secondaryLabel
+        errorLabel.font = .systemFont(ofSize: 13)
+        errorLabel.textColor = .systemRed
+        errorLabel.numberOfLines = 0
+        groupLabel.font = .systemFont(ofSize: 15)
+
+        DemoUI.style(loginButton, title: "登录", action: #selector(onLogin), target: self)
+        DemoUI.style(logoutButton, title: "退出", action: #selector(onLogout), target: self)
+        let audio = DemoUI.button("📞 语音", #selector(onAudio), self)
+        let video = DemoUI.button("📹 视频", #selector(onVideo), self)
+        let pick = DemoUI.button("选人 ›", #selector(onPickGroup), self)
+        let group = DemoUI.button("发起群通话", #selector(onGroupCall), self)
+        let join = DemoUI.button("加入房间", #selector(onJoinMeeting), self)
+        callButtons = [audio, video, pick, group, join]
+
+        let stack = UIStackView(arrangedSubviews: [
+            DemoUI.card("身份", [serverField, userField, statusLabel, loginButton, logoutButton]),
+            DemoUI.card("单人通话", [calleeField, DemoUI.row([audio, video])]),
+            DemoUI.card("多人通话（最多 8 人）", [DemoUI.row([groupLabel, pick]), group]),
+            DemoUI.card("会议房间", [roomField, join,
+                                 DemoUI.note("会议不走振铃，直接进房。把房间号发给另一台设备就能双开。")]),
+            errorLabel,
+        ])
+        stack.axis = .vertical
+        stack.spacing = 16
+        DemoUI.scroll(stack, in: view)
+    }
+}

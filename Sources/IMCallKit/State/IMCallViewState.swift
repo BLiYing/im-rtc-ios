@@ -74,10 +74,13 @@ public struct IMParticipant: Equatable, Sendable {
 public struct IMSelfState: Equatable, Sendable {
     public var micOn = true
     public var cameraOn = false
+    /// 扬声器外放。**视频通话默认开**：举着手机看画面时不可能贴耳朵听筒。
+    public var speakerOn = false
 
-    public init(micOn: Bool = true, cameraOn: Bool = false) {
+    public init(micOn: Bool = true, cameraOn: Bool = false, speakerOn: Bool = false) {
         self.micOn = micOn
         self.cameraOn = cameraOn
+        self.speakerOn = speakerOn
     }
 }
 
@@ -146,6 +149,7 @@ public enum IMCallViewAction: Sendable {
     case hint(String)
     case setMic(Bool)
     case setCamera(Bool)
+    case setSpeaker(Bool)
     case setMinimized(Bool)
     case dismiss
 }
@@ -164,7 +168,8 @@ public func reduceCallView(_ state: IMCallViewState,
         next.role = "callee"
         next.peerUID = isGroup ? "" : caller
         next.participants = [IMParticipant(uid: caller, hasAccepted: true)]
-        next.selfState = IMSelfState(micOn: true, cameraOn: mediaType == "video")
+        next.selfState = IMSelfState(micOn: true, cameraOn: mediaType == "video",
+                                     speakerOn: mediaType == "video")
 
     case let .callPlaced(calleeIDs, mediaType, isGroup):
         next = IMCallViewState()
@@ -175,7 +180,8 @@ public func reduceCallView(_ state: IMCallViewState,
         next.peerUID = isGroup ? "" : (calleeIDs.first ?? "")
         // 呼出时对方还没接——**先摆上去且标成未接听**，界面才有「正在响铃」的格子。
         next.participants = calleeIDs.map { IMParticipant(uid: $0, hasAccepted: false) }
-        next.selfState = IMSelfState(micOn: true, cameraOn: mediaType == "video")
+        next.selfState = IMSelfState(micOn: true, cameraOn: mediaType == "video",
+                                     speakerOn: mediaType == "video")
 
     case let .callBegin(callID, roomID, mediaType, isGroup, role, now):
         // callBegin 只说「通话建立」，媒体不一定通了，所以先进 connecting——
@@ -198,7 +204,7 @@ public func reduceCallView(_ state: IMCallViewState,
         next.isGroup = true
         next.isMeeting = true
         next.beganAt = now
-        next.selfState = IMSelfState(micOn: true, cameraOn: true)
+        next.selfState = IMSelfState(micOn: true, cameraOn: true, speakerOn: true)
 
     case let .callEnd(reason):
         // **振铃通话的结束出口**（会议走 roomLeft）。
@@ -263,6 +269,9 @@ public func reduceCallView(_ state: IMCallViewState,
 
     case let .setCamera(on):
         next.selfState.cameraOn = on
+
+    case let .setSpeaker(on):
+        next.selfState.speakerOn = on
 
     case let .setMinimized(minimized):
         next.isMinimized = minimized

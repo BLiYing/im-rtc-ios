@@ -30,6 +30,11 @@ public final class IMCallOverlayViewController: UIViewController {
     private let endButton = IMControlButton(role: .danger, icon: "📵", caption: "挂断")
     private let acceptButton = IMControlButton(role: .accept, icon: "📹", caption: "接听")
     private let rejectButton = IMControlButton(role: .danger, icon: "✕", caption: "拒绝")
+    /// 视频来电才有：接了但本端不开摄像头（草图 §03-F）。
+    private let audioAcceptButton = IMControlButton(icon: "🎤", caption: "以语音接听")
+    private let speakerButton = IMControlButton(icon: "🔈", caption: "扬声器",
+                                                onIcon: "🔊", onCaption: "扬声器")
+    private let networkBars = IMNetworkBars()
 
     /// 计时器。**持有方释放时必须 cancel**（CONVENTIONS §5）。
     private var tickTimer: DispatchSourceTimer?
@@ -77,8 +82,9 @@ public final class IMCallOverlayViewController: UIViewController {
         controlsStack.alignment = .top
         controlsStack.spacing = 12
 
-        let header = UIStackView(arrangedSubviews: [titleLabel, subtitleLabel])
+        let header = UIStackView(arrangedSubviews: [titleLabel, subtitleLabel, networkBars])
         header.axis = .vertical
+        header.alignment = .center
         header.spacing = 2
 
         for view in [minimizeButton, header, gridView, controlsStack] {
@@ -111,6 +117,8 @@ public final class IMCallOverlayViewController: UIViewController {
         endButton.addTarget(self, action: #selector(onEnd), for: .touchUpInside)
         acceptButton.addTarget(self, action: #selector(onAccept), for: .touchUpInside)
         rejectButton.addTarget(self, action: #selector(onReject), for: .touchUpInside)
+        audioAcceptButton.addTarget(self, action: #selector(onAudioAccept), for: .touchUpInside)
+        speakerButton.addTarget(self, action: #selector(onSpeaker), for: .touchUpInside)
     }
 
     // MARK: - 动作
@@ -121,6 +129,8 @@ public final class IMCallOverlayViewController: UIViewController {
     @objc private func onEnd() { controller.end() }
     @objc private func onAccept() { controller.accept() }
     @objc private func onReject() { controller.reject() }
+    @objc private func onAudioAccept() { controller.acceptAudioOnly() }
+    @objc private func onSpeaker() { controller.toggleSpeaker() }
 
     // MARK: - 渲染
 
@@ -142,15 +152,24 @@ public final class IMCallOverlayViewController: UIViewController {
         minimizeButton.isHidden = state.phase == .incoming || state.phase == .ended
         micButton.isOn = !state.selfState.micOn
         cameraButton.isOn = state.selfState.cameraOn
+        speakerButton.isOn = state.selfState.speakerOn
+        // 1v1 显示对端的网络；群里每个格子各自的等级以后放格子上，这里只看整体。
+        let level = state.participants.first?.networkLevel ?? 0
+        networkBars.apply(level: state.phase == .active ? level : 0)
         renderControls(state)
         renderTiles(state)
     }
 
     /// renderControls 按阶段换按钮组。来电时是「拒绝 / 接听」，其余是常规四件套。
     private func renderControls(_ state: IMCallViewState) {
-        let wanted: [UIView] = state.phase == .incoming
-            ? [rejectButton, acceptButton]
-            : [micButton, cameraButton, minimizeControl, endButton]
+        let wanted: [UIView]
+        if state.phase == .incoming {
+            wanted = state.mediaType == "video"
+                ? [audioAcceptButton, rejectButton, acceptButton]
+                : [rejectButton, acceptButton]
+        } else {
+            wanted = [micButton, cameraButton, speakerButton, minimizeControl, endButton]
+        }
         guard controlsStack.arrangedSubviews != wanted else { return }
         controlsStack.arrangedSubviews.forEach {
             controlsStack.removeArrangedSubview($0)

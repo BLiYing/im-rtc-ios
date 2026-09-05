@@ -60,6 +60,7 @@ final class FacadeTests: XCTestCase {
         func attachLocalView(_ cid: String, _ view: AnyObject?) {
             note("attachLocal(\(cid),\(view == nil ? "nil" : "view"))")
         }
+        func setSpeakerOn(_ on: Bool) { note("setSpeakerOn(\(on))") }
         func close() { note("close") }
     }
 
