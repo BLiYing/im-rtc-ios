@@ -43,7 +43,7 @@ Engine 内部：`CallEngine（门面）→ StateMachine / Signaling / Media / De
 - 类型 `UpperCamelCase`，方法/属性 `lowerCamelCase`；**公开类型统一 `IM` 前缀**
   （`IMCallEngine`、`IMCallParams`），避免与宿主符号冲突。
 - 方法名遵循 Swift API Design Guidelines：读起来像句子（`engine.call(userIds:mediaType:)`）。
-- **回调名三端同名**：`onCallReceived` / `onCallBegin` / `onCallEnd` …
+- **回调名四端同名**：`onCallReceived` / `onCallBegin` / `onCallEnd` …
   Swift delegate 方法写成 `callEngine(_:onCallEnd:)`，但**语义与参数名必须与 §7.5 对齐**。
 - 时间量带单位：`timeoutMS`、`durationSec`。
 - 禁止 `data` / `info` / `manager` / `helper` 这类无语义名字做类型名。
@@ -101,7 +101,7 @@ Engine 内部：`CallEngine（门面）→ StateMachine / Signaling / Media / De
 ## 9. 测试与「完成的定义」
 
 - **每加一个功能就配单测**。状态机与信令编解码是**必须**有测试的部分。
-- 状态机跑 `im-rtc-server/docs/conformance/*.json` 的**一致性向量**，与另外三端同一份。
+- 状态机跑 `im-rtc-server/docs/conformance/*.json` 的**一致性向量**，与另外四端同一份。
 - 纯逻辑（状态机、帧编解码、格子布局计算）用 XCTest 直接测，**不需要模拟器摄像头**。
 - **音视频链路一律真机验收**，且要写清楚测了什么：接通/静音互见/翻转摄像头/切后台/弱网。
 - `./scripts/test.sh` 是唯一测试入口。**别手拼 xcodebuild 命令行**（姊妹项目上这条踩过坑：

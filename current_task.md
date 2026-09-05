@@ -9,7 +9,7 @@
 **P3 前四刀已落地（2026-09-05）：协议层 + 三个状态机 + 信令连接 + **门面与回调表**。
 向量全过，且已经真连上服务端跑通进房离房。**「自画 UI 的宿主」现在就能接了。**
 
-服务端 P0~P4 与 Web P2 都已完成，本仓是四仓里最后开工的一个。
+服务端 P0~P4 与 Web P2 都已完成，本仓是当时四仓里最后开工的一个（Android 于 2026-09-05 进入范围，排在本仓之后）。
 
 | 目录 | 内容 | 怎么验的 |
 |---|---|---|
@@ -123,11 +123,11 @@ Web 端的 uikit 可以直接对照抄结构（`packages/call-uikit-react/src/la
 - **`JSONSerialization` 分不清 true 与 1**：两者都是 `NSNumber`，
   且 `NSNumber(value: 1) is Bool` 为 **true**。用 `is Bool` 判类型的话，
   「bool 不能写成 0/1」这条协议规则在 Swift 端等于不存在。本仓用 `CFBooleanGetTypeID` 判。
-- **4401 必须有重试上限**（`IMSignalConnection.maxAuthFailures = 3`，三端同一个数）：
+- **4401 必须有重试上限**（`IMSignalConnection.maxAuthFailures = 3`，四端同一个数）：
   重连**带的是同一枚 token**，没有上限就是拿同一把坏钥匙永远敲同一扇门。
   Web 端实测过——服务端重启换了签名密钥，一个没关的标签页重试到第 19 次还在敲，
   日志里全是 `token_invalid`，把真正的问题淹掉了。到顶抛 `onKickedOut` 让宿主回登录页。
-- **三端已知的两条真 bug，iOS 从第一天就带上了防线**：
+- **各端已知的两条真 bug，iOS 从第一天就带上了防线**：
   通话结束后房间必须回 idle（否则之后每一帧都发向已销毁的房间）；
   层上界要随订阅一起给到服务端（否则房间记 m、实际发 h）。
 
@@ -142,7 +142,7 @@ Web 端的 uikit 可以直接对照抄结构（`packages/call-uikit-react/src/la
   那个纯信令形态的。
 - **不给 Engine 传媒体适配器是正常用法**，不是降级：登录、振铃、成员进出、
   静音通知一个都不少，只有推流与画面挂载会以 `2005 invalid_state` 失败。
-  **没有为它新造错误码**——错误码表是四仓共用的契约，加一个码等于改四个仓 + 改向量。
+  **没有为它新造错误码**——错误码表是五仓共用的契约，加一个码等于改五个仓 + 改向量。
 
 - **Kit 的界面代码 macOS 上编不到**：它们全在 `#if canImport(UIKit)` 里，
   `swift build` 会整个跳过——**全绿完全不代表那些文件是好的**。
@@ -194,10 +194,13 @@ Web 端的 uikit 可以直接对照抄结构（`packages/call-uikit-react/src/la
 
 ## 关联工程 / 常用命令
 
-- 四仓（本地同级 `/Users/liying/IOSProject/im-rtc/`）：
+- **各端能力对照表：`../im-rtc-server/docs/CLIENT_PARITY.md`**（逐端逐特性状态的**单一真相源**，✅ 只写在那里，本文件不重复）。
+
+- 五仓（本地同级 `/Users/liying/IOSProject/im-rtc/`）：
   [im-rtc-server](https://github.com/BLiYing/im-rtc-server)（**协议契约在这里，只读引用**）·
   **im-rtc-ios**（本仓）· [im-rtc-web](https://github.com/BLiYing/im-rtc-web) ·
-  [im-rtc-desktop](https://github.com/BLiYing/im-rtc-desktop)。
+  [im-rtc-desktop](https://github.com/BLiYing/im-rtc-desktop) ·
+  [im-rtc-android](https://github.com/BLiYing/im-rtc-android)。
 - 首批宿主（下游）：`../../IMProgram`（Objective-C iOS App，架构见其 `ARCHITECTURE.md`）。
 - 常用命令（脚本随骨架落地）：
   ```bash
