@@ -98,7 +98,13 @@ Demo 的设置页里可选（换档位下一通电话生效）。**画质是宿�
    从主叫的角度看，对方拒接就跟什么都没发生一样。补订阅了
    `userDidReject` / `userDidNotRespond`。
 
-**2026-09-05 第三轮复测**：群呼选人名单补到 9 个人。
+**2026-09-05 第三轮复测**：**语音通话里不再给摄像头按钮**（拍板见设计文档 §11 第 10 条）。
+协议上没有「转视频」这回事，原先那个按钮点了确实出镜、对方确实看得见，
+而本端格子的显示条件写的是 `mediaType == "video"`——**自己不知道自己已经出镜了**。
+判据是 `media_type` 而不是「本端摄像头开没开」：「以语音接听」的那通电话仍是 video，
+按钮要留着（`imShowsCameraButton(for:)`）。
+
+群呼选人名单补到 9 个人。
 自己会被过滤掉，原先 8 个名字只剩 7 个可选，**永远凑不出真正的九宫格**
 （自己 + 8 = 9 才是 3×3）。
 
@@ -237,6 +243,9 @@ Web 端的 uikit 可以直接对照抄结构（`packages/call-uikit-react/src/la
 - **远端轨道要「认领」**：`didAdd rtpReceiver` 只带 track_id，归属写在信令帧里，
   **谁先到都可能**。少了 `claimRemoteTracks` 这一步就是「协商全通、首帧照抛、
   但一格画面都不出来」。改媒体层时别把这条丢了。
+- **语音通话里没有摄像头按钮**（`imShowsCameraButton(for:)`，与 Web 的
+  `showsCameraButton` 同一条判据）。想做「通话中转视频」得先加协议帧
+  （`call.upgrade_request` / `upgrade_accept|reject`）= 改五仓，见设计文档 §11-10。
 - **格子恒为正方形，行列跟容器形状走**（`imGridDimensions(_:aspect:)`）：
   让格子吃满整块区域（`fillEqually` 两层）的话，竖屏两个人就是两条细长条。
   这条规则四端共用一份，Web 的 `layout/grid.ts` 是同一个算法——**改一边要改两边**。

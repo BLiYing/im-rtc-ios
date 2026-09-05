@@ -258,7 +258,11 @@ public final class IMCallOverlayViewController: UIViewController {
                 ? [audioAcceptButton, rejectButton, acceptButton]
                 : [rejectButton, acceptButton]
         } else {
-            wanted = [micButton, cameraButton, speakerButton, minimizeControl, endButton]
+            // **语音通话不给摄像头按钮**——协议上没有「转视频」这回事，
+            // 点了只会让人在不知情的状态下出镜。见 imShowsCameraButton。
+            wanted = imShowsCameraButton(for: state)
+                ? [micButton, cameraButton, speakerButton, minimizeControl, endButton]
+                : [micButton, speakerButton, minimizeControl, endButton]
         }
         guard controlsStack.arrangedSubviews != wanted else { return }
         controlsStack.arrangedSubviews.forEach {

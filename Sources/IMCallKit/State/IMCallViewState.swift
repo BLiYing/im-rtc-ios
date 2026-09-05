@@ -342,6 +342,32 @@ public func imEndAction(for state: IMCallViewState) -> IMEndAction {
 }
 
 /**
+ 通话中该不该显示「摄像头」按钮。
+
+ # 只看 media_type，不看本端摄像头开没开
+
+ **语音通话里不给这个按钮。** 协议上没有「转视频」这回事：`media_type` 只在
+ `call.invite` 时定死，是振铃界面的元数据；进了房之后房间根本不认识它，
+ 你在一通语音通话里发布摄像头轨道，服务端照收、对端照样收到
+ `onUserVideoAvailable(true)`。
+
+ 所以原先那个按钮是**半实现**：点了确实出镜、对方确实看得见，而本端格子的
+ 显示条件写的是 `mediaType == "video"`，于是**你自己不知道自己已经出镜了**。
+ 这比「不支持」危险得多，所以按钮直接不给。
+ 想真正支持，要的是「邀请对方转视频」那一整套（`call.upgrade_request` /
+ `upgrade_accept|reject`）——那是协议改动，改五个仓，单独一刀。
+
+ 判据必须是 `mediaType` 而**不是**「本端摄像头开没开」：
+ 「以语音接听」接下来的那通电话 `media_type` 仍然是 `video`——
+ 对方本来就知道这是视频通话，中途打开摄像头完全合理，按钮必须留着。
+
+ 会议房的 `mediaType` 恒为 `video`，所以它天然留着按钮。
+ */
+public func imShowsCameraButton(for state: IMCallViewState) -> Bool {
+    state.mediaType == "video"
+}
+
+/**
  结束原因的人话。**结束画面必须说清为什么**——只写「通话结束」然后 1.5 秒消失，
  用户根本不知道是对方拒了、忙线、还是压根不在线。
  （实测反馈：拨给不在线的人，界面「消失得很快」且没有任何解释。）

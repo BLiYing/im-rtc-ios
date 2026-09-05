@@ -187,6 +187,51 @@ final class GroupOutcomeTests: XCTestCase {
     }
 }
 
+/*
+ 语音通话里**不给摄像头按钮**。
+
+ 协议上没有「转视频」这回事：media_type 只在 invite 时定死，进了房房间就不认识它。
+ 原先那个按钮是半实现——点了确实出镜、对方确实看得见，而本端格子的显示条件
+ 写的是 `mediaType == "video"`，于是**自己不知道自己已经出镜了**。
+ */
+final class CameraButtonVisibilityTests: XCTestCase {
+
+    func testAudioCallHasNoCameraButton() {
+        let state = reduceCallView(IMCallViewState(),
+                                   .callReceived(callID: "c-1", caller: "bob",
+                                                 mediaType: "audio", isGroup: false))
+        XCTAssertFalse(imShowsCameraButton(for: state))
+    }
+
+    func testVideoCallKeepsIt() {
+        let state = reduceCallView(IMCallViewState(),
+                                   .callReceived(callID: "c-1", caller: "bob",
+                                                 mediaType: "video", isGroup: false))
+        XCTAssertTrue(imShowsCameraButton(for: state))
+    }
+
+    /**
+     **「以语音接听」之后按钮要留着。**
+
+     那通电话的 media_type 仍然是 video——对方本来就知道这是视频通话，
+     中途打开自己的摄像头完全合理。判据是 media_type，不是「本端摄像头开没开」。
+    */
+    func testAudioOnlyAcceptOfAVideoCallKeepsIt() {
+        var state = reduceCallView(IMCallViewState(),
+                                   .callReceived(callID: "c-1", caller: "bob",
+                                                 mediaType: "video", isGroup: false))
+        state = reduceCallView(state, .setCamera(false)) // 以语音接听
+        XCTAssertFalse(state.selfState.cameraOn)
+        XCTAssertTrue(imShowsCameraButton(for: state), "视频通话里关着摄像头，按钮仍然要有")
+    }
+
+    /// 会议房恒为视频，天然留着按钮。
+    func testMeetingKeepsIt() {
+        let state = reduceCallView(IMCallViewState(), .meetingJoined(roomID: "r-1", now: 0))
+        XCTAssertTrue(imShowsCameraButton(for: state))
+    }
+}
+
 /// 布局与层上界。**这段算术直接决定带宽**，所以单独测。
 final class GridTests: XCTestCase {
 
