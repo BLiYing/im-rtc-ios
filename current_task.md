@@ -53,10 +53,22 @@ RTC_LIVE_SERVER=http://127.0.0.1:8787 swift test --filter LiveServerTests
 **两条 PeerConnection，各有固定 offerer**（pub=本端、sub=服务端），
 所以不需要 perfect negotiation / rollback。
 
-**开工前要先拍一个板：libwebrtc 怎么发给第三方。** 两条路——
-(a) 依赖别人发布的 SPM 包（如 `stasel/WebRTC`）并锁死版本；
-(b) 自建 xcframework 传 GitHub Releases，用 `.binaryTarget(url:checksum:)`。
-它直接决定宿主的下载体积与首次构建时间，**不能等做到一半再改**。
+**libwebrtc 的分发已拍板（2026-09-05）：依赖 `stasel/WebRTC`，版本 `exact` 锁死。**
+
+```swift
+.package(url: "https://github.com/stasel/WebRTC.git", exact: "152.0.0")
+```
+
+已核实（不是凭印象）：当前 152.0.0、在维护、支持 SPM、iOS 12+（我们要 15+，够）、
+BSD-3 + Google 的 WebRTC 许可（可商业再分发）。
+
+**关键事实：Google 从 M80 起就不再发布官方的移动端预编译产物了。**
+所以「自建 xcframework」不是「重新打包 Google 的产物」，而是**自己从源码编**
+（depot_tools + 几十 GB + 几小时），成本比原先估的高得多。
+
+选它的第三个理由是**这个决定可以随时反悔**：libwebrtc 被隔离在
+`IMCallEngineWebRTC` 一个 target 里，将来要换成自建产物只改 `Package.swift`
+一行依赖，**Engine / Kit / Demo 一行不动**。这正是当初把媒体挡在 Engine 之外的收益。
 
 **P3 第六刀 —— Kit + Demo**：1v1 四态 + 来电横幅 + 悬浮球（草图 §03/§04）、Demo 四屏。
 Kit 的空壳与 Demo 工程都已就位，直接往里填界面即可。
