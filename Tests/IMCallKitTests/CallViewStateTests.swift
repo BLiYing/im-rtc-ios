@@ -1,0 +1,203 @@
+import XCTest
+@testable import IMCallKit
+
+/**
+ 视图模型的用例。**纯值语义，不需要模拟器、不需要 Engine。**
+
+ 这一组守的是 Web 端在浏览器里真撞出来的那几条——三端同一套界面逻辑，
+ 同一个坑不该踩两遍：
+
+ · 会议房里点红按钮走 hangup → 被本地拒成 2005，人退不出去；
+ · `hasAudio` 默认 false → 所有人一进来都显示成静音；
+ · activeSpeakers 只加不减 → 高亮一直亮着不灭；
+ · connecting 一帧都不停留时，媒体就绪的信号被丢掉 → 界面永远停在「接通中」。
+ */
+final class CallViewStateTests: XCTestCase {
+
+    private func reduce(_ state: IMCallViewState,
+                        _ actions: [IMCallViewAction]) -> IMCallViewState {
+        actions.reduce(state) { reduceCallView($0, $1) }
+    }
+
+    // MARK: - 阶段
+
+    func testIncomingCallShowsCaller() {
+        let state = reduce(IMCallViewState(), [
+            .callReceived(callID: "c-1", caller: "alice", mediaType: "video", isGroup: false),
+        ])
+        XCTAssertEqual(state.phase, .incoming)
+        XCTAssertEqual(state.peerUID, "alice")
+        XCTAssertTrue(state.selfState.cameraOn, "视频来电，摄像头默认开")
+        XCTAssertEqual(state.participants.map(\.uid), ["alice"])
+    }
+
+    func testGroupCallHasNoPeerUID() {
+        let state = reduce(IMCallViewState(), [
+            .callPlaced(calleeIDs: ["bob", "carol"], mediaType: "video", isGroup: true),
+        ])
+        XCTAssertEqual(state.peerUID, "", "群通话没有唯一对端")
+        XCTAssertEqual(state.participants.count, 2)
+        XCTAssertTrue(state.participants.allSatisfy { !$0.hasAccepted },
+                      "呼出时对方还没接，格子要标成响铃中")
+    }
+
+    /// **媒体先于 callBegin 到达也要算数。**
+    ///
+    /// 只在「阶段正好是 connecting」时才认的话，会议场景里那个信号会被丢掉，
+    /// 界面永远停在「接通中」。
+    func testMediaReadyBeforeCallBeginStillReachesActive() {
+        let state = reduce(IMCallViewState(), [
+            .callPlaced(calleeIDs: ["bob"], mediaType: "video", isGroup: false),
+            .mediaReady,
+            .callBegin(callID: "c-1", roomID: "r-1", mediaType: "video",
+                       isGroup: false, role: "caller", now: 100),
+        ])
+        XCTAssertEqual(state.phase, .active, "媒体已经就绪，不该退回 connecting")
+    }
+
+    func testMediaReadyAfterCallBeginAdvancesToActive() {
+        let state = reduce(IMCallViewState(), [
+            .callBegin(callID: "c-1", roomID: "r-1", mediaType: "video",
+                       isGroup: false, role: "caller", now: 100),
+        ])
+        XCTAssertEqual(state.phase, .connecting)
+        XCTAssertEqual(reduce(state, [.mediaReady]).phase, .active)
+    }
+
+    // MARK: - 会议
+
+    func testMeetingIsMarkedSoTheRedButtonCanTellThemApart() {
+        let state = reduce(IMCallViewState(), [.meetingJoined(roomID: "r-9", now: 100)])
+        XCTAssertTrue(state.isMeeting, "会议房里没有 call，红按钮必须走 leaveRoom")
+        XCTAssertTrue(state.isGroup)
+        XCTAssertEqual(state.callID, "", "会议没有 call_id")
+        XCTAssertEqual(state.phase, .connecting)
+    }
+
+    func testRoomLeftEndsAMeeting() {
+        let state = reduce(IMCallViewState(), [
+            .meetingJoined(roomID: "r-9", now: 100), .mediaReady, .roomLeft,
+        ])
+        XCTAssertEqual(state.phase, .ended, "会议没有 callEnd，收尾只能靠 roomLeft")
+    }
+
+    /// 通话结束时房间也会被清掉，`roomLeft` 不能把已经写好的 endReason 抹掉。
+    func testRoomLeftAfterCallEndKeepsTheReason() {
+        let state = reduce(IMCallViewState(), [
+            .callBegin(callID: "c-1", roomID: "r-1", mediaType: "audio",
+                       isGroup: false, role: "caller", now: 100),
+            .callEnd(reason: "hangup"),
+            .roomLeft,
+        ])
+        XCTAssertEqual(state.endReason, "hangup")
+    }
+
+    // MARK: - 成员
+
+    /// **默认认为有音频**。`userAudioAvailable` 只在状态变化时抛，
+    /// 一开始就正常的人不会有事件——默认 false 会让所有人都显示成静音。
+    func testParticipantsDefaultToHavingAudio() {
+        let state = reduce(IMCallViewState(), [
+            .callPlaced(calleeIDs: ["bob"], mediaType: "audio", isGroup: false),
+        ])
+        XCTAssertTrue(state.participants[0].hasAudio)
+        XCTAssertFalse(state.participants[0].hasVideo, "视频反过来：没收到就是没有")
+    }
+
+    func testMuteEventFlipsTheFlag() {
+        let state = reduce(IMCallViewState(), [
+            .callPlaced(calleeIDs: ["bob"], mediaType: "audio", isGroup: false),
+            .userAudio(uid: "bob", available: false),
+        ])
+        XCTAssertFalse(state.participants[0].hasAudio)
+    }
+
+    /// 事件比进房通知先到是常态，成员不存在时要先补进来。
+    func testEventForUnknownUserCreatesThem() {
+        let state = reduce(IMCallViewState(), [.userAudio(uid: "ghost", available: false)])
+        XCTAssertEqual(state.participants.map(\.uid), ["ghost"])
+        XCTAssertFalse(state.participants[0].hasAudio)
+    }
+
+    /// **activeSpeakers 是全量快照不是增量**：名单空了，高亮要灭。
+    func testActiveSpeakersClearsPeopleNoLongerSpeaking() {
+        var state = reduce(IMCallViewState(), [
+            .callPlaced(calleeIDs: ["bob", "carol"], mediaType: "audio", isGroup: true),
+            .activeSpeakers([(uid: "bob", volume: 80)]),
+        ])
+        XCTAssertTrue(state.participants.first { $0.uid == "bob" }!.isSpeaking)
+
+        state = reduce(state, [.activeSpeakers([])])
+        XCTAssertFalse(state.participants.contains { $0.isSpeaking }, "名单空了就该全灭")
+        XCTAssertTrue(state.participants.allSatisfy { $0.volume == 0 })
+    }
+
+    func testUserLeaveRemovesTheTile() {
+        let state = reduce(IMCallViewState(), [
+            .callPlaced(calleeIDs: ["bob", "carol"], mediaType: "audio", isGroup: true),
+            .userLeave(uid: "bob"),
+        ])
+        XCTAssertEqual(state.participants.map(\.uid), ["carol"])
+    }
+
+    // MARK: - 收尾
+
+    func testDismissClearsEverything() {
+        let state = reduce(IMCallViewState(), [
+            .callBegin(callID: "c-1", roomID: "r-1", mediaType: "video",
+                       isGroup: false, role: "caller", now: 100),
+            .callEnd(reason: "hangup"),
+            .dismiss,
+        ])
+        XCTAssertEqual(state, IMCallViewState(), "收起之后必须回到全空态")
+        XCTAssertFalse(state.isVisible)
+    }
+
+    func testEndingClearsMinimizedSoTheUserSeesTheResult() {
+        let state = reduce(IMCallViewState(), [
+            .callBegin(callID: "c-1", roomID: "r-1", mediaType: "audio",
+                       isGroup: false, role: "caller", now: 100),
+            .setMinimized(true),
+            .callEnd(reason: "hangup"),
+        ])
+        XCTAssertFalse(state.isMinimized, "结束画面要展开，收在小窗里等于没告诉用户")
+    }
+}
+
+/// 布局与层上界。**这段算术直接决定带宽**，所以单独测。
+final class GridTests: XCTestCase {
+
+    func testGridPrefersSquareShapes() {
+        XCTAssertEqual(imGridDimensions(1), IMGridDimensions(columns: 1, rows: 1))
+        XCTAssertEqual(imGridDimensions(2), IMGridDimensions(columns: 2, rows: 1))
+        // 3 人排 2×2 留一个空位，比 3×1 那种细长条好看。
+        XCTAssertEqual(imGridDimensions(3), IMGridDimensions(columns: 2, rows: 2))
+        XCTAssertEqual(imGridDimensions(4), IMGridDimensions(columns: 2, rows: 2))
+        XCTAssertEqual(imGridDimensions(9), IMGridDimensions(columns: 3, rows: 3))
+    }
+
+    func testGridClampsToOneScreen() {
+        XCTAssertEqual(imGridDimensions(99), IMGridDimensions(columns: 3, rows: 3))
+        XCTAssertEqual(imGridDimensions(0), IMGridDimensions(columns: 1, rows: 1))
+    }
+
+    /// 格子越小报的层越低。**漏了这一档，九宫格就是 8 路 720p。**
+    func testLayerDropsAsTilesShrink() {
+        XCTAssertEqual(imTileLayer(1), "h")
+        XCTAssertEqual(imTileLayer(4), "m")
+        XCTAssertEqual(imTileLayer(5), "l")
+        XCTAssertEqual(imTileLayer(9), "l")
+    }
+
+    func testVisibleTilesTruncates() {
+        XCTAssertEqual(imVisibleTiles(Array(1...5)).count, 5)
+        XCTAssertEqual(imVisibleTiles(Array(1...20)).count, IMMaxTiles)
+    }
+
+    func testDurationFormat() {
+        XCTAssertEqual(imFormatDuration(0), "00:00")
+        XCTAssertEqual(imFormatDuration(65), "01:05")
+        XCTAssertEqual(imFormatDuration(3661), "1:01:01")
+        XCTAssertEqual(imFormatDuration(-5), "00:00", "负数不该画成 -1:-5")
+    }
+}

@@ -1,0 +1,266 @@
+import Foundation
+import IMCallEngine
+
+/*
+ 把 Engine 的公开回调接成界面状态。
+
+ # 这一整个文件里没有一处「内部 API」
+
+ 它实现的是 `IMCallEngineDelegate` —— 与「宿主自画 UI」拿到的东西**完全一致**。
+ 这是产品边界的直接体现：**缺信息就补回调表，不开后门**。
+ 哪天 Kit 需要 Engine 开一个私有口子，就说明那张表少了一项。
+
+ # 发布是 Kit 的活
+
+ Engine 在 `call.connected` 之后会自动进房，但**不会自动推流**——
+ 推不推、推麦克风还是也推摄像头，是界面的决定。所以这里在 callBegin 之后发布。
+ */
+
+/// 界面状态变化的观察者。
+public protocol IMCallControllerObserver: AnyObject {
+    func callController(_ controller: IMCallController, didChange state: IMCallViewState)
+}
+
+/// Kit 的状态中枢。**回调都在主线程**（Engine 已经切好了）。
+public final class IMCallController: NSObject {
+    public private(set) var state = IMCallViewState() {
+        didSet {
+            guard state != oldValue else { return }
+            observers.allObjects.forEach {
+                ($0 as? IMCallControllerObserver)?.callController(self, didChange: state)
+            }
+        }
+    }
+
+    private let engine: IMCallEngine
+    private let observers = NSHashTable<AnyObject>.weakObjects()
+    /// 本端已发布轨道的 cid。**不进 state**：它不参与渲染。
+    private var micCID = ""
+    private var cameraCID = ""
+    /// 已经为哪个房间发布过。防止同一个房间推两次流。
+    private var publishedRoomID = ""
+    /// 结束画面停留多久再自动收起。0 = 不自动收。
+    public var endedHoldSeconds: TimeInterval = 1.5
+    private var dismissTimer: DispatchSourceTimer?
+
+    public init(engine: IMCallEngine) {
+        self.engine = engine
+        super.init()
+        engine.delegate = self
+    }
+
+    deinit {
+        // 计时器持有方释放时必须 cancel（CONVENTIONS §5：Timer 的 runloop 语义容易泄漏）。
+        dismissTimer?.cancel()
+    }
+
+    public func addObserver(_ observer: IMCallControllerObserver) {
+        observers.add(observer)
+    }
+
+    public func removeObserver(_ observer: IMCallControllerObserver) {
+        observers.remove(observer)
+    }
+
+    // MARK: - 界面能做的动作
+
+    public func placeCall(_ calleeIDs: [String], mediaType: String, isGroup: Bool = false) {
+        apply(.callPlaced(calleeIDs: calleeIDs, mediaType: mediaType, isGroup: isGroup))
+        Task { await engine.call(calleeIDs, mediaType: mediaType, isGroup: isGroup) }
+    }
+
+    public func joinMeeting(roomID: String, roomToken: String) {
+        apply(.meetingJoined(roomID: roomID, now: Date().timeIntervalSince1970))
+        Task {
+            await engine.joinRoom(roomID, roomToken: roomToken)
+            await publishFor(mediaType: "video")
+            await MainActor.run { self.apply(.setCamera(true)) }
+        }
+    }
+
+    public func accept() { Task { await engine.accept() } }
+    public func reject() { Task { await engine.reject() } }
+
+    /**
+     结束当前这一场，不管它是通话还是会议。
+
+     红按钮在**四种场合是四个不同的动作**，分辨这件事是 Kit 的责任——
+     让调用方去分辨，迟早有人分辨错。最容易错的是最后一条：
+     **会议房里没有 call**，发 hangup 会被状态机本地拒成 2005，
+     按钮点了毫无反应、人退不出房间（Web 端三人会议实测撞出来的）。
+     */
+    public func end() {
+        let phase = state.phase
+        let isMeeting = state.isMeeting
+        Task {
+            if isMeeting { return await engine.leaveRoom() }
+            if phase == .incoming { return await engine.reject() }
+            if phase == .outgoing { return await engine.cancel() }
+            await engine.hangup()
+        }
+    }
+
+    public func toggleMic() {
+        let on = !state.selfState.micOn
+        apply(.setMic(on))
+        guard !micCID.isEmpty else { return }
+        Task { await engine.setMuted(micCID, muted: !on) }
+    }
+
+    public func toggleCamera() {
+        let on = !state.selfState.cameraOn
+        apply(.setCamera(on))
+        Task {
+            // 第一次开摄像头要真的发布；之后只是开关，**不走 unpublish**——
+            // 反复 publish/unpublish 会触发重协商风暴（协议 §3.2）。
+            if cameraCID.isEmpty, on {
+                cameraCID = (try? await engine.publishCamera()) ?? ""
+            } else if !cameraCID.isEmpty {
+                await engine.setMuted(cameraCID, muted: !on)
+            }
+        }
+    }
+
+    public func setMinimized(_ minimized: Bool) { apply(.setMinimized(minimized)) }
+    public func dismiss() { apply(.dismiss) }
+
+    // MARK: - 内部
+
+    private func apply(_ action: IMCallViewAction) {
+        let before = state
+        state = reduceCallView(state, action)
+        onPhaseChanged(from: before)
+    }
+
+    /// onPhaseChanged 处理两件「状态变了之后要做的事」。
+    private func onPhaseChanged(from before: IMCallViewState) {
+        // 1. 进了结束态就排一个自动收起。**必须先 cancel 旧的**，
+        //    否则快速连打两通会互相收掉。
+        dismissTimer?.cancel()
+        dismissTimer = nil
+        if state.phase == .ended, endedHoldSeconds > 0 {
+            let timer = DispatchSource.makeTimerSource(queue: .main)
+            timer.schedule(deadline: .now() + endedHoldSeconds)
+            timer.setEventHandler { [weak self] in self?.apply(.dismiss) }
+            dismissTimer = timer
+            timer.resume()
+        }
+        // 2. 回到 idle 就清掉发布记录，下一通才不会拿着上一通的 cid 去 mute。
+        if state.phase == .idle {
+            micCID = ""
+            cameraCID = ""
+            publishedRoomID = ""
+        }
+        /*
+         3. 有房间号且还没为它发布过 → 推流。
+
+         触发条件看的是**「有房间号且没推过」**，不是「阶段正好是 connecting」——
+         connecting 可能一帧都不停留：callBegin 与 roomJoined 几乎同时到达时，
+         中间那个状态根本没被观察到。（Web 端被 jsdom 用例抓出来过。）
+         */
+        let isLive = state.phase == .connecting || state.phase == .active
+        guard isLive, !state.roomID.isEmpty, publishedRoomID != state.roomID else { return }
+        publishedRoomID = state.roomID
+        guard !state.isMeeting else { return } // 会议由 joinMeeting 自己推流
+        let mediaType = state.mediaType
+        Task { await publishFor(mediaType: mediaType) }
+    }
+
+    private func publishFor(mediaType: String) async {
+        micCID = (try? await engine.publishMicrophone()) ?? ""
+        if mediaType == "video" {
+            cameraCID = (try? await engine.publishCamera()) ?? ""
+        }
+    }
+}
+
+/*
+ 回调表的实现。**每一条都只用 delegate 给的参数**——没有一处去 engine 里"多问一句"。
+ */
+extension IMCallController: IMCallEngineDelegate {
+    public func callEngine(_ engine: IMCallEngine, didReceiveCall callID: String,
+                           caller: String, mediaType: String, isGroup: Bool) {
+        apply(.callReceived(callID: callID, caller: caller,
+                            mediaType: mediaType, isGroup: isGroup))
+    }
+
+    public func callEngine(_ engine: IMCallEngine, callDidBegin callID: String, roomID: String,
+                           mediaType: String, isGroup: Bool, role: String) {
+        apply(.callBegin(callID: callID, roomID: roomID, mediaType: mediaType,
+                         isGroup: isGroup, role: role, now: Date().timeIntervalSince1970))
+    }
+
+    public func callEngine(_ engine: IMCallEngine, callDidEnd callID: String, reason: String,
+                           durationSec: Int, endedBy: String) {
+        apply(.callEnd(reason: reason))
+    }
+
+    // 会议没有 callDidEnd，收尾只能靠这两条。漏订阅的话离房成功了界面还挂在那儿。
+    public func callEngine(_ engine: IMCallEngine, didLeaveRoom roomID: String) {
+        apply(.roomLeft)
+    }
+
+    public func callEngine(_ engine: IMCallEngine, roomDidClose roomID: String, reason: String) {
+        apply(.roomLeft)
+    }
+
+    public func callEngine(_ engine: IMCallEngine, didJoinRoom roomID: String) {
+        apply(.mediaReady)
+    }
+
+    public func callEngine(_ engine: IMCallEngine, didReceiveFirstVideoFrame uid: String,
+                           trackID: String) {
+        apply(.mediaReady)
+    }
+
+    public func callEngine(_ engine: IMCallEngine, userDidEnter uid: String) {
+        apply(.userEnter(uid: uid))
+    }
+
+    public func callEngine(_ engine: IMCallEngine, userDidLeave uid: String) {
+        apply(.userLeave(uid: uid))
+    }
+
+    public func callEngine(_ engine: IMCallEngine, userDidAccept uid: String) {
+        apply(.userAccept(uid: uid))
+    }
+
+    public func callEngine(_ engine: IMCallEngine, user uid: String, audioAvailable available: Bool) {
+        apply(.userAudio(uid: uid, available: available))
+    }
+
+    public func callEngine(_ engine: IMCallEngine, user uid: String, videoAvailable available: Bool) {
+        apply(.userVideo(uid: uid, available: available))
+    }
+
+    public func callEngine(_ engine: IMCallEngine,
+                           activeSpeakersDidChange speakers: [[String: Any]]) {
+        apply(.activeSpeakers(speakers.map {
+            (uid: $0["uid"] as? String ?? "", volume: ($0["volume"] as? NSNumber)?.intValue ?? 0)
+        }))
+    }
+
+    public func callEngine(_ engine: IMCallEngine,
+                           networkQualityDidChange entries: [[String: Any]]) {
+        apply(.networkQuality(entries.map {
+            (uid: $0["uid"] as? String ?? "", level: ($0["level"] as? NSNumber)?.intValue ?? 0)
+        }))
+    }
+
+    // 四个便利事件只在 1v1 抛，随后必有 callDidEnd——所以这里只做提示，**不改阶段**。
+    public func callEngine(_ engine: IMCallEngine, callWasRejectedBy uid: String) {
+        apply(.hint("\(uid) 已拒接"))
+    }
+
+    public func callEngine(_ engine: IMCallEngine, calleeIsBusy uid: String) {
+        apply(.hint("\(uid) 忙线中"))
+    }
+
+    public func callEngine(_ engine: IMCallEngine, calleeDidNotAnswer uid: String) {
+        apply(.hint("\(uid) 无应答"))
+    }
+
+    public func callEngine(_ engine: IMCallEngine, callWasCancelledBy uid: String) {
+        apply(.hint("\(uid) 取消了呼叫"))
+    }
+}
