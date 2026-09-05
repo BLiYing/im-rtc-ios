@@ -71,6 +71,31 @@ if [ "${BUILD_ONLY:-}" != "1" ]; then
   run_step "swift test" swift test
 fi
 
+# Demo 为 iOS 编译。**不启动模拟器**——`generic/platform=iOS Simulator` 是只编译不跑。
+#
+# 为什么值得多花这半分钟：上面的 swift test 跑在 macOS 上，验不到两件事——
+#   · Demo 还编不编得过（改了公开 API 而 Demo 没跟上，今天是没人会发现的）；
+#   · **公开面对 ObjC 到底可不可用**。Demo 里的 IMObjCAPICheck.m 从 ObjC 调一遍
+#     公开 API，编译即验证（CONVENTIONS §4）。它已经抓到过一个真问题：
+#     `setMuted(_:_:)` 两个参数都不带标签，生成的选择器是 `setMuted::completionHandler:`。
+#
+# 没装 Xcode 就跳过（比如 CI 上只跑 SwiftPM 的那种机器），不算失败。
+demo_builds_for_ios() {
+  if ! command -v xcodebuild >/dev/null 2>&1; then
+    echo "  跳过：这台机器没有 xcodebuild"
+    return 0
+  fi
+  xcodebuild -project Demo/IMRTCDemo/IMRTCDemo.xcodeproj -scheme IMRTCDemo \
+    -destination 'generic/platform=iOS Simulator' \
+    -derivedDataPath "${DEMO_DERIVED_DATA:-.build/demo-dd}" \
+    build 2>&1 | grep -E 'error:|warning:|BUILD (SUCCEEDED|FAILED)' | head -20
+  return "${PIPESTATUS[0]}"
+}
+
+if [ "${SKIP_DEMO_BUILD:-}" != "1" ]; then
+  run_step "Demo 为 iOS 编译（含 ObjC 可用性检查）" demo_builds_for_ios
+fi
+
 echo ""
 echo "════════════════════════════════════════════════"
 if [ ${#failed[@]} -eq 0 ]; then

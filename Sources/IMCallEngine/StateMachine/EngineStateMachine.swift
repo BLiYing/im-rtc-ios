@@ -82,9 +82,12 @@ public enum IMEngineMachine {
             // 被踢：什么都不留。重连没有意义——那等于跟另一台设备打架。
             var next = IMEngineContext()
             next.room = IMRoomMachine.cleared(.idle)
+            // **不带关闭码**：这个内部事件也被「鉴权连续失败」复用（那时真实关闭码是
+            // 4401），写死 4403 就是在撒谎。关闭码由连接层原样上报——
+            // 状态机这一份 onDisconnected 只用来驱动状态迁移，门面不会外发它。
             return IMMachineOutput(next, emit: [
                 IMEmittedEvent("onKickedOut"),
-                IMEmittedEvent("onDisconnected", ["code": .int(4403)]),
+                IMEmittedEvent("onDisconnected"),
             ])
         }
         if name == "disconnected" {

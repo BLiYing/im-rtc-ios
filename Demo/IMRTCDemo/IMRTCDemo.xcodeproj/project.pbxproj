@@ -10,19 +10,8 @@
 		B22C4AB63049C8C0008A1C5F /* IMCallEngine in Frameworks */ = {isa = PBXBuildFile; productRef = B22C4AB53049C8C0008A1C5F /* IMCallEngine */; };
 /* End PBXBuildFile section */
 
-/* Begin PBXContainerItemProxy section */
-		B22C4AA03049C56E008A1C5F /* PBXContainerItemProxy */ = {
-			isa = PBXContainerItemProxy;
-			containerPortal = B22C4A773049C569008A1C5F /* Project object */;
-			proxyType = 1;
-			remoteGlobalIDString = B22C4A7E3049C569008A1C5F;
-			remoteInfo = IMRTCDemo;
-		};
-/* End PBXContainerItemProxy section */
-
 /* Begin PBXFileReference section */
 		B22C4A7F3049C569008A1C5F /* IMRTCDemo.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = IMRTCDemo.app; sourceTree = BUILT_PRODUCTS_DIR; };
-		B22C4A9F3049C56E008A1C5F /* IMRTCDemoUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = IMRTCDemoUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
@@ -65,13 +54,6 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
-		B22C4A9C3049C56E008A1C5F /* Frameworks */ = {
-			isa = PBXFrameworksBuildPhase;
-			buildActionMask = 2147483647;
-			files = (
-			);
-			runOnlyForDeploymentPostprocessing = 0;
-		};
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
@@ -90,7 +72,6 @@
 			isa = PBXGroup;
 			children = (
 				B22C4A7F3049C569008A1C5F /* IMRTCDemo.app */,
-				B22C4A9F3049C56E008A1C5F /* IMRTCDemoUITests.xctest */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -128,29 +109,6 @@
 			productReference = B22C4A7F3049C569008A1C5F /* IMRTCDemo.app */;
 			productType = "com.apple.product-type.application";
 		};
-		B22C4A9E3049C56E008A1C5F /* IMRTCDemoUITests */ = {
-			isa = PBXNativeTarget;
-			buildConfigurationList = B22C4AB03049C56E008A1C5F /* Build configuration list for PBXNativeTarget "IMRTCDemoUITests" */;
-			buildPhases = (
-				B22C4A9B3049C56E008A1C5F /* Sources */,
-				B22C4A9C3049C56E008A1C5F /* Frameworks */,
-				B22C4A9D3049C56E008A1C5F /* Resources */,
-			);
-			buildRules = (
-			);
-			dependencies = (
-				B22C4AA13049C56E008A1C5F /* PBXTargetDependency */,
-			);
-			fileSystemSynchronizedGroups = (
-				B22C4AA23049C56E008A1C5F /* IMRTCDemoUITests */,
-			);
-			name = IMRTCDemoUITests;
-			packageProductDependencies = (
-			);
-			productName = IMRTCDemoUITests;
-			productReference = B22C4A9F3049C56E008A1C5F /* IMRTCDemoUITests.xctest */;
-			productType = "com.apple.product-type.bundle.ui-testing";
-		};
 /* End PBXNativeTarget section */
 
 /* Begin PBXProject section */
@@ -163,10 +121,6 @@
 				TargetAttributes = {
 					B22C4A7E3049C569008A1C5F = {
 						CreatedOnToolsVersion = 26.3;
-					};
-					B22C4A9E3049C56E008A1C5F = {
-						CreatedOnToolsVersion = 26.3;
-						TestTargetID = B22C4A7E3049C569008A1C5F;
 					};
 				};
 			};
@@ -188,20 +142,12 @@
 			projectRoot = "";
 			targets = (
 				B22C4A7E3049C569008A1C5F /* IMRTCDemo */,
-				B22C4A9E3049C56E008A1C5F /* IMRTCDemoUITests */,
 			);
 		};
 /* End PBXProject section */
 
 /* Begin PBXResourcesBuildPhase section */
 		B22C4A7D3049C569008A1C5F /* Resources */ = {
-			isa = PBXResourcesBuildPhase;
-			buildActionMask = 2147483647;
-			files = (
-			);
-			runOnlyForDeploymentPostprocessing = 0;
-		};
-		B22C4A9D3049C56E008A1C5F /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
@@ -218,22 +164,7 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
-		B22C4A9B3049C56E008A1C5F /* Sources */ = {
-			isa = PBXSourcesBuildPhase;
-			buildActionMask = 2147483647;
-			files = (
-			);
-			runOnlyForDeploymentPostprocessing = 0;
-		};
 /* End PBXSourcesBuildPhase section */
-
-/* Begin PBXTargetDependency section */
-		B22C4AA13049C56E008A1C5F /* PBXTargetDependency */ = {
-			isa = PBXTargetDependency;
-			target = B22C4A7E3049C569008A1C5F /* IMRTCDemo */;
-			targetProxy = B22C4AA03049C56E008A1C5F /* PBXContainerItemProxy */;
-		};
-/* End PBXTargetDependency section */
 
 /* Begin XCBuildConfiguration section */
 		B22C4AA93049C56E008A1C5F /* Debug */ = {
@@ -423,46 +354,6 @@
 			};
 			name = Release;
 		};
-		B22C4AB13049C56E008A1C5F /* Debug */ = {
-			isa = XCBuildConfiguration;
-			buildSettings = {
-				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 1;
-				DEVELOPMENT_TEAM = N44N47RG6P;
-				GENERATE_INFOPLIST_FILE = YES;
-				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = com.libeyond.rtc.IMRTCDemoUITests;
-				PRODUCT_NAME = "$(TARGET_NAME)";
-				STRING_CATALOG_GENERATE_SYMBOLS = NO;
-				SWIFT_APPROACHABLE_CONCURRENCY = YES;
-				SWIFT_EMIT_LOC_STRINGS = NO;
-				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
-				SWIFT_VERSION = 5.0;
-				TARGETED_DEVICE_FAMILY = "1,2";
-				TEST_TARGET_NAME = IMRTCDemo;
-			};
-			name = Debug;
-		};
-		B22C4AB23049C56E008A1C5F /* Release */ = {
-			isa = XCBuildConfiguration;
-			buildSettings = {
-				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 1;
-				DEVELOPMENT_TEAM = N44N47RG6P;
-				GENERATE_INFOPLIST_FILE = YES;
-				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = com.libeyond.rtc.IMRTCDemoUITests;
-				PRODUCT_NAME = "$(TARGET_NAME)";
-				STRING_CATALOG_GENERATE_SYMBOLS = NO;
-				SWIFT_APPROACHABLE_CONCURRENCY = YES;
-				SWIFT_EMIT_LOC_STRINGS = NO;
-				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
-				SWIFT_VERSION = 5.0;
-				TARGETED_DEVICE_FAMILY = "1,2";
-				TEST_TARGET_NAME = IMRTCDemo;
-			};
-			name = Release;
-		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
@@ -480,15 +371,6 @@
 			buildConfigurations = (
 				B22C4AA93049C56E008A1C5F /* Debug */,
 				B22C4AAA3049C56E008A1C5F /* Release */,
-			);
-			defaultConfigurationIsVisible = 0;
-			defaultConfigurationName = Release;
-		};
-		B22C4AB03049C56E008A1C5F /* Build configuration list for PBXNativeTarget "IMRTCDemoUITests" */ = {
-			isa = XCConfigurationList;
-			buildConfigurations = (
-				B22C4AB13049C56E008A1C5F /* Debug */,
-				B22C4AB23049C56E008A1C5F /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;

@@ -23,10 +23,17 @@ let package = Package(
     name: "im-rtc-ios",
     platforms: [.iOS(.v15), .macOS(.v13)],
     products: [
-        .library(name: "IMCallEngine", targets: ["IMCallEngine"])
+        // **两个 product = 产品的两种集成方式。**
+        // 只要 SDK、UI 自己画的宿主只依赖 IMCallEngine；要整套界面的加上 IMCallKit。
+        .library(name: "IMCallEngine", targets: ["IMCallEngine"]),
+        .library(name: "IMCallKit", targets: ["IMCallKit"])
     ],
     targets: [
         .target(name: "IMCallEngine"),
+        // Kit 依赖 Engine，**绝不反向**（CONVENTIONS §1）。
+        // 分成两个 target 而不是一个带 UI 的大 target：跨 module 的边界
+        // 让「Kit 只能看见 Engine 的 public 面」每次编译都被检查一遍。
+        .target(name: "IMCallKit", dependencies: ["IMCallEngine"]),
         .testTarget(name: "IMCallEngineTests", dependencies: ["IMCallEngine"])
     ]
 )

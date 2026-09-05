@@ -6,8 +6,8 @@
 
 ## 当前焦点
 
-**P3 前三刀已落地（2026-09-03）：协议层 + 三个状态机 + 信令连接，
-向量全过，且**已经真连上服务端跑通进房离房**。
+**P3 前四刀已落地（2026-09-05）：协议层 + 三个状态机 + 信令连接 + **门面与回调表**。
+向量全过，且已经真连上服务端跑通进房离房。**「自画 UI 的宿主」现在就能接了。**
 
 服务端 P0~P4 与 Web P2 都已完成，本仓是四仓里最后开工的一个。
 
@@ -16,9 +16,18 @@
 | `Protocol/` | 严格 JSON 值模型、编码硬规则、信封、45 个错误码、reason、40 个帧的字段声明与注册表 | envelope 26+9 条向量、错误码全表、reason 全表 |
 | `StateMachine/` | 通话机（§5.1）、房间机（§5.3）、Engine 总状态 | `call_fsm` 16 条 + `room_fsm` 7 条向量 |
 | `Signaling/` | WS 客户端、握手、心跳、按 req_id 配对、退避重连、4401 三次上限 | 13 条假连接时序用例 + **一条真服务端联调** |
+| `Facade/` | `IMCallEngine` 门面、24 条回调的 delegate 表、block 接法、核心循环 | 13 条假连接 + 假媒体的接线用例 |
+| `Media/` | `IMMediaAdapter` 协议（**只有接缝，没有实现**） | 由门面用例的假媒体驱动 |
 | `Observability/` | `IMRTCLog` 与脱敏 | 日志纪律门禁（含自检） |
 
-**`./scripts/test.sh` 九步全绿**，34 个用例，**全程不需要模拟器**。
+`Sources/IMCallKit/` 目前是**空壳**：只有 `KitEntry`。立它是为了让「两个 product」
+从第一天就在 `Package.swift` 里——跨 module 的边界每次编译都在检查
+「Kit 只能看见 Engine 的 public 面」，等界面写完再拆就是大手术。
+
+**`./scripts/test.sh` 十步全绿**，47 个用例，**全程不需要模拟器**。
+第十步是新加的「Demo 为 iOS 编译」：`generic/platform=iOS Simulator` 只编译不跑，
+它验的是上面 `swift test`（跑在 macOS 上）验不到的两件事——Demo 还编不编得过、
+以及**公开面对 ObjC 到底可不可用**。
 
 真服务端联调（默认 XCTSkip，手动跑）：
 ```bash
@@ -39,30 +48,20 @@ RTC_LIVE_SERVER=http://127.0.0.1:8787 swift test --filter LiveServerTests
 
 ## 下一步
 
-**P3 第四刀 —— 门面 + 回调表（不需要真机）**
-`CallEngine` 把信令、三个状态机接起来，按设计文档 §7.5 抛回调；
-公开面要 **ObjC 友好**（首批宿主 IMProgram 是 Objective-C，见 CONVENTIONS §4）。
-这一刀做完，「自画 UI 的宿主」就已经能用了——它不需要媒体也能收全部事件。
-
-**门面落地时有两条 Web 端刚踩过的坑，别再踩一遍**（2026-09-03）：
-1. **`sys.hello.ok` 必须从 `IMConnectionEvents.onConnected` 进状态机，不能只在
-   `login()` 里手工喂一次**。重连是连接层自己发起的，那次握手的结果只从 `onConnected`
-   出来；漏掉的后果不是「少一个事件」而是**重连之后状态机不知道自己重连了**——
-   `resumed == false` 时房间不归零（之后每帧都发向一个已消失的房间）、
-   `resumed == true` 时攒下的意图不重放，宿主也收不到第二次 `onConnected`。
-   Web 端的症状是：换票重连其实成功了，界面一直停在「重连中」。
-   `onConnected` 已经补在 `SignalConnection` 上了，接住它就行。
-2. **门面要公开 `updateToken(_:)`**（转给 `IMSignalConnection`）。协议 §1.5 规定
-   `4401` 的处置是「换新 token 后重连」，而换票是宿主的事——门面不暴露这个口子，
-   宿主就**做不到**协议要求它做的事。设计文档 §7.5 的主动方法表里已列入。
-   **不要做「token provider 回调」**：那等于让 Engine 自己去宿主的账号体系要票。
-
 **P3 第五刀 —— 媒体（要真机）**
-`Media/WebRTCAdapter` + 独立的 iOS-only target 引 libwebrtc。
+实现 `IMMediaAdapter`（接缝已经在了）+ 独立的 iOS-only target 引 libwebrtc。
 **两条 PeerConnection，各有固定 offerer**（pub=本端、sub=服务端），
 所以不需要 perfect negotiation / rollback。
 
+**开工前要先拍一个板：libwebrtc 怎么发给第三方。** 两条路——
+(a) 依赖别人发布的 SPM 包（如 `stasel/WebRTC`）并锁死版本；
+(b) 自建 xcframework 传 GitHub Releases，用 `.binaryTarget(url:checksum:)`。
+它直接决定宿主的下载体积与首次构建时间，**不能等做到一半再改**。
+
 **P3 第六刀 —— Kit + Demo**：1v1 四态 + 来电横幅 + 悬浮球（草图 §03/§04）、Demo 四屏。
+Kit 的空壳与 Demo 工程都已就位，直接往里填界面即可。
+**Demo 的 `Main.storyboard` 要删掉**，纯代码建 window——Kit 的页面挂独立 window 层
+（CONVENTIONS §8），不入宿主导航栈。
 **P4**：九宫格（草图 §05）。服务端的 simulcast 与带宽估计都已就绪，
 Web 端的 uikit 可以直接对照抄结构（`packages/call-uikit-react/src/layout/grid.ts`）。
 
@@ -91,6 +90,19 @@ Web 端的 uikit 可以直接对照抄结构（`packages/call-uikit-react/src/la
 - **三端已知的两条真 bug，iOS 从第一天就带上了防线**：
   通话结束后房间必须回 idle（否则之后每一帧都发向已销毁的房间）；
   层上界要随订阅一起给到服务端（否则房间记 m、实际发 h）。
+
+- **ObjC 的选择器要亲手编一遍才知道对不对**：`Demo/IMRTCDemo/IMRTCDemo/IMObjCAPICheck.m`
+  就是干这个的（CONVENTIONS §4 的「编译即验证」），它已经抓到一个真问题——
+  `setMuted(_:_:)` 两个参数都不带标签，生成的选择器是 `setMuted::completionHandler:`，
+  ObjC 宿主得写 `[engine setMuted:cid :YES ...]` 那种带空标签的怪东西。
+  **加了公开 API 就往那个文件里补一行调用。**
+- **`IMMediaAdapter` 刻意不是 `@objc` 协议**：它的方法是 `async throws`，
+  而且只被媒体 target 实现一次，没有让 ObjC 宿主自己实现的场景。
+  所以带 media 参数的那个 `init` 不导出到 ObjC，ObjC 宿主用 `initWithUrl:deviceID:`
+  那个纯信令形态的。
+- **不给 Engine 传媒体适配器是正常用法**，不是降级：登录、振铃、成员进出、
+  静音通知一个都不少，只有推流与画面挂载会以 `2005 invalid_state` 失败。
+  **没有为它新造错误码**——错误码表是四仓共用的契约，加一个码等于改四个仓 + 改向量。
 
 ## 关联工程 / 常用命令
 
