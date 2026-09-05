@@ -79,7 +79,15 @@ RTC_LIVE_SERVER=http://127.0.0.1:8787 swift test --filter LiveServerTests
 3. 静音/关摄像头对端能收到 `userAudioAvailable` / `userVideoAvailable`；
 4. **九宫格里层上界真的降档**——服务端日志有「带宽估计调整下发层上界」。
 
-真机跑法：Demo 选真机 target、填服务器地址（用局域网 IP，不是 127.0.0.1）、登录、拨号。
+跑法：
+- **模拟器**：直接跑，服务器默认 `http://127.0.0.1:8787` 就是对的（模拟器与 Mac 共用网络栈）。
+- **真机**：服务器框留空，填 Mac 的局域网 IP——`./scripts/dev.sh` 启动时会打印那一行。
+  手机要和 Mac 在同一个 Wi-Fi。填过一次就记住，下次不用再敲。
+
+真机上必须有的两个 Info.plist 键（已配）：`NSAppTransportSecurity.NSAllowsLocalNetworking`
+（iOS 默认禁明文 HTTP；127.0.0.1 不受管所以模拟器一直是好的，局域网 IP 受管）
+与 `NSLocalNetworkUsageDescription`（iOS 14 起连局域网设备要授权，
+**信令和 WebRTC 候选两条都会触发**）。少任一条的症状都是「连不上但不报错」。
 
 **P3 第六刀 —— Kit 剩余界面 + Demo 三屏：已落地（2026-09-05）**
 来电横幅（`bannerFirst`）、悬浮球（`floatingWindow`，可拖、吸边、点开还原）、

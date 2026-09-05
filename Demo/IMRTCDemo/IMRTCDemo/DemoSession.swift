@@ -53,6 +53,56 @@ final class DemoSession {
         records = Self.loadRecords()
     }
 
+    // MARK: - 服务器地址
+
+    /**
+     上次用的服务器地址；没用过就给一个默认值。
+
+     **模拟器与真机的默认值必须不一样**：模拟器与 Mac 共用网络栈，`127.0.0.1`
+     就是 Mac 本身，开箱即用；真机上 `127.0.0.1` 指的是**手机自己**，永远连不上。
+
+     真机上**留空**，靠 placeholder 说该填什么。不预填一个像模像样的假 IP
+     （比如 192.168.1.100）：那种地址一眼看不出是错的，人会以为服务端挂了，
+     去查服务端日志——而那边根本没有请求进来，最难查的一类。
+
+     填过一次就记住（`UserDefaults`）：真机联调时不用每次启动都重敲一遍 IP。
+     */
+    static var defaultServer: String {
+        if let saved = UserDefaults.standard.string(forKey: serverKey), !saved.isEmpty {
+            return saved
+        }
+        #if targetEnvironment(simulator)
+        return "http://127.0.0.1:8787"
+        #else
+        return "" // 见上：真机不预填假地址，让 placeholder 说话
+        #endif
+    }
+
+    /// 真机上输入框的占位文案。模拟器上用不到（默认值已经是对的）。
+    static var serverPlaceholder: String {
+        #if targetEnvironment(simulator)
+        return "服务器"
+        #else
+        return "http://<Mac 的局域网 IP>:8787"
+        #endif
+    }
+
+    static var defaultUsername: String {
+        UserDefaults.standard.string(forKey: userKey) ?? "alice"
+    }
+
+    /// 真机上要提示人去改地址；模拟器上默认值就是对的，不用啰嗦。
+    static var serverHint: String {
+        #if targetEnvironment(simulator)
+        return "模拟器与 Mac 共用网络，127.0.0.1 直接可用。"
+        #else
+        return "真机请填 Mac 的局域网 IP（启动 dev.sh 时会打印），127.0.0.1 在手机上指手机自己。"
+        #endif
+    }
+
+    private static let serverKey = "im-rtc-demo.server"
+    private static let userKey = "im-rtc-demo.username"
+
     // MARK: - 登录 / 退出
 
     var isLoggedIn: Bool { engine != nil }
@@ -62,6 +112,10 @@ final class DemoSession {
         self.server = server
         self.username = username
         self.token = token
+        // 登录成功才记住——**失败的地址不该被记下来**，否则一次手滑之后
+        // 每次启动都带着那个错地址，还以为是默认值有问题。
+        UserDefaults.standard.set(server, forKey: Self.serverKey)
+        UserDefaults.standard.set(username, forKey: Self.userKey)
 
         // 日志回传（仅开发）：Engine 会把每一个公开事件也写进日志，服务端按时间轴合并。
         let sink = RemoteLogSink(server: server, client: "ios-\(username)")

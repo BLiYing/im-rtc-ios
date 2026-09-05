@@ -2,6 +2,30 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+	<!--
+	  ATS：iOS 默认禁止明文 HTTP。开发服务器是 http:// + ws://，所以要开这个例外。
+
+	  用 NSAllowsLocalNetworking 而不是 NSAllowsArbitraryLoads：后者是"什么都放行"，
+	  上架会被审核挑出来，而且很容易被宿主照抄进生产工程。这个键只放行局域网/回环，
+	  正好覆盖"Mac 上跑 dev.sh、手机连过去"这个场景。
+
+	  **这是 Demo 的配置，不是要求宿主照抄**：生产环境的信令是 wss://，不需要任何例外。
+
+	  注：连 127.0.0.1 本来就不受 ATS 管（所以模拟器一直是好的），
+	  这个例外是为真机连局域网 IP 加的。
+	-->
+	<key>NSAppTransportSecurity</key>
+	<dict>
+		<key>NSAllowsLocalNetworking</key>
+		<true/>
+	</dict>
+	<!--
+	  iOS 14 起，连局域网内的设备要用户授权。信令连 Mac 的局域网 IP、
+	  WebRTC 的候选也全是局域网地址，**两条都会触发这个权限**。
+	  没有这一条的话真机上是「连不上但不报错」——最难查的那种。
+	-->
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>需要访问局域网，才能连接同一网络下的开发服务器进行音视频通话</string>
 	<key>NSCameraUsageDescription</key>
 	<string>视频通话时需要使用摄像头</string>
 	<key>NSMicrophoneUsageDescription</key>

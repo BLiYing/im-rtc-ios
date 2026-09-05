@@ -11,8 +11,9 @@ final class DialerViewController: UIViewController {
 
     private let session = DemoSession.shared
 
-    private let serverField = DemoUI.field(placeholder: "服务器", text: "http://127.0.0.1:8787")
-    private let userField = DemoUI.field(placeholder: "用户 ID", text: "alice")
+    private let serverField = DemoUI.field(placeholder: DemoSession.serverPlaceholder,
+                                           text: DemoSession.defaultServer)
+    private let userField = DemoUI.field(placeholder: "用户 ID", text: DemoSession.defaultUsername)
     private let calleeField = DemoUI.field(placeholder: "对方 ID", text: "bob")
     private let roomField = DemoUI.field(placeholder: "房间号（留空则新建）", text: "")
     private let groupLabel = UILabel()
@@ -126,7 +127,8 @@ final class DialerViewController: UIViewController {
         callButtons = [audio, video, pick, group, join]
 
         let stack = UIStackView(arrangedSubviews: [
-            DemoUI.card("身份", [serverField, userField, statusLabel, loginButton, logoutButton]),
+            DemoUI.card("身份", [serverField, DemoUI.note(DemoSession.serverHint),
+                               userField, statusLabel, loginButton, logoutButton]),
             DemoUI.card("单人通话", [calleeField, DemoUI.row([audio, video])]),
             DemoUI.card("多人通话（最多 8 人）", [DemoUI.row([groupLabel, pick]), group]),
             DemoUI.card("会议房间", [roomField, join,
