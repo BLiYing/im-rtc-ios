@@ -201,3 +201,39 @@ final class GridTests: XCTestCase {
         XCTAssertEqual(imFormatDuration(-5), "00:00", "负数不该画成 -1:-5")
     }
 }
+
+/// 红按钮的四向分派。**这是 Web 端真出过 bug 的地方**，所以单独测。
+final class EndActionTests: XCTestCase {
+
+    private func state(_ build: (inout IMCallViewState) -> Void) -> IMCallViewState {
+        var s = IMCallViewState()
+        build(&s)
+        return s
+    }
+
+    /// **会议房里没有 call**：发 hangup 会被状态机本地拒成 2005，
+    /// 按钮点了毫无反应、人退不出房间。
+    func testMeetingLeavesTheRoomInsteadOfHangingUp() {
+        let meeting = state { $0.isMeeting = true; $0.phase = .active }
+        XCTAssertEqual(imEndAction(for: meeting), .leaveRoom)
+    }
+
+    /// 会议在任何阶段都是 leaveRoom——包括还没接通那会儿。
+    func testMeetingAlwaysLeavesRegardlessOfPhase() {
+        for phase in [IMCallPhase.connecting, .active, .outgoing] {
+            let meeting = state { $0.isMeeting = true; $0.phase = phase }
+            XCTAssertEqual(imEndAction(for: meeting), .leaveRoom, "\(phase) 也该是离房")
+        }
+    }
+
+    func testIncomingRejects() {
+        XCTAssertEqual(imEndAction(for: state { $0.phase = .incoming }), .reject)
+    }
+
+    /// **接通前只能 cancel，接通后只能 hangup**（协议 §4.4），服务端会拒掉用错的那个。
+    func testOutgoingCancelsAndActiveHangsUp() {
+        XCTAssertEqual(imEndAction(for: state { $0.phase = .outgoing }), .cancel)
+        XCTAssertEqual(imEndAction(for: state { $0.phase = .active }), .hangup)
+        XCTAssertEqual(imEndAction(for: state { $0.phase = .connecting }), .hangup)
+    }
+}

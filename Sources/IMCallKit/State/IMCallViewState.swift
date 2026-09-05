@@ -283,3 +283,25 @@ private func withParticipant(_ state: IMCallViewState, _ uid: String,
     }
     return next
 }
+
+/// 红按钮该发出的那个动作。
+public enum IMEndAction: String, Sendable {
+    case leaveRoom, cancel, reject, hangup
+}
+
+/**
+ 红按钮在**四种场合是四个不同的动作**，分辨这件事是 Kit 的责任——
+ 让调用方去分辨，迟早有人分辨错。
+
+ 抽成纯函数是因为**最容易错的那一条没法靠点界面发现**：会议房里根本没有 call，
+ 发 hangup 会被状态机本地拒成 2005 —— 按钮点了毫无反应、人退不出房间，
+ 而宿主只看到一条没头没尾的 error。（Web 端三人会议实测撞出来的：三端都卡在房里。）
+ */
+public func imEndAction(for state: IMCallViewState) -> IMEndAction {
+    if state.isMeeting { return .leaveRoom }
+    switch state.phase {
+    case .incoming: return .reject
+    case .outgoing: return .cancel
+    default:        return .hangup
+    }
+}

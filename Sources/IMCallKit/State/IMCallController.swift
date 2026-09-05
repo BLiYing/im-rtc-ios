@@ -90,13 +90,14 @@ public final class IMCallController: NSObject {
      按钮点了毫无反应、人退不出房间（Web 端三人会议实测撞出来的）。
      */
     public func end() {
-        let phase = state.phase
-        let isMeeting = state.isMeeting
+        let action = imEndAction(for: state)
         Task {
-            if isMeeting { return await engine.leaveRoom() }
-            if phase == .incoming { return await engine.reject() }
-            if phase == .outgoing { return await engine.cancel() }
-            await engine.hangup()
+            switch action {
+            case .leaveRoom: await engine.leaveRoom()
+            case .reject:    await engine.reject()
+            case .cancel:    await engine.cancel()
+            case .hangup:    await engine.hangup()
+            }
         }
     }
 

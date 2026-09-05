@@ -8,6 +8,7 @@
 
 /* Begin PBXBuildFile section */
 		B22C4AB63049C8C0008A1C5F /* IMCallEngine in Frameworks */ = {isa = PBXBuildFile; productRef = B22C4AB53049C8C0008A1C5F /* IMCallEngine */; };
+		B22C4AB83049C8C0008A1C5F /* IMCallKit in Frameworks */ = {isa = PBXBuildFile; productRef = B22C4AB73049C8C0008A1C5F /* IMCallKit */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -51,6 +52,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				B22C4AB63049C8C0008A1C5F /* IMCallEngine in Frameworks */,
+				B22C4AB83049C8C0008A1C5F /* IMCallKit in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -104,6 +106,7 @@
 			name = IMRTCDemo;
 			packageProductDependencies = (
 				B22C4AB53049C8C0008A1C5F /* IMCallEngine */,
+				B22C4AB73049C8C0008A1C5F /* IMCallKit */,
 			);
 			productName = IMRTCDemo;
 			productReference = B22C4A7F3049C569008A1C5F /* IMRTCDemo.app */;
@@ -389,6 +392,11 @@
 			isa = XCSwiftPackageProductDependency;
 			package = B22C4AB33049C665008A1C5F /* XCLocalSwiftPackageReference "../.." */;
 			productName = IMCallEngine;
+		};
+		B22C4AB73049C8C0008A1C5F /* IMCallKit */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = B22C4AB33049C665008A1C5F /* XCLocalSwiftPackageReference "../.." */;
+			productName = IMCallKit;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};

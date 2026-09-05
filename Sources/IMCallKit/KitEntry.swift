@@ -54,14 +54,27 @@ public let IMCallKitVersion = "0.0.1"
     @objc public init(engine: IMCallEngine, config: IMCallKitConfig = IMCallKitConfig()) {
         self.engine = engine
         self.config = config
+        self.controller = IMCallController(engine: engine)
         super.init()
     }
 
-    /// start 把 Kit 接到 Engine 的事件上。
-    ///
-    /// **现在只有接线，没有界面**——界面是随后的一刀。先把 `engine.delegate`
-    /// 这条路打通，是为了让「Kit 只用公开回调表」这条约束从第一天就成立。
+    /// 状态中枢。宿主想自己画一部分界面时也能读它。
+    public let controller: IMCallController
+
+    #if canImport(UIKit)
+    private lazy var callWindow = IMCallWindow(controller: controller)
+    #endif
+
+    /**
+     start 接管来电弹屏、通话页、九宫格、悬浮窗（草图 §01 的用法 B）。
+
+     一行调用即可。**界面的出现与消失由状态驱动**——宿主只管调
+     `controller.placeCall` / `joinMeeting`，Kit 自己接住剩下的。
+     */
     @objc public func start() {
         IMRTCLog.info("[Kit] 启动", ["version": IMCallKitVersion])
+        #if canImport(UIKit)
+        _ = callWindow // 让它订阅上 controller；之后由状态驱动显示与收起
+        #endif
     }
 }

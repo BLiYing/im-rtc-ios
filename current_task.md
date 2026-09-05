@@ -20,9 +20,19 @@
 | `Media/` | `IMMediaAdapter` 协议（**只有接缝，没有实现**） | 由门面用例的假媒体驱动 |
 | `Observability/` | `IMRTCLog` 与脱敏 | 日志纪律门禁（含自检） |
 
-`Sources/IMCallKit/` 目前是**空壳**：只有 `KitEntry`。立它是为了让「两个 product」
-从第一天就在 `Package.swift` 里——跨 module 的边界每次编译都在检查
-「Kit 只能看见 Engine 的 public 面」，等界面写完再拆就是大手术。
+`Sources/IMCallKit/` 已经有**视图模型 + 布局算术 + 回调接线 + 界面**：
+
+| | |
+|---|---|
+| `State/IMCallViewState` | 纯值语义的视图模型 + reducer + 红按钮四向分派 |
+| `State/IMCallController` | 把 `IMCallEngineDelegate` 接成视图状态；界面动作也在这里 |
+| `Layout/IMGrid` | 九宫格行列、层上界、时长格式化 |
+| `UI/` | 主题、控制按钮、成员格子、通话页、**独立 window 层** |
+
+**Kit 只消费公开回调表**：`IMCallController` 实现的就是 `IMCallEngineDelegate`，
+与「宿主自画 UI」拿到的完全一致，没有一处私有通道。
+
+Demo 已经接上 Kit——`kit.start()` **一行**就接管了通话界面（草图 §01 的用法 B）。
 
 **`./scripts/test.sh` 十步全绿**，47 个用例，**全程不需要模拟器**。
 第十步是新加的「Demo 为 iOS 编译」：`generic/platform=iOS Simulator` 只编译不跑，
@@ -70,10 +80,12 @@ BSD-3 + Google 的 WebRTC 许可（可商业再分发）。
 `IMCallEngineWebRTC` 一个 target 里，将来要换成自建产物只改 `Package.swift`
 一行依赖，**Engine / Kit / Demo 一行不动**。这正是当初把媒体挡在 Engine 之外的收益。
 
-**P3 第六刀 —— Kit + Demo**：1v1 四态 + 来电横幅 + 悬浮球（草图 §03/§04）、Demo 四屏。
-Kit 的空壳与 Demo 工程都已就位，直接往里填界面即可。
-**Demo 的 `Main.storyboard` 要删掉**，纯代码建 window——Kit 的页面挂独立 window 层
-（CONVENTIONS §8），不入宿主导航栈。
+**P3 第六刀 —— Kit 的剩余界面**：来电横幅（不是全屏页）、悬浮球/悬浮小画面、
+「以语音接听」、网络质量条、扬声器切换。通话页与九宫格已经有了。
+Demo 还差三屏：通话记录、设置、群呼选人。
+
+**P4 —— 九宫格的打磨**：格子布局现在是等分网格，草图 §05 还要主讲人放大、
+双击切焦点。服务端的 simulcast 与带宽估计都已就绪。
 **P4**：九宫格（草图 §05）。服务端的 simulcast 与带宽估计都已就绪，
 Web 端的 uikit 可以直接对照抄结构（`packages/call-uikit-react/src/layout/grid.ts`）。
 
@@ -115,6 +127,15 @@ Web 端的 uikit 可以直接对照抄结构（`packages/call-uikit-react/src/la
 - **不给 Engine 传媒体适配器是正常用法**，不是降级：登录、振铃、成员进出、
   静音通知一个都不少，只有推流与画面挂载会以 `2005 invalid_state` 失败。
   **没有为它新造错误码**——错误码表是四仓共用的契约，加一个码等于改四个仓 + 改向量。
+
+- **Kit 的界面代码 macOS 上编不到**：它们全在 `#if canImport(UIKit)` 里，
+  `swift build` 会整个跳过——**全绿完全不代表那些文件是好的**。
+  真正编它们的是 `test.sh` 第 10 步（Demo 依赖 IMCallKit，为 iOS 编一遍）。
+  改 Kit 的 UI 之后光看 `swift test` 绿是不够的。
+- **iOS 构建有一批 Sendable 警告**（`SignalConnection.swift` 的
+  `Task {}` 闭包捕获 self），macOS 的 `swift build` 看不到。它们**在 Swift 6
+  语言模式下会变成错误**，属已知欠账，要单独一刀处理（大概是把
+  `IMSignalConnection` 改成 actor 或补 `@unchecked Sendable` 并说明理由）。
 
 ## 关联工程 / 常用命令
 

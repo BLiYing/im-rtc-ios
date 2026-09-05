@@ -73,7 +73,10 @@ fi
 
 # Demo 为 iOS 编译。**不启动模拟器**——`generic/platform=iOS Simulator` 是只编译不跑。
 #
-# 为什么值得多花这半分钟：上面的 swift test 跑在 macOS 上，验不到两件事——
+# 为什么值得多花这半分钟：上面的 swift test 跑在 macOS 上，验不到三件事——
+#   · **Kit 的界面代码编不编得过**。它们全在 `#if canImport(UIKit)` 里，
+#     macOS 上整个被编译器跳过——`swift build` 全绿完全不代表它们是好的。
+#     Demo 依赖 IMCallKit，所以这一步顺带把它们编了一遍。
 #   · Demo 还编不编得过（改了公开 API 而 Demo 没跟上，今天是没人会发现的）；
 #   · **公开面对 ObjC 到底可不可用**。Demo 里的 IMObjCAPICheck.m 从 ObjC 调一遍
 #     公开 API，编译即验证（CONVENTIONS §4）。它已经抓到过一个真问题：
@@ -93,7 +96,7 @@ demo_builds_for_ios() {
 }
 
 if [ "${SKIP_DEMO_BUILD:-}" != "1" ]; then
-  run_step "Demo 为 iOS 编译（含 ObjC 可用性检查）" demo_builds_for_ios
+  run_step "Demo 为 iOS 编译（含 Kit 与 ObjC 可用性检查）" demo_builds_for_ios
 fi
 
 echo ""
