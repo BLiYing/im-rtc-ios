@@ -23,6 +23,8 @@ final class DialerViewController: UIViewController {
     private let errorLabel = UILabel()
     private let loginButton = UIButton(type: .system)
     private let logoutButton = UIButton(type: .system)
+    /// 合成画面开关。**模拟器上默认开**——那儿没有摄像头，不开就只能看头像。
+    private let syntheticSwitch = UISwitch()
     private var callButtons: [UIButton] = []
     /// 群呼默认名单。**不能含登录的那个人**——服务端会以 1004 拒掉整通电话
     /// （"callee_ids 不能含主叫自己"）。登录后 refresh() 会把自己剔掉。
@@ -47,6 +49,9 @@ final class DialerViewController: UIViewController {
         logoutButton.isHidden = !loggedIn
         serverField.isEnabled = !loggedIn
         userField.isEnabled = !loggedIn
+        // 适配器是登录时造的，登录之后再拨这个开关不会生效——干脆锁上，别给假承诺。
+        syntheticSwitch.isEnabled = !loggedIn
+        syntheticSwitch.isOn = session.syntheticVideo
         callButtons.forEach { $0.isEnabled = loggedIn }
         // 把自己从群呼名单里剔掉：带着自己发出去，服务端会拒掉**整通**电话。
         let me = session.username
@@ -86,6 +91,33 @@ final class DialerViewController: UIViewController {
             }
             loginButton.isEnabled = true
         }
+    }
+
+    /**
+     「合成画面」这一行：一句说明 + 一个开关。
+
+     放在身份卡而不是设置页：它**只在登录那一刻起作用**（适配器是登录时造的），
+     和服务器地址、用户名是同一批要在按「登录」之前定好的东西。
+     与 Web Demo 登录框里那个勾选框对齐。
+    */
+    private func syntheticRow() -> UIStackView {
+        let label = UILabel()
+        label.text = "合成画面（模拟器没有摄像头）"
+        label.font = .systemFont(ofSize: 13)
+        label.textColor = .secondaryLabel
+        label.numberOfLines = 0
+        syntheticSwitch.isOn = session.syntheticVideo
+        syntheticSwitch.addTarget(self, action: #selector(onToggleSynthetic), for: .valueChanged)
+        syntheticSwitch.setContentHuggingPriority(.required, for: .horizontal)
+        let row = UIStackView(arrangedSubviews: [label, syntheticSwitch])
+        row.axis = .horizontal
+        row.spacing = 8
+        row.alignment = .center
+        return row
+    }
+
+    @objc private func onToggleSynthetic() {
+        session.syntheticVideo = syntheticSwitch.isOn
     }
 
     /// 空文案要把整行收起来——留一个空 label 在那儿，身份卡里会平白多出一条缝。
@@ -172,7 +204,8 @@ final class DialerViewController: UIViewController {
 
         let stack = UIStackView(arrangedSubviews: [
             DemoUI.card("身份", [serverField, DemoUI.note(DemoSession.serverHint),
-                               userField, statusLabel, loginButton, logoutButton, loginHint]),
+                               userField, syntheticRow(), statusLabel,
+                               loginButton, logoutButton, loginHint]),
             DemoUI.card("单人通话", [calleeField, DemoUI.row([audio, video])]),
             DemoUI.card("多人通话（最多 8 人）", [DemoUI.row([groupLabel, pick]), group]),
             DemoUI.card("会议房间", [roomField, join,

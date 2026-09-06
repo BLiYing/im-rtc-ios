@@ -163,7 +163,9 @@ final class DemoSession {
          Demo 把它放在设置页里，换档位下一通电话生效。
         */
         let engine = IMCallEngine(url: wsURL, deviceID: deviceID,
-                                  media: IMWebRTCAdapter(videoProfile: videoProfile))
+                                  media: IMWebRTCAdapter(videoProfile: videoProfile,
+                                                         syntheticVideo: syntheticVideo,
+                                                         label: username))
         // 「添加成员」的候选名单是宿主给的：Demo 用与选人页同一份写死的联系人。
         kitConfig.inviteCandidates = ["alice", "bob", "carol", "dave", "erin", "frank", "grace", "heidi", "ivan"]
             .map { IMInviteCandidate(uid: $0) }
@@ -221,6 +223,36 @@ final class DemoSession {
     }
 
     private static let profileKey = "im-rtc-demo.videoProfile"
+
+    /**
+     用合成画面代替摄像头（见 `IMSyntheticVideoCapturer`）。**换了要重登才生效**——
+     适配器是登录时造的，和画质档位同一条规矩。
+
+     **模拟器上默认开**：模拟器根本没有摄像头（`RTCCameraVideoCapturer.captureDevices()`
+     恒为空），不开就只能看头像，九宫格版式、画面通没通、层上界对不对一条都验不了。
+     真机上默认关——那儿有真摄像头，没理由拿假画面顶替。
+
+     **只影响视频**：麦克风照常走真设备（模拟器转发宿主 Mac 的），
+     所以「合成音视频」在 iOS 上实际是「合成视频 + 真麦克风」；
+     WebRTC 的 ObjC SDK 没有注入音频采样的公开口子，那要自己写 AudioDeviceModule。
+    */
+    var syntheticVideo: Bool = DemoSession.savedSyntheticVideo() {
+        didSet {
+            UserDefaults.standard.set(syntheticVideo, forKey: Self.syntheticKey)
+            notify()
+        }
+    }
+
+    private static let syntheticKey = "im-rtc-demo.syntheticVideo"
+
+    private static func savedSyntheticVideo() -> Bool {
+        if let saved = UserDefaults.standard.object(forKey: syntheticKey) as? Bool { return saved }
+        #if targetEnvironment(simulator)
+        return true
+        #else
+        return false
+        #endif
+    }
 
     private static func savedProfile() -> IMVideoProfile {
         let name = UserDefaults.standard.string(forKey: profileKey)

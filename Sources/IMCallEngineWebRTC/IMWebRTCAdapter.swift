@@ -38,9 +38,30 @@ public final class IMWebRTCAdapter: NSObject, IMMediaAdapter, @unchecked Sendabl
     /// 采集画质档位。见 `IMVideoProfile`：**策略归宿主**，不是服务端下发的。
     private let profile: IMVideoProfile
 
-    /// - Parameter videoProfile: 画质档位，默认 720p。
-    @objc public init(videoProfile: IMVideoProfile = .default) {
+    /**
+     用合成画面代替摄像头（见 `IMSyntheticVideoCapturer`）。
+
+     **模拟器上没有摄像头**，不开这个就只能看头像。**只影响视频**：麦克风照常走真设备
+     （模拟器转发宿主 Mac 的），所以「合成音视频」实际上是「合成视频 + 真麦克风」。
+     */
+    private let syntheticVideo: Bool
+    /// 合成画面上写的字（一般是自己的 uid）。
+    private let syntheticLabel: String
+    /// 合成采集器。与 `capturer` 互斥：开了合成就不建摄像头采集器。
+    private var syntheticCapturer: IMSyntheticVideoCapturer?
+
+    /// - Parameters:
+    ///   - videoProfile: 画质档位，默认 720p。
+    ///   - syntheticVideo: 用合成画面代替摄像头。**只给 Demo / 模拟器联调用**，默认关。
+    ///   - label: 合成画面上写的字（一般是自己的 uid），多端并排时好认。
+    @objc public init(
+        videoProfile: IMVideoProfile = .default,
+        syntheticVideo: Bool = false,
+        label: String = ""
+    ) {
         self.profile = videoProfile
+        self.syntheticVideo = syntheticVideo
+        self.syntheticLabel = label
         super.init()
     }
 
@@ -136,17 +157,31 @@ public final class IMWebRTCAdapter: NSObject, IMMediaAdapter, @unchecked Sendabl
     /// startLocalPreview 只起采集，不挂 transceiver。
     public func startLocalPreview() async throws -> IMLocalTrackInfo {
         if let existing = previewTrack { return existing }
-        // 先问权限再开设备：没这一步的话 libwebrtc 的采集器在被拒时只是静默地不出画面。
-        try await Self.ensureAccess(.video, what: "摄像头")
+        // **合成画面不碰摄像头，所以也不该问摄像头权限**：模拟器上那个框弹出来毫无意义，
+        // 而真机上问了又不用，等于白要一次敏感权限。
+        if !syntheticVideo {
+            // 先问权限再开设备：没这一步的话 libwebrtc 的采集器在被拒时只是静默地不出画面。
+            try await Self.ensureAccess(.video, what: "摄像头")
+        }
         let cid = "cam-\(UUID().uuidString.prefix(8))"
         let source = ensurePeers().factory.videoSource()
-        let capturer = RTCCameraVideoCapturer(delegate: source)
         let track = ensurePeers().factory.videoTrack(with: source, trackId: cid)
         self.videoSource = source
-        self.capturer = capturer
-        try await startCapture(capturer)
+        if syntheticVideo {
+            let capturer = IMSyntheticVideoCapturer(delegate: source, label: syntheticLabel)
+            capturer.startCapture(width: profile.width, height: profile.height, fps: profile.frameRate)
+            syntheticCapturer = capturer
+            IMRTCLog.info("合成画面已开", [
+                "profile": profile.name, "width": String(profile.width),
+                "height": String(profile.height), "label": syntheticLabel,
+            ])
+        } else {
+            let capturer = RTCCameraVideoCapturer(delegate: source)
+            self.capturer = capturer
+            try await startCapture(capturer)
+        }
         remember(cid: cid, track: track)
-        let info = IMLocalTrackInfo(cid: cid, kind: "video", source: "camera")
+        let info = IMLocalTrackInfo(cid: cid, kind: "video", source: syntheticVideo ? "synthetic" : "camera")
         previewTrack = info
         return info
     }
@@ -294,6 +329,8 @@ public final class IMWebRTCAdapter: NSObject, IMMediaAdapter, @unchecked Sendabl
     public func close() {
         capturer?.stopCapture()
         capturer = nil
+        syntheticCapturer?.stopCapture()
+        syntheticCapturer = nil
         videoSource = nil
         previewTrack = nil
         lock.lock()

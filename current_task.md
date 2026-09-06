@@ -11,6 +11,28 @@
 
 ## 当前焦点
 
+**合成画面：模拟器上终于能验视频了（2026-09-06 傍晚）**，`./scripts/test.sh` 十步全绿
+（119 个 macOS 用例 + Demo 为 iOS 编译通过）。
+
+**模拟器没有摄像头**（`RTCCameraVideoCapturer.captureDevices()` 恒为空），
+于是模拟器上一切视频联调只能看头像——九宫格版式、画面通没通、层上界对不对，一条都验不了，
+非插真机不可。新增 `IMSyntheticVideoCapturer`（`RTCVideoCapturer` 子类，定时把自己画的
+`CVPixelBuffer` 推给 `RTCVideoSource`）：深色底 + 走动的秒针 + 用户名 + 墙上时钟，
+**与 Web 的 `demo/src/syntheticMedia.ts` 同一套画面语言**——画面必须是活的，
+静态图看不出「卡住了」和「通了」的区别。
+
+| 落点 | 说明 |
+|---|---|
+| `Sources/IMCallEngineWebRTC/IMSyntheticVideoCapturer.swift`（新） | 走 `CVPixelBufferPool`（每帧新建在模拟器上就是稳定的一串卡顿）；帧率上限压到 15 |
+| `IMWebRTCAdapter(videoProfile:syntheticVideo:label:)` | 多两个默认参数，`startLocalPreview` 分叉。**合成时不问摄像头权限**——模拟器上那个框毫无意义，真机上问了又不用 |
+| `DemoSession.syntheticVideo` + 拨号页身份卡的开关 | 与画质档位同一条规矩：**换了要重登才生效**（适配器是登录时造的），所以登录后开关就锁上。**模拟器默认开、真机默认关** |
+
+**「合成音视频」在 iOS 上实际是「合成视频 + 真麦克风」**：模拟器的麦克风是通的
+（转发宿主 Mac 的），而 WebRTC 的 ObjC SDK **没有注入音频采样的公开口子**——
+那要自己写 `AudioDeviceModule`（C++），而且没必要。
+
+**没做**：模拟器实测。只有编译过；这一条按老规矩等明确通知再上设备。
+
 **九宫格三端拉齐（2026-09-06）**，`./scripts/test.sh` 十步全绿（118 个 macOS 用例 + Demo 为 iOS 编译通过）。
 起因是用户在三端并排看九宫格报了五条，落点分给四个仓；本仓这一份是最轻的——iOS 的容器与刷新本来就是对的。
 
