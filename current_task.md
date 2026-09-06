@@ -107,11 +107,15 @@ Engine 的 `inviteMore(_:)` / `probeMicrophone()` 也是那一轮加的。
 
 ## 已知坑 / 限制
 
-- **层上界可能一次都没真发出去**（2026-09-06 发现，**未修**）：`reportLayer` 的去重表在
-  `onUserEnter` 那一刻就记下了「报过 l」，而 `setRemoteLayer` 要按 uid 找**当前的**远端视频轨道
-  才发得出帧——**人先进来、轨道后到**是常态，那一次是空转。之后除非格子数变了就不再重发，
-  轨道自动订阅用的还是默认 `m`。Android 当天补了（轨道到了就划掉记账再报一次），
-  Web 的 `VideoTile` `useEffect` 是同一个洞。
+- **别单独 `rm -rf ~/Library/Developer/Xcode/DerivedData`**（2026-09-06 踩，半小时）：Xcode 开着时
+  那条 `rm` 会半途失败（`Directory not empty`），只删掉 `SourcePackages/`，而
+  `~/Library/Caches/org.swift.swiftpm/artifacts/` 里那个 44MB 的 WebRTC zip 还在。SwiftPM 见缓存命中
+  就**跳过下载**去解压它以为已放好的那份——路径没了，它**不回退、只 `fatalError`**。表现是
+  `There is no XCFramework found at …/artifacts/webrtc/WebRTC/WebRTC.xcframework`，**越清越好不了**。
+  平时用 **⇧⌘K（Clean Build Folder）** 就够，它不动 `SourcePackages`。真要清就先退 Xcode、两个一起清
+  （重下 44MB）：`osascript -e 'quit app "Xcode"'; sleep 3; rm -rf ~/Library/Developer/Xcode/DerivedData ~/Library/Caches/org.swift.swiftpm/artifacts`。
+  已经踩了就把缓存那个 zip **挪走（别删，网慢能还原）**再 `xcodebuild -resolvePackageDependencies`。
+  `test.sh` 前 9 步全绿说明不了问题——**只有第 10 步碰 `WebRTC.xcframework`**。
 
 - **Kit 的界面代码 macOS 上编不到**（全在 `#if canImport(UIKit)`），`swift test` 绿不算数；`test.sh` 第 10 步为 iOS 编 Demo 才是闸门。
   Controller 那些在 macOS 上也要编的文件**不能引用 `IMKitTheme`**（它是 UIKit-only）——时长常量放 `IMCallViewRules.swift`。
