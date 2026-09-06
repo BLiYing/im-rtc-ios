@@ -52,6 +52,8 @@ public final class IMCallOverlayViewController: UIViewController {
     /// 复用格子，按 uid 索引。**不每次重建**：重建会让媒体层挂上去的渲染视图跟着重来，画面会闪。
     private var tiles: [String: IMVideoTileView] = [:]
     private var reportedLayers: [String: String] = [:]
+    /// 上一轮每个人有没有画面。**只用来判「他的轨道刚到」**，见 `report(_:layer:hasVideo:)`。
+    private var lastHasVideo: [String: Bool] = [:]
     /// 当前把哪个格子钉成了全屏（视频版式）。
     private var fullTile: IMVideoTileView?
     private var fullConstraints: [NSLayoutConstraint] = []
@@ -399,7 +401,7 @@ public final class IMCallOverlayViewController: UIViewController {
         pip.liftsForControls = chromeVisible
         pip.accessibilityLabel = state.isSwapped ? "对方画面" : "本端画面"
         controller.attachLocalPreview(to: selfTile.renderView)
-        report(peer.uid, layer: state.isSwapped ? "l" : "h")
+        report(peer.uid, layer: state.isSwapped ? "l" : "h", hasVideo: peer.hasVideo)
     }
 
     private func renderGrid(_ state: IMCallViewState) {
@@ -426,7 +428,7 @@ public final class IMCallOverlayViewController: UIViewController {
         gridView.layout(ordered)
         // 层上界按真人的格子数算，加号格不算——它不收流。
         let layer = imTileLayer(visible.count + 1)
-        for p in visible { report(p.uid, layer: layer) }
+        for p in visible { report(p.uid, layer: layer, hasVideo: p.hasVideo) }
     }
 
     private func applySelfTile(_ state: IMCallViewState, avatarSize: CGFloat) {
@@ -468,6 +470,7 @@ public final class IMCallOverlayViewController: UIViewController {
             tile.removeFromSuperview()
             tiles[uid] = nil
             reportedLayers[uid] = nil
+            lastHasVideo[uid] = nil
         }
     }
 
@@ -478,8 +481,22 @@ public final class IMCallOverlayViewController: UIViewController {
         return tile
     }
 
-    /// 格子大小变了就重报层上界，同一个值不重复发。**这是省带宽的关键一步**。
-    private func report(_ uid: String, layer: String) {
+    /**
+     格子大小变了就重报层上界，同一个值不重复发。**这是省带宽的关键一步**。
+
+     `hasVideo` 不是用来决定报不报的，是用来**把去重表划掉**的：
+     `setRemoteLayer` 按 uid 找他当前的视频轨道再发帧，而**人先进来、轨道后到是常态**
+     （`onUserEnter` 一到就摆格子并报层，那一次引擎手里还没有他的轨道，什么都没发出去），
+     可去重表已经记下「报过 l 了」——之后除非格数变化就再也不会重发，
+     服务端一直按默认的 `m` 给他下发，九宫格里八个小格子每格都收半高清。
+     症状只是「画面卡、掉帧」，一条报错都没有。
+     `hasVideo` 从 false 翻成 true 正是「他的轨道到了」那一刻，借它重报一次。
+     （Android 走 `IMCallKit.invalidateReportedLayer`，Web 把 `hasVideo` 放进 effect 依赖，同一条。）
+    */
+    private func report(_ uid: String, layer: String, hasVideo: Bool) {
+        let trackJustArrived = hasVideo && lastHasVideo[uid] != true
+        lastHasVideo[uid] = hasVideo
+        if trackJustArrived { reportedLayers[uid] = nil }
         guard reportedLayers[uid] != layer else { return }
         reportedLayers[uid] = layer
         controller.reportLayer(uid, layer)

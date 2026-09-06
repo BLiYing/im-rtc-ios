@@ -11,6 +11,19 @@
 
 ## 当前焦点
 
+**上行 ICE 断了自己重连 + 补上「轨道后到要重报层上界」那个洞（2026-09-06 夜）**，
+`./scripts/test.sh` 十步全绿。
+
+| 改动 | 为什么 |
+|---|---|
+| **`pub` PC failed → `restartPubICE()` + 新 act `restart_pub_ice`**（`IMCallEngine.mediaEvents` / `RoomStateMachine` / `IMWebRTCAdapter`） | 那条 PC 的 offerer 是本端，**只能自己救**；`sub` 那条由服务端救（协议 §3.3 已补规则）。不救的后果：切网 / 进电梯 / 锁屏久了，人就**永久掉出这通通话**，对端格子从此是一块黑，而界面上一切正常、谁也不挂断——真机日志里抓到过两条 PC 从某一刻起五分钟一轮地失败、再没回到 connected。做成「置一位、下一个 offer 生效」而不是「立刻发帧」：发帧是 Engine 的事，媒体层不认识信令。`restart_pub_ice` **不进 `bufferableOps`** |
+| **`report(_:layer:hasVideo:)`：轨道刚到就把去重表划掉重报一次** | `setRemoteLayer` 按 uid 找他当前的视频轨道再发帧，而**人先进来、轨道后到是常态**：`onUserEnter` 一到就摆格子并报层，那一次什么都没发出去，可去重表已经记下「报过了」——之后除非格数变化就再也不重发，服务端一直按默认的 `m` 下发。症状只是「画面卡」，一条报错都没有。（Android 走 `invalidateReportedLayer`、Web 把 `hasVideo` 放进 effect 依赖，同一条） |
+
+**没做**：这两条都只有编译 + macOS 单测，**Kit 的界面代码在本仓只编得到**，
+`report(...)` 是 VC 的私有方法，没法单测；ICE 重启更要真机断网才验得了。
+
+## 上一轮
+
 **合成画面：模拟器上终于能验视频了（2026-09-06 傍晚）**，`./scripts/test.sh` 十步全绿
 （119 个 macOS 用例 + Demo 为 iOS 编译通过）。
 

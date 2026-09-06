@@ -115,6 +115,18 @@ public protocol IMMediaAdapter: AnyObject, Sendable {
     /// createPubOffer 生成上行 offer。
     func createPubOffer() async throws -> String
 
+    /**
+     restartPubICE 让**下一个**上行 offer 带上 ICE restart（换一对新 ufrag/pwd 重新打洞）。
+
+     `pub` 那条 PC 的 offerer 恒为本端（协议 §3.3），所以它 `failed` 了只能自己救；
+     `sub` 那条由服务端救（`sfu.Peer.RestartSubICE`）——**各自重启自己 offer 的那条**，
+     两边都不需要新的协议帧，也不会 glare。
+
+     做成「置一个位、下一个 offer 生效」而不是「立刻发一个 offer」：
+     发帧是 Engine 的事，媒体层不认识信令。
+     */
+    func restartPubICE()
+
     /// applyPubAnswer 应用服务端对上行 offer 的应答。
     func applyPubAnswer(_ sdp: String) async throws
 

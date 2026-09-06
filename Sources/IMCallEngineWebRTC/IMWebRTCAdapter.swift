@@ -49,6 +49,8 @@ public final class IMWebRTCAdapter: NSObject, IMMediaAdapter, @unchecked Sendabl
     private let syntheticLabel: String
     /// 合成采集器。与 `capturer` 互斥：开了合成就不建摄像头采集器。
     private var syntheticCapturer: IMSyntheticVideoCapturer?
+    /// 下一个上行 offer 要不要带 ICE restart。见 `restartPubICE()`。
+    private var pubICERestartPending = false
 
     /// - Parameters:
     ///   - videoProfile: 画质档位，默认 720p。
@@ -215,10 +217,24 @@ public final class IMWebRTCAdapter: NSObject, IMMediaAdapter, @unchecked Sendabl
 
     /// createPubOffer 生成上行 offer。**pub 的 offerer 恒为本端**（协议 §3.3）。
     public func createPubOffer() async throws -> String {
-        let constraints = RTCMediaConstraints(mandatoryConstraints: nil, optionalConstraints: nil)
+        lock.lock()
+        let restart = pubICERestartPending
+        pubICERestartPending = false
+        lock.unlock()
+        if restart { IMRTCLog.info("上行重启 ICE", [:]) }
+        let constraints = RTCMediaConstraints(
+            mandatoryConstraints: restart ? ["IceRestart": "true"] : nil,
+            optionalConstraints: nil)
         let offer = try await ensurePeers().pub.offer(for: constraints)
         try await ensurePeers().pub.setLocalDescription(offer)
         return offer.sdp
+    }
+
+    /// 见协议里的说明。**置位而不是立刻发帧**：发帧是 Engine 的事。
+    public func restartPubICE() {
+        lock.lock()
+        pubICERestartPending = true
+        lock.unlock()
     }
 
     public func applyPubAnswer(_ sdp: String) async throws {

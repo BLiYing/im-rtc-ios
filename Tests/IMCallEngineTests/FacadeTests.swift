@@ -53,6 +53,7 @@ final class FacadeTests: XCTestCase {
             return IMLocalTrackInfo(cid: "cam-1", kind: "video", source: "camera")
         }
         func createPubOffer() async throws -> String { note("createPubOffer"); return "v=0 pub-offer" }
+        func restartPubICE() { note("restartPubICE") }
         func applyPubAnswer(_ sdp: String) async throws { note("applyPubAnswer") }
         func answerSubOffer(_ sdp: String) async throws -> String {
             note("answerSubOffer(\(sdp))")

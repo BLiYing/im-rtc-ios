@@ -435,6 +435,21 @@ import Foundation
         events.onConnectionStateChange = { [weak self] pc, state in
             guard let self else { return }
             IMRTCLog.debug("PC 状态", ["pc": pc.wireValue, "state": state])
+            /*
+             **ICE 失败不是终点，是该重连的信号。**
+
+             `pub` 那条的 offerer 是本端，只能自己救；`sub` 那条由服务端救（协议 §3.3）。
+             不救的后果：网抖一下（换 Wi-Fi、进电梯、锁屏久了）人就**永久掉出这通通话**，
+             对端格子从此是一块黑，而界面上一切正常、谁也不挂断。
+             真机上抓到过两条 PC 从某一刻起五分钟一轮地失败，再没回到 connected。
+             重启失败还会再进 failed，于是天然形成一个重试节奏。
+            */
+            if pc == .pub, state == "failed" {
+                IMRTCLog.info("上行通路失败，重启 ICE", [:])
+                self.media?.restartPubICE()
+                Task { await self.loop.dispatch(.act(op: "restart_pub_ice")) }
+                return
+            }
             guard pc == .sub, state == "connected" else { return }
             Task { await self.loop.dispatch(.internalEvent(name: "media_ready")) }
         }

@@ -29,6 +29,7 @@ public enum IMEngineMachine {
     ]
     private static let roomActs: Set<String> = [
         "join", "leave", "publish", "unpublish", "mute", "subscribe", "unsubscribe", "update_layer",
+        "restart_pub_ice",
     ]
 
     /// reduce 是 engine 状态的唯一入口。
