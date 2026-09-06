@@ -38,7 +38,18 @@ public final class IMCallOverlayViewController: UIViewController {
     private let selfTile = IMVideoTileView()
     private let addTile = UIButton(type: .system)
     private let controlsScrim = CAGradientLayer()
+    /**
+     控制条**两排**（v3.2）：上排三个开关（静音 / 摄像头 / 扬声器），
+     下排「挂断居中 + 翻转摄像头在它右边」。
+
+     下排用三格等宽：左边一格空着，挂断占中间那格所以**真的在屏幕正中**，翻转占右边那格。
+     少了左边那个占位，挂断就会偏左——红键偏了最容易点错。
+    */
     private let controlsStack = UIStackView()
+    private let controlsTop = UIStackView()
+    private let controlsBottom = UIStackView()
+    /// 下排左边那个空位：有它挂断才真的在屏幕正中。
+    private let spacer = UIView()
     /// 复用格子，按 uid 索引。**不每次重建**：重建会让媒体层挂上去的渲染视图跟着重来，画面会闪。
     private var tiles: [String: IMVideoTileView] = [:]
     private var reportedLayers: [String: String] = [:]
@@ -49,6 +60,7 @@ public final class IMCallOverlayViewController: UIViewController {
     private let micButton = IMControlButton(icon: .mic, caption: "静音", onIcon: .micSlash, onCaption: "已静音")
     private let cameraButton = IMControlButton(icon: .videoSlash, caption: "开摄像头", onIcon: .video, onCaption: "关摄像头")
     private let speakerButton = IMControlButton(icon: .speaker, caption: "扬声器", onIcon: .speaker, onCaption: "扬声器")
+    private let switchCameraButton = IMControlButton(icon: .cameraFlip, caption: "翻转")
     private let endButton = IMControlButton(role: .danger, icon: .phoneDown, caption: "挂断")
     private let acceptButton = IMControlButton(role: .accept, icon: .phone, caption: "接听")
     private let rejectButton = IMControlButton(role: .danger, icon: .xmark, caption: "拒绝")
@@ -107,10 +119,17 @@ public final class IMCallOverlayViewController: UIViewController {
         controlsScrim.colors = [UIColor.clear.cgColor, UIColor(white: 0, alpha: 0.55).cgColor]
         controlsScrim.isHidden = true
 
-        controlsStack.axis = .horizontal
-        controlsStack.distribution = .fillEqually
-        controlsStack.alignment = .top
+        for row in [controlsTop, controlsBottom] {
+            row.axis = .horizontal
+            row.distribution = .fillEqually
+            row.alignment = .top
+            row.spacing = 12
+        }
+        controlsStack.axis = .vertical
+        controlsStack.alignment = .fill
         controlsStack.spacing = 12
+        controlsStack.addArrangedSubview(controlsTop)
+        controlsStack.addArrangedSubview(controlsBottom)
 
         endedLabel.font = .systemFont(ofSize: 17)
         endedLabel.textColor = theme.primaryText
@@ -167,7 +186,6 @@ public final class IMCallOverlayViewController: UIViewController {
             endedLabel.leadingAnchor.constraint(equalTo: stage.leadingAnchor, constant: 24),
             endedLabel.trailingAnchor.constraint(equalTo: stage.trailingAnchor, constant: -24),
 
-            controlsStack.heightAnchor.constraint(equalToConstant: theme.controlsHeight),
             controlsStack.leadingAnchor.constraint(equalTo: guide.leadingAnchor, constant: 16),
             controlsStack.trailingAnchor.constraint(equalTo: guide.trailingAnchor, constant: -16),
             controlsStack.bottomAnchor.constraint(equalTo: guide.bottomAnchor, constant: -26),
@@ -183,6 +201,7 @@ public final class IMCallOverlayViewController: UIViewController {
         acceptButton.addTarget(self, action: #selector(onAccept), for: .touchUpInside)
         rejectButton.addTarget(self, action: #selector(onReject), for: .touchUpInside)
         speakerButton.addTarget(self, action: #selector(onSpeaker), for: .touchUpInside)
+        switchCameraButton.addTarget(self, action: #selector(onSwitchCamera), for: .touchUpInside)
         pip.onTap = { [weak self] in
             guard let self else { return }
             // 拨出中小窗里只有自己、对端还没画面，没什么可换。
@@ -211,6 +230,7 @@ public final class IMCallOverlayViewController: UIViewController {
     @objc private func onAccept() { controller.accept() }
     @objc private func onReject() { controller.reject() }
     @objc private func onSpeaker() { controller.toggleSpeaker() }
+    @objc private func onSwitchCamera() { controller.switchCamera() }
     @objc private func onInvite() {
         let picker = IMInvitePickerViewController(controller: controller)
         present(UINavigationController(rootViewController: picker), animated: true)
@@ -309,25 +329,39 @@ public final class IMCallOverlayViewController: UIViewController {
 
     /// renderControls 按阶段换按钮组。来电时是「拒绝 / 接听」，其余是常规几件套。**结束态不显示任何按钮。**
     private func renderControls(_ state: IMCallViewState) {
-        let wanted: [UIView]
+        let top: [UIView]
+        let bottom: [UIView]
         if state.phase == .ended {
-            wanted = []
+            top = []
+            bottom = []
         } else if state.phase == .incoming {
             // 视频来电多一个摄像头开关，而不是「以语音接听」按钮（拍板 §11-10）。
-            wanted = imShowsCameraButton(for: state) ? [cameraButton, rejectButton, acceptButton] : [rejectButton, acceptButton]
-        } else {
-            // 语音通话不给摄像头按钮（imShowsCameraButton）。
+            top = []
+            bottom = imShowsCameraButton(for: state) ? [cameraButton, rejectButton, acceptButton] : [rejectButton, acceptButton]
+        } else if imShowsCameraButton(for: state) {
             // 「小窗」不在控制条里——它在标题栏左上角那一颗（IMCallHeaderView 的注释）。
-            wanted = imShowsCameraButton(for: state)
-                ? [micButton, cameraButton, speakerButton, endButton]
-                : [micButton, speakerButton, endButton]
+            top = [micButton, cameraButton, speakerButton]
+            bottom = [spacer, endButton, switchCameraButton]
+        } else {
+            // 语音通话不给摄像头按钮，也就没有翻转（imShowsCameraButton）。
+            top = [micButton, speakerButton]
+            bottom = [endButton]
         }
-        if controlsStack.arrangedSubviews != wanted {
-            controlsStack.arrangedSubviews.forEach { controlsStack.removeArrangedSubview($0); $0.removeFromSuperview() }
-            wanted.forEach { controlsStack.addArrangedSubview($0) }
-        }
+        fill(controlsTop, with: top)
+        fill(controlsBottom, with: bottom)
+        // 摄像头关着的时候翻转没有意义（也没有画面可翻）。
+        switchCameraButton.isEnabled = state.selfState.cameraOn && !state.selfState.cameraBlocked
+        switchCameraButton.alpha = switchCameraButton.isEnabled ? 1 : 0.4
         // 红按钮的语义按房间类型分叉（规范 §05）：群 / 会议写「离开」，拨出中写「取消」。
         endButton.caption = state.isGroup || state.isMeeting ? "离开" : state.phase == .outgoing ? "取消" : "挂断"
+    }
+
+    /// 摆一排按钮。内容没变就不重建（重建会打断按下动效）。
+    private func fill(_ row: UIStackView, with wanted: [UIView]) {
+        guard row.arrangedSubviews != wanted else { return }
+        row.arrangedSubviews.forEach { row.removeArrangedSubview($0); $0.removeFromSuperview() }
+        wanted.forEach { row.addArrangedSubview($0) }
+        row.isHidden = wanted.isEmpty
     }
 
     // MARK: 三种版式

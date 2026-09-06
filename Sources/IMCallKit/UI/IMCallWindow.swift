@@ -42,7 +42,6 @@ public final class IMCallWindow {
     /// 悬浮球（视频形态）里挂着哪个人的画面。换主讲人时先摘再挂。
     private var bubbleAttachedUID = ""
     /// 横幅 5s 不处理就升级为全屏来电页（交互稿 §06）。
-    private var bannerEscalateTimer: DispatchSourceTimer?
     /// 权限说明 / 被拒卡的遮罩。叠在任何形态之上。
     private var promptDimmer: UIView?
 
@@ -54,7 +53,6 @@ public final class IMCallWindow {
 
     deinit {
         bubbleTimer?.cancel()
-        bannerEscalateTimer?.cancel()
     }
 
     // MARK: - 形态切换
@@ -66,7 +64,8 @@ public final class IMCallWindow {
         if wanted == .banner, let banner = window?.rootViewController?.view.subviews
             .first as? IMIncomingBanner {
             banner.apply(caller: state.participants.first?.uid ?? state.peerUID,
-                         mediaType: state.mediaType, isGroup: state.isGroup)
+                         mediaType: state.mediaType, isGroup: state.isGroup,
+                         cameraOn: state.selfState.cameraOn)
         }
         if wanted == .bubble { refreshBubble(state) }
         if state.phase == .idle { bannerExpanded = false }
@@ -124,8 +123,6 @@ public final class IMCallWindow {
     private func transition(to wanted: Mode, state: IMCallViewState) {
         bubbleTimer?.cancel()
         bubbleTimer = nil
-        bannerEscalateTimer?.cancel()
-        bannerEscalateTimer = nil
         if !bubbleAttachedUID.isEmpty {
             controller.attachView(bubbleAttachedUID, to: nil)
             bubbleAttachedUID = ""
@@ -193,9 +190,12 @@ public final class IMCallWindow {
                              state: IMCallViewState) {
         let banner = IMIncomingBanner()
         banner.apply(caller: state.participants.first?.uid ?? state.peerUID,
-                     mediaType: state.mediaType, isGroup: state.isGroup)
+                     mediaType: state.mediaType, isGroup: state.isGroup,
+                     cameraOn: state.selfState.cameraOn)
         banner.onAccept = { [weak self] in self?.controller.accept() }
         banner.onReject = { [weak self] in self?.controller.reject() }
+        // 视频来电上的「关摄像头」：接起来之前就能决定要不要出镜（Web 端一直有，两端补齐）。
+        banner.onToggleCamera = { [weak self] in self?.controller.toggleCamera() }
         banner.onExpand = { [weak self] in
             guard let self else { return }
             self.bannerExpanded = true
@@ -214,16 +214,6 @@ public final class IMCallWindow {
         banner.transform = CGAffineTransform(translationX: 0, y: -120)
         UIView.animate(withDuration: 0.3, delay: 0, usingSpringWithDamping: 0.85,
                        initialSpringVelocity: 0.6) { banner.transform = .identity }
-        // 5s 不处理升级为全屏来电页（交互稿 §06）。
-        let timer = DispatchSource.makeTimerSource(queue: .main)
-        timer.schedule(deadline: .now() + 5)
-        timer.setEventHandler { [weak self] in
-            guard let self, self.controller.state.phase == .incoming else { return }
-            self.bannerExpanded = true
-            self.apply(self.controller.state)
-        }
-        bannerEscalateTimer = timer
-        timer.resume()
     }
 
     private func mountBubble(in host: UIViewController, scene: UIWindowScene,

@@ -133,6 +133,11 @@ public final class IMCallController: NSObject {
 
     public func reject() { Task { await engine.reject() } }
 
+    /// 前后摄像头翻转。**纯媒体动作，不改视图状态**——镜像由媒体层自己处理。
+    public func switchCamera() {
+        Task { await engine.switchCamera() }
+    }
+
     public func toggleSpeaker() {
         let on = !state.selfState.speakerOn
         apply(.setSpeaker(on))

@@ -19,6 +19,9 @@ public final class IMVideoTileView: UIView {
     private let mutedPlate = UIView()
     private let netBadge = IMNetworkBars(compact: true)
     private let netPlate = UIView()
+
+    /// 角标离格子边缘的距离。**12 而不是 8**：格子有 10 的圆角，贴到 8 名字会被切掉一截。
+    private static let plateInset: CGFloat = 12
     private let ringingLabel = UILabel()
     private var avatarSizeConstraints: [NSLayoutConstraint] = []
 
@@ -57,7 +60,7 @@ public final class IMVideoTileView: UIView {
         namePlate.clipsToBounds = true
 
         mutedPlate.backgroundColor = theme.scrim
-        mutedPlate.layer.cornerRadius = 12
+        mutedPlate.layer.cornerRadius = 10
         mutedPlate.isHidden = true
         mutedBadge.image = IMKitIcon.micSlash.image(pointSize: 11)
         mutedBadge.tintColor = theme.mutedBadge
@@ -100,24 +103,31 @@ public final class IMVideoTileView: UIView {
             avatarDisc.centerYAnchor.constraint(equalTo: centerYAnchor),
 
             // 静音角标放右上，与左下的名字牌分开：名字可能很长，挤在一起时角标会被顶出格子。
-            mutedPlate.topAnchor.constraint(equalTo: topAnchor, constant: 8),
-            mutedPlate.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
-            mutedPlate.widthAnchor.constraint(equalToConstant: 24),
-            mutedPlate.heightAnchor.constraint(equalToConstant: 24),
+            /*
+             静音角标跟着名字牌走，**在它右边**（v3.2 改）。
+
+             原先在右上角，而 1v1 的全屏画面是铺满整屏的——那个位置正好压在状态栏的
+             时间与电量上。挪下来之后两者一起排，也不会再和系统栏打架。
+            */
+            mutedPlate.leadingAnchor.constraint(equalTo: namePlate.trailingAnchor, constant: 4),
+            mutedPlate.centerYAnchor.constraint(equalTo: namePlate.centerYAnchor),
+            mutedPlate.widthAnchor.constraint(equalToConstant: 20),
+            mutedPlate.heightAnchor.constraint(equalToConstant: 20),
             mutedBadge.centerXAnchor.constraint(equalTo: mutedPlate.centerXAnchor),
             mutedBadge.centerYAnchor.constraint(equalTo: mutedPlate.centerYAnchor),
 
-            netPlate.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -8),
-            netPlate.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
+            netPlate.topAnchor.constraint(equalTo: topAnchor, constant: Self.plateInset),
+            netPlate.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -Self.plateInset),
             netPlate.widthAnchor.constraint(equalToConstant: 24),
             netPlate.heightAnchor.constraint(equalToConstant: 24),
             netBadge.centerXAnchor.constraint(equalTo: netPlate.centerXAnchor),
             netBadge.centerYAnchor.constraint(equalTo: netPlate.centerYAnchor),
 
-            namePlate.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 8),
-            namePlate.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -8),
-            namePlate.heightAnchor.constraint(equalToConstant: 18),
-            namePlate.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -8),
+            // 离左边与下边都留 12（比原来的 8 大）：格子有圆角，贴到 8 的话名字会被切掉一截。
+            namePlate.leadingAnchor.constraint(equalTo: leadingAnchor, constant: Self.plateInset),
+            namePlate.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -Self.plateInset),
+            namePlate.heightAnchor.constraint(equalToConstant: 20),
+            namePlate.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -40),
             nameLabel.centerYAnchor.constraint(equalTo: namePlate.centerYAnchor),
             nameLabel.leadingAnchor.constraint(equalTo: namePlate.leadingAnchor, constant: 8),
             nameLabel.trailingAnchor.constraint(equalTo: namePlate.trailingAnchor, constant: -8),

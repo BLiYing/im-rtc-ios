@@ -74,6 +74,7 @@ final class FacadeTests: XCTestCase {
             note("attachLocal(\(cid),\(view == nil ? "nil" : "view"))")
         }
         func setSpeakerOn(_ on: Bool) { note("setSpeakerOn(\(on))") }
+        func switchCamera() async { note("switchCamera") }
         func close() { note("close") }
     }
 

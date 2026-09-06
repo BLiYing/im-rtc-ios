@@ -365,20 +365,18 @@ final class EndActionTests: XCTestCase {
     }
 }
 
-/// 扬声器默认值。**视频通话默认外放**：举着手机看画面时不可能贴耳朵听筒。
+/// 扬声器默认值。**一条规则到底：默认都不外放**（拍板 2026-09-06），要外放由用户自己点。
+/// 视频通话原先默认外放，真机上一接通就吵到旁人。
 final class SpeakerDefaultTests: XCTestCase {
-    func testVideoCallDefaultsToSpeaker() {
+    func testNothingDefaultsToSpeaker() {
         let video = reduceCallView(IMCallViewState(),
                                    .callReceived(callID: "c", caller: "a", calleeIDs: [], mediaType: "video", isGroup: false))
         let audio = reduceCallView(IMCallViewState(),
                                    .callReceived(callID: "c", caller: "a", calleeIDs: [], mediaType: "audio", isGroup: false))
-        XCTAssertTrue(video.selfState.speakerOn)
+        XCTAssertFalse(video.selfState.speakerOn, "视频通话也默认听筒")
         XCTAssertFalse(audio.selfState.speakerOn, "语音通话默认听筒，跟系统电话一致")
-    }
-
-    func testMeetingDefaultsToSpeaker() {
         let meeting = reduceCallView(IMCallViewState(), .meetingJoined(roomID: "r", now: 1))
-        XCTAssertTrue(meeting.selfState.speakerOn)
+        XCTAssertFalse(meeting.selfState.speakerOn, "会议房同理")
     }
 
     func testToggleSpeaker() {

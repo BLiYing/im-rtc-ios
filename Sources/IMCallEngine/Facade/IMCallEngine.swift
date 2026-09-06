@@ -321,6 +321,16 @@ import Foundation
         media?.setSpeakerOn(on)
     }
 
+    /**
+     switchCamera 前后摄像头翻转（设计文档 §7.5）。
+
+     **不重新协商**：换的是同一条轨道的采集源，`track_id` / `cid` 都不变，
+     服务端与对端不需要知道。没有媒体适配器、或只有一个摄像头时静默忽略。
+    */
+    @objc public func switchCamera() async {
+        await media?.switchCamera()
+    }
+
     /// attachView 把某个 uid 的远端画面挂到视图上；传 nil 卸载。
     ///
     /// **这是 UI 拿到画面的唯一途径**（CONVENTIONS §1）：Kit 不许自己碰

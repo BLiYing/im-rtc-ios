@@ -134,6 +134,15 @@ public protocol IMMediaAdapter: AnyObject, Sendable {
     func setSpeakerOn(_ on: Bool)
 
     /**
+     switchCamera 前后摄像头翻转。
+
+     **不重新协商**：换的是同一条轨道的采集源，`track_id` / `cid` 一个都不变，
+     服务端与对端都不需要知道这件事。翻转失败（只有一个摄像头、被别的程序占用）
+     就保持原样，别把通话弄断。
+    */
+    func switchCamera() async
+
+    /**
      claimRemoteTracks 告诉媒体层「哪条 track_id 属于哪个 uid」（`[track_id: uid]`）。
 
      **这一步不能省。** 媒体层拿到下行轨道时只知道 track_id（msid 第二段），

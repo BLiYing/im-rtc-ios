@@ -27,6 +27,8 @@ public final class IMWebRTCAdapter: NSObject, IMMediaAdapter, @unchecked Sendabl
     private var localTracks: [String: RTCMediaStreamTrack] = [:]
     /// 摄像头采集器。**必须持有**：不留引用的话它会被释放，画面直接停掉。
     private var capturer: RTCCameraVideoCapturer?
+    /// 当前用的是不是前置。翻转靠它决定下一次挑哪一个。
+    private var usingFrontCamera = true
     private var videoSource: RTCVideoSource?
     /// 已经在预览的那条摄像头轨道。发布时复用它，不重开设备。
     private var previewTrack: IMLocalTrackInfo?
@@ -228,6 +230,30 @@ public final class IMWebRTCAdapter: NSObject, IMMediaAdapter, @unchecked Sendabl
         }
     }
 
+    /**
+     switchCamera 前后摄像头翻转。
+
+     **不重新协商**：`RTCCameraVideoCapturer` 换个 device 重新 `startCapture` 就行，
+     轨道对象、`track_id` 与 `cid` 一个都不变，服务端与对端不需要知道这件事。
+     只有一个摄像头（或另一个被别的程序占着）时保持原样——别为了翻转把通话弄断。
+    */
+    public func switchCamera() async {
+        guard let capturer else { return }
+        let wanted: AVCaptureDevice.Position = usingFrontCamera ? .back : .front
+        guard RTCCameraVideoCapturer.captureDevices().contains(where: { $0.position == wanted }) else {
+            IMRTCLog.warn("没有另一个摄像头可翻", ["wanted": wanted == .front ? "front" : "back"])
+            return
+        }
+        usingFrontCamera.toggle()
+        do {
+            try await startCapture(capturer)
+        } catch {
+            // 翻转失败就翻回去：宁可保持原来那个摄像头，也不要一片黑。
+            usingFrontCamera.toggle()
+            IMRTCLog.warn("翻转摄像头失败", ["err": String(describing: error)])
+        }
+    }
+
     public func attachRemoteView(_ uid: String, _ view: AnyObject?) {
         // 线程由登记表自己管（它整张表只在主线程上动）。
         registry.attach(owner: uid, to: view as? UIView)
@@ -314,7 +340,8 @@ public final class IMWebRTCAdapter: NSObject, IMMediaAdapter, @unchecked Sendabl
     /// 要求精确匹配会在某些机型上一个格式都挑不出来，通话直接打不出去。
     private func startCapture(_ capturer: RTCCameraVideoCapturer) async throws {
         let devices = RTCCameraVideoCapturer.captureDevices()
-        guard let device = devices.first(where: { $0.position == .front }) ?? devices.first else {
+        let wantedPosition: AVCaptureDevice.Position = usingFrontCamera ? .front : .back
+        guard let device = devices.first(where: { $0.position == wantedPosition }) ?? devices.first else {
             throw IMRTCError(.deviceNotFound, "没有可用的摄像头")
         }
         let wanted = profile.width
