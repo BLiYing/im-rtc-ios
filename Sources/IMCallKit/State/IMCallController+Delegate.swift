@@ -15,8 +15,15 @@ extension IMCallController: IMCallEngineDelegate {
         apply(.connection(willReconnect ? .reconnecting : .lost))
     }
 
-    public func callEngineDidGetKickedOut(_ engine: IMCallEngine) {
+    public func callEngine(_ engine: IMCallEngine, wasKickedOutFor reason: IMKickedOutReason) {
+        // Kit 对两种原因的界面表达一致（都是「连接没了」）；**分岔是宿主的事**——
+        // 回登录页还是静默换票重登，只有宿主知道自己的账号体系怎么走。
         apply(.connection(.lost))
+    }
+
+    public func callEngine(_ engine: IMCallEngine, tokenWillExpireAt expiresAtMS: Int64) {
+        // Kit 对票期没有界面表达——换票是宿主的事（票从宿主的账号体系来）。
+        // 这里不实现的话宿主照样收得到（delegate 是宿主自己挂的），故留空即可。
     }
 
     /// 加人的两条失败分支（交互稿 §05）：满员出提示；非主叫把入口藏掉。别的错误码由宿主处理。

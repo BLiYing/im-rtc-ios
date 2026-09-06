@@ -127,8 +127,13 @@ import Foundation
 
      连上着的时候调它也是安全的（比如票快过期了提前换）——当前连接不受影响。
      */
+    @objc public func updateToken(_ token: String, expiresAtMS: Int64) {
+        currentConnection?.updateToken(token, expiresAtMS: expiresAtMS)
+    }
+
+    /// 不带到期时刻的旧形态：定时器留到下一次 `sys.hello.ok` 再武装。
     @objc public func updateToken(_ token: String) {
-        currentConnection?.updateToken(token)
+        currentConnection?.updateToken(token, expiresAtMS: 0)
     }
 
     /// state 是状态机的当前快照，供 UI 渲染。
@@ -413,9 +418,15 @@ import Foundation
                 "code": NSNumber(value: code), "will_reconnect": NSNumber(value: willReconnect),
             ])
         }
-        events.onKickedOut = { [weak self] in
+        events.onKickedOut = { [weak self] reason in
             guard let self else { return }
+            // 状态机只认「被踢了」这一件事；原因是给宿主做处置判断的，两者分开走
+            // （IMFrameLoop 里刻意不外发状态机那份 onKickedOut）。
             Task { await self.loop.dispatch(.internalEvent(name: "ws_closed_4403")) }
+            self.dispatcher.emitKickedOut(reason)
+        }
+        events.onTokenWillExpire = { [weak self] expiresAtMS in
+            self?.dispatcher.emitTokenWillExpire(expiresAtMS)
         }
         events.onError = { [weak self] error in
             self?.dispatcher.emit(IMEmittedEvent("onError", [

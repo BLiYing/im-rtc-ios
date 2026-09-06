@@ -36,6 +36,10 @@ enum SysFrames {
         "server_time_ms": .int(),
         "resumed": .bool(),
         "ping_interval_sec": .int(),
+        // 本次握手用的那张票的到期时刻（Unix 毫秒）。**0 = 未知**。
+        // 客户端据此在到期前主动换票；**禁止自己解析 token 取 exp**——
+        // 票对客户端是不透明的，可能根本不是 JWT。
+        "token_expires_at_ms": .int(),
         "limits": .object(fields: limits),
     ]
 

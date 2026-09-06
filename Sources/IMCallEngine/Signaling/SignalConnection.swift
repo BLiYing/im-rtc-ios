@@ -22,6 +22,8 @@ public struct IMHelloOK: Sendable {
     public let sessionID: String
     public let resumed: Bool
     public let pingIntervalSec: Int
+    /// 本次握手用的那张票的到期时刻（Unix 毫秒）。**0 = 未知**。
+    public let tokenExpiresAtMS: Int64
     public let maxFrameBytes: Int
     public let maxCallees: Int
     public let maxRoomParticipants: Int
@@ -52,8 +54,13 @@ public struct IMConnectionEvents {
     public var onEvent: ((String, [String: IMJSON]) -> Void)?
     /// 连接断开。willReconnect=false 时不会再自动回来。
     public var onDisconnected: ((Int, Bool) -> Void)?
-    /// 被踢（同 uid 同 device_id 在别处登录）。
-    public var onKickedOut: (() -> Void)?
+    /// 被踢下线，**不会自动重连**。
+    ///
+    /// `reason` 决定宿主该做什么，两者处置相反——合并成一个「被踢」的话，
+    /// 宿主只能都当登录失效处理，把本可静默恢复的场景也变成「请重新登录」。
+    public var onKickedOut: ((IMKickedOutReason) -> Void)?
+    /// 票快到期了，宿主该去取新票并 `updateToken`。见 `TokenExpiryTimer`。
+    public var onTokenWillExpire: ((Int64) -> Void)?
     /// 内部错误。
     public var onError: ((IMRTCError) -> Void)?
 
@@ -94,6 +101,17 @@ public final class IMSignalConnection {
     private var reconnectTimer: DispatchSourceTimer?
     /// 连续鉴权失败次数。握手一成功、或宿主换了票，就清零——只有**连续**失败才说明票是死的。
     private var authFailures = 0
+    /// 票到期提醒。**排程走同一条信令队列**——所有状态变更都在这条线上，不引入第二个并发域。
+    private lazy var tokenExpiry = TokenExpiryTimer(
+        schedule: { [weak self] delayMS, fire in
+            guard let self else { return {} }
+            let work = DispatchWorkItem(block: fire)
+            self.queue.asyncAfter(deadline: .now() + .milliseconds(Int(delayMS)), execute: work)
+            return { work.cancel() }
+        },
+        onWillExpire: { [weak self] expiresAtMS in
+            self?.events.onTokenWillExpire?(expiresAtMS)
+        })
 
     private var pending: PendingRequests!
     private var heartbeat: Heartbeat!
@@ -127,10 +145,13 @@ public final class IMSignalConnection {
     ///
     /// **顺带把鉴权失败计数清零**：换票就是「这次不一样了」的唯一信号，
     /// 不清的话已经用光重试次数的连接换了新票也再没有机会试。
-    public func updateToken(_ token: String) {
+    public func updateToken(_ token: String, expiresAtMS: Int64 = 0) {
         queue.async {
             self.options.token = token
             self.authFailures = 0
+            // 宿主刚从自家后台拿到票，必然知道它的 expires_in。传了就按新票重新武装；
+            // 不传就让旧定时器继续跑到下一次握手——那时 sys.hello.ok 会给出权威值。
+            if expiresAtMS > 0 { self.tokenExpiry.arm(expiresAtMS: expiresAtMS) }
         }
     }
 
@@ -146,6 +167,7 @@ public final class IMSignalConnection {
         queue.async {
             self.state = .closed
             self.heartbeat.stop()
+            self.tokenExpiry.disarm()
             self.reconnectTimer?.cancel()
             self.reconnectTimer = nil
             self.pending.rejectAll(IMRTCError(.invalidState, "连接已关闭"))
@@ -239,6 +261,7 @@ public final class IMSignalConnection {
                 self.reconnectAttempt = 0
                 self.authFailures = 0
                 self.heartbeat.start(intervalSec: ok.pingIntervalSec)
+                self.tokenExpiry.arm(expiresAtMS: ok.tokenExpiresAtMS)
                 IMRTCLog.info("信令已连接", ["uid": ok.uid, "resumed": String(ok.resumed)])
                 // 先抛事件再 resume：`connect()` 返回时，门面那边的状态机应该已经吃过
                 // hello.ok 了——首次登录的调用方 await 到的就该是最终状态。
@@ -256,6 +279,7 @@ public final class IMSignalConnection {
             sessionID: Wire.string(data, "session_id"),
             resumed: Wire.bool(data, "resumed"),
             pingIntervalSec: Int(Wire.int(data, "ping_interval_sec")),
+            tokenExpiresAtMS: Wire.int(data, "token_expires_at_ms"),
             maxFrameBytes: Int(Wire.int(limits, "max_frame_bytes")),
             maxCallees: Int(Wire.int(limits, "max_callees")),
             maxRoomParticipants: Int(Wire.int(limits, "max_room_participants")),
@@ -314,7 +338,7 @@ public final class IMSignalConnection {
     private func dispatchEvent(_ envelope: IMEnvelope) {
         if envelope.type == IMFrameType.error {
             let code = IMErrorCode(rawValue: Int(Wire.int(envelope.data, "code"))) ?? .internalError
-            if code == .kickedOut { events.onKickedOut?() }
+            if code == .kickedOut { events.onKickedOut?(.takenOver) }
             events.onError?(IMRTCError(code, Wire.string(envelope.data, "msg")))
             return
         }
@@ -341,7 +365,7 @@ public final class IMSignalConnection {
         // 用户看到的是「点了没反应」，而真实原因明明早就知道了。
         pending.rejectAll(IMRTCError(.networkUnreachable, "连接已断开"))
 
-        if code == IMCloseCode.kickedOut { events.onKickedOut?() }
+        if code == IMCloseCode.kickedOut { events.onKickedOut?(.takenOver) }
 
         /*
          4401 要计数。重连**带的是同一枚 token**，所以协议 §1.5 的「换新 token 后重连」
@@ -358,7 +382,7 @@ public final class IMSignalConnection {
                 IMRTCLog.info("鉴权连续失败，停止重连", ["failures": String(authFailures)])
                 reconnectTimer?.cancel()
                 reconnectTimer = nil
-                events.onKickedOut?()
+                events.onKickedOut?(.authExpired)
             }
         }
 
