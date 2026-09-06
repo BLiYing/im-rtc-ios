@@ -136,7 +136,9 @@ public struct IMCallViewState: Equatable, Sendable {
 
 /// 驱动视图模型的输入。**写成显式枚举而不是把回调表整个映射过来**：看得出「界面到底用了哪几个」。
 public enum IMCallViewAction: Sendable {
-    case callReceived(callID: String, caller: String, mediaType: String, isGroup: Bool)
+    /// `calleeIDs` 是这通电话邀了谁（**已去掉自己**）。群通话靠它把还没接的人摆成占位格。
+    case callReceived(callID: String, caller: String, calleeIDs: [String],
+                      mediaType: String, isGroup: Bool)
     case callPlaced(calleeIDs: [String], mediaType: String, isGroup: Bool)
     case callBegin(callID: String, roomID: String, mediaType: String,
                    isGroup: Bool, role: String, now: TimeInterval)
@@ -176,7 +178,7 @@ public func reduceCallView(_ state: IMCallViewState,
                            _ action: IMCallViewAction) -> IMCallViewState {
     var next = state
     switch action {
-    case let .callReceived(callID, caller, mediaType, isGroup):
+    case let .callReceived(callID, caller, calleeIDs, mediaType, isGroup):
         next = IMCallViewState()
         next.connection = state.connection
         next.phase = .incoming
@@ -185,7 +187,14 @@ public func reduceCallView(_ state: IMCallViewState,
         next.isGroup = isGroup
         next.role = "callee"
         next.peerUID = isGroup ? "" : caller
+        /*
+         主叫先摆上（他一定在通话里），其余被邀请的人摆成「还在响铃」的占位格。
+
+         不摆的话群通话在两侧长得不一样：主叫看到四格（含没接的），被叫只看到两格。
+         `calleeIDs` 里已经由调用方去掉了自己。
+        */
         next.participants = [IMParticipant(uid: caller, hasAccepted: true)]
+            + calleeIDs.filter { $0 != caller }.map { IMParticipant(uid: $0, hasAccepted: false) }
         next.selfState = IMSelfState(micOn: true, cameraOn: mediaType == "video",
                                      speakerOn: mediaType == "video")
 

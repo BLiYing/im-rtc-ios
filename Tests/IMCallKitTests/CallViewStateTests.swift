@@ -23,7 +23,7 @@ final class CallViewStateTests: XCTestCase {
 
     func testIncomingCallShowsCaller() {
         let state = reduce(IMCallViewState(), [
-            .callReceived(callID: "c-1", caller: "alice", mediaType: "video", isGroup: false),
+            .callReceived(callID: "c-1", caller: "alice", calleeIDs: [], mediaType: "video", isGroup: false),
         ])
         XCTAssertEqual(state.phase, .incoming)
         XCTAssertEqual(state.peerUID, "alice")
@@ -209,14 +209,14 @@ final class CameraButtonVisibilityTests: XCTestCase {
 
     func testAudioCallHasNoCameraButton() {
         let state = reduceCallView(IMCallViewState(),
-                                   .callReceived(callID: "c-1", caller: "bob",
+                                   .callReceived(callID: "c-1", caller: "bob", calleeIDs: [],
                                                  mediaType: "audio", isGroup: false))
         XCTAssertFalse(imShowsCameraButton(for: state))
     }
 
     func testVideoCallKeepsIt() {
         let state = reduceCallView(IMCallViewState(),
-                                   .callReceived(callID: "c-1", caller: "bob",
+                                   .callReceived(callID: "c-1", caller: "bob", calleeIDs: [],
                                                  mediaType: "video", isGroup: false))
         XCTAssertTrue(imShowsCameraButton(for: state))
     }
@@ -230,7 +230,7 @@ final class CameraButtonVisibilityTests: XCTestCase {
     */
     func testVideoCallWithCameraOffStillKeepsIt() {
         var state = reduceCallView(IMCallViewState(),
-                                   .callReceived(callID: "c-1", caller: "bob",
+                                   .callReceived(callID: "c-1", caller: "bob", calleeIDs: [],
                                                  mediaType: "video", isGroup: false))
         state = reduceCallView(state, .setCamera(false)) // 来电页上关掉摄像头
         XCTAssertFalse(state.selfState.cameraOn)
@@ -369,9 +369,9 @@ final class EndActionTests: XCTestCase {
 final class SpeakerDefaultTests: XCTestCase {
     func testVideoCallDefaultsToSpeaker() {
         let video = reduceCallView(IMCallViewState(),
-                                   .callReceived(callID: "c", caller: "a", mediaType: "video", isGroup: false))
+                                   .callReceived(callID: "c", caller: "a", calleeIDs: [], mediaType: "video", isGroup: false))
         let audio = reduceCallView(IMCallViewState(),
-                                   .callReceived(callID: "c", caller: "a", mediaType: "audio", isGroup: false))
+                                   .callReceived(callID: "c", caller: "a", calleeIDs: [], mediaType: "audio", isGroup: false))
         XCTAssertTrue(video.selfState.speakerOn)
         XCTAssertFalse(audio.selfState.speakerOn, "语音通话默认听筒，跟系统电话一致")
     }
@@ -383,7 +383,7 @@ final class SpeakerDefaultTests: XCTestCase {
 
     func testToggleSpeaker() {
         var state = reduceCallView(IMCallViewState(),
-                                   .callReceived(callID: "c", caller: "a", mediaType: "audio", isGroup: false))
+                                   .callReceived(callID: "c", caller: "a", calleeIDs: [], mediaType: "audio", isGroup: false))
         state = reduceCallView(state, .setSpeaker(true))
         XCTAssertTrue(state.selfState.speakerOn)
     }

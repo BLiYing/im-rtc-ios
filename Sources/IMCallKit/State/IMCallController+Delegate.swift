@@ -36,8 +36,17 @@ extension IMCallController: IMCallEngineDelegate {
     // MARK: 来电与拨出
 
     public func callEngine(_ engine: IMCallEngine, didReceiveCall callID: String,
-                           caller: String, mediaType: String, isGroup: Bool) {
-        apply(.callReceived(callID: callID, caller: caller, mediaType: mediaType, isGroup: isGroup))
+                           caller: String, calleeIDs: [String], mediaType: String, isGroup: Bool) {
+        // 名单里含自己，摆格子之前先去掉——「自己」不是远端成员。
+        let others = calleeIDs.filter { $0 != engine.uid }
+        apply(.callReceived(callID: callID, caller: caller, calleeIDs: others,
+                            mediaType: mediaType, isGroup: isGroup))
+    }
+
+    /// 通话中有人打进来，服务端已经替我们回了忙线——**只提示，不动当前通话**。
+    public func callEngine(_ engine: IMCallEngine, missedCall callID: String,
+                           caller: String, reason: String) {
+        apply(.hint("\(caller) 来电，已自动回复忙线"))
     }
 
     public func callEngine(_ engine: IMCallEngine, callDidBegin callID: String, roomID: String,

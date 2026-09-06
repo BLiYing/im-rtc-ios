@@ -250,7 +250,7 @@ final class LayoutRulesTests: XCTestCase {
         var state = reduceCallView(IMCallViewState(), .connection(.reconnecting))
         XCTAssertEqual(state.connection, .reconnecting)
         // 连接状态跨通话保留：新来电不该把「正在重连」抹掉。
-        state = reduceCallView(state, .callReceived(callID: "c", caller: "a", mediaType: "audio", isGroup: false))
+        state = reduceCallView(state, .callReceived(callID: "c", caller: "a", calleeIDs: [], mediaType: "audio", isGroup: false))
         XCTAssertEqual(state.connection, .reconnecting)
         XCTAssertEqual(imNetworkBarsLit(level: 2), 3)
         XCTAssertEqual(imNetworkBarsLit(level: 4), 2)

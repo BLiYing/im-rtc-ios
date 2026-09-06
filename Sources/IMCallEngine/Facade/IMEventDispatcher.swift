@@ -20,7 +20,7 @@ import Foundation
 @objc public enum IMCallEventName: Int, Sendable {
     case connected, disconnected, kickedOut, error
     case callReceived, callBegin, callEnd
-    case callCancelled, callRejected, callBusy, callNoAnswer, handledOnOtherDevice
+    case callCancelled, callRejected, callBusy, callNoAnswer, callMissed, handledOnOtherDevice
     case userEnter, userLeave, userAccept, userReject, userNoResponse
     case userAudioAvailable, userVideoAvailable
     case activeSpeakers, networkQuality, firstVideoFrame
@@ -49,6 +49,7 @@ extension IMCallEventName {
         case .callRejected: return "callRejected"
         case .callBusy: return "callBusy"
         case .callNoAnswer: return "callNoAnswer"
+        case .callMissed: return "callMissed"
         case .handledOnOtherDevice: return "handledOnOtherDevice"
         case .userEnter: return "userEnter"
         case .userLeave: return "userLeave"
@@ -165,6 +166,7 @@ final class IMEventDispatcher {
         func flag(_ key: String) -> Bool { p[key] as? Bool ?? false }
         func num(_ key: String) -> Int { (p[key] as? NSNumber)?.intValue ?? 0 }
         func rows(_ key: String) -> [[String: Any]] { p[key] as? [[String: Any]] ?? [] }
+        func strs(_ key: String) -> [String] { p[key] as? [String] ?? [] }
 
         switch v.name {
         case .connected:
@@ -178,6 +180,7 @@ final class IMEventDispatcher {
 
         case .callReceived:
             d.callEngine?(e, didReceiveCall: str("call_id"), caller: str("caller"),
+                          calleeIDs: strs("callee_ids"),
                           mediaType: str("media_type"), isGroup: flag("is_group"))
         case .callBegin:
             d.callEngine?(e, callDidBegin: str("call_id"), roomID: str("room_id"),
@@ -195,6 +198,8 @@ final class IMEventDispatcher {
             d.callEngine?(e, calleeIsBusy: str("uid"))
         case .callNoAnswer:
             d.callEngine?(e, calleeDidNotAnswer: str("uid"))
+        case .callMissed:
+            d.callEngine?(e, missedCall: str("call_id"), caller: str("caller"), reason: str("reason"))
         case .handledOnOtherDevice:
             d.callEngine?(e, callHandledOnOtherDevice: str("call_id"), action: str("action"))
 
@@ -236,6 +241,7 @@ final class IMEventDispatcher {
         "onCallReceived": .callReceived, "onCallBegin": .callBegin, "onCallEnd": .callEnd,
         "onCallCancelled": .callCancelled, "onCallRejected": .callRejected,
         "onCallBusy": .callBusy, "onCallNoAnswer": .callNoAnswer,
+        "onCallMissed": .callMissed,
         "onHandledOnOtherDevice": .handledOnOtherDevice,
         "onUserEnter": .userEnter, "onUserLeave": .userLeave,
         "onUserAccept": .userAccept, "onUserReject": .userReject,

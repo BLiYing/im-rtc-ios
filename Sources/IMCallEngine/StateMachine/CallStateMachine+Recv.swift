@@ -15,6 +15,7 @@ extension IMCallMachine {
     ///    本地状态与服务端赛跑是正常的，客户端得容忍。
     static func reduceRecv(_ ctx: IMCallContext, _ type: String,
                            _ data: [String: IMJSON]) -> IMMachineOutput<IMCallContext> {
+        if isForAnotherCall(ctx, data) { return handleForeignCall(ctx, type, data) }
         if type == IMFrameType.callEnded { return handleEnded(ctx, data) }
         if ctx.state == .idle && type != IMFrameType.callIncoming { return out(ctx) }
 
@@ -64,6 +65,35 @@ extension IMCallMachine {
         }
     }
 
+    /**
+     这一帧说的是不是**别的一通电话**。
+
+     通话中被第三个人呼叫时，服务端判他忙线并给我们发一条 `call.ended{busy}`——
+     那条帧的 `call_id` 是**新来那通**的。原先这里不看 call_id，于是它被当成
+     「当前通话结束了」：媒体面直接关掉、通话页收起，而对面还好好地显示着通话中。
+     真机日志里就是 08:30:39 那一串 `PC 状态 closed` 紧跟一条别的 call_id 的 callEnd。
+    */
+    private static func isForAnotherCall(_ ctx: IMCallContext, _ data: [String: IMJSON]) -> Bool {
+        let frameCallID = Wire.string(data, "call_id")
+        return !ctx.callID.isEmpty && !frameCallID.isEmpty && frameCallID != ctx.callID
+    }
+
+    /**
+     别的一通电话的帧：**一律不碰当前状态**。
+
+     只有终态帧要露个头——那说明「有人打进来，已经被自动回了忙线」，
+     界面据此提示一句谁来过电话（交互规则见 UX_FLOWS §06）。
+    */
+    private static func handleForeignCall(_ ctx: IMCallContext, _ type: String,
+                                          _ data: [String: IMJSON]) -> IMMachineOutput<IMCallContext> {
+        guard type == IMFrameType.callEnded else { return out(ctx) }
+        return out(ctx, emit: [IMEmittedEvent("onCallMissed", [
+            "call_id": .string(Wire.string(data, "call_id")),
+            "caller": .string(Wire.string(data, "caller")),
+            "reason": .string(Wire.string(data, "reason")),
+        ])])
+    }
+
     private static func handleIncoming(_ ctx: IMCallContext,
                                        _ data: [String: IMJSON]) -> IMMachineOutput<IMCallContext> {
         guard ctx.state == .idle else { return out(ctx) }
@@ -77,9 +107,16 @@ extension IMCallMachine {
         next.mediaType = mediaType
         next.isGroup = Wire.bool(data, "is_group")
 
+        /*
+         **callee_ids 要原样带给宿主。** 群通话里被叫这一侧原先只知道主叫是谁，
+         界面上就只能画「已经进来的人」；主叫那边是四格（含还没接的占位格），
+         被叫这边是两格，同一通电话两种样子。这条信息服务端一直在发（§4.2 的
+         call.incoming），只是没人往上抛。
+        */
         return out(next, emit: [IMEmittedEvent("onCallReceived", [
             "call_id": .string(next.callID),
             "caller": .string(Wire.string(data, "caller")),
+            "callee_ids": .array(Wire.stringArray(data, "callee_ids").map { .string($0) }),
             "media_type": .string(mediaType),
             "is_group": .bool(next.isGroup),
         ])])

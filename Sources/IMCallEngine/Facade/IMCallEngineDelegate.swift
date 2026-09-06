@@ -50,8 +50,12 @@ import Foundation
     // MARK: - 来电与拨出
 
     /// 收到邀请（被叫侧）。
+    ///
+    /// `calleeIDs` 是**这通电话邀了谁**（不含主叫，含自己）。群通话的界面靠它把还没接的人
+    /// 先摆成占位格——否则主叫那边是四格、被叫这边只有两格，同一通电话两种样子。
     @objc optional func callEngine(_ engine: IMCallEngine, didReceiveCall callID: String,
-                                   caller: String, mediaType: String, isGroup: Bool)
+                                   caller: String, calleeIDs: [String],
+                                   mediaType: String, isGroup: Bool)
 
     /// 通话接通，**主被叫都抛**。此刻 Engine 已自动进房，但**不会自动推流**——
     /// 推不推、推麦克风还是也推摄像头，是界面的决定。
@@ -73,6 +77,15 @@ import Foundation
     @objc optional func callEngine(_ engine: IMCallEngine, calleeIsBusy uid: String)
     /// 对方无应答。便利事件，只在 1v1 抛。
     @objc optional func callEngine(_ engine: IMCallEngine, calleeDidNotAnswer uid: String)
+
+    /**
+     **通话中**有人打进来，服务端已经替你回了忙线——这一通不会振铃。
+
+     MVP 是单通道：同一时刻只有一通电话（协议 §4.3 的忙线分支）。这条回调只是让界面
+     提示一句「谁来过电话」，宿主不需要做任何处理。
+    */
+    @objc optional func callEngine(_ engine: IMCallEngine, missedCall callID: String,
+                                   caller: String, reason: String)
 
     /// 本账号另一台设备接听/拒绝了这通电话。`action` 是 `"accept"` / `"reject"`。
     @objc optional func callEngine(_ engine: IMCallEngine, callHandledOnOtherDevice callID: String,
