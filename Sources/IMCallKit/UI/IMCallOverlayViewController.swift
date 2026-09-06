@@ -6,7 +6,7 @@ import IMCallEngine
  通话主界面，三种版式（规范 §03 / §04）：
  · **audio**：语音通话、拨出中 —— 96 头像 + 名字 + 状态（拨出视频时右上叠本端预览）；
  · **video**：1v1 视频通话中 —— 远端全屏 + 本端小窗，单击小窗互换，控制条 3s 自动隐藏；
- · **grid**：群通话 / 会议 —— 九宫格 + 加号格（只有主叫可见）。
+ · **grid**：群通话 / 会议 —— 九宫格（加人入口只在标题栏右上角那一颗）。
 
  **三种版式做在一个 VC 里而不是三个**：静音状态、发言高亮、计时这些在每一态都要维护，
  拆开就得维护三遍，而且态与态之间切换会闪一下。版式由 `imPickLayout` 决定（纯函数，有单测）。
@@ -36,7 +36,6 @@ public final class IMCallOverlayViewController: UIViewController {
     private let endedLabel = UILabel()
     /// 本端格子。群通话里它是格子之一；1v1 里在小窗（互换后到全屏）。
     private let selfTile = IMVideoTileView()
-    private let addTile = UIButton(type: .system)
     private let controlsScrim = CAGradientLayer()
     /**
      控制条**两排**（v3.2）：上排三个开关（静音 / 摄像头 / 扬声器），
@@ -135,15 +134,6 @@ public final class IMCallOverlayViewController: UIViewController {
         endedLabel.textColor = theme.primaryText
         endedLabel.textAlignment = .center
         endedLabel.numberOfLines = 0
-
-        addTile.setImage(IMKitIcon.plus.image(pointSize: 22), for: .normal)
-        addTile.tintColor = theme.primaryText
-        addTile.alpha = 0.8
-        addTile.layer.cornerRadius = theme.tileCornerRadius
-        addTile.layer.borderWidth = 1.5
-        addTile.layer.borderColor = UIColor(white: 1, alpha: 0.3).cgColor
-        addTile.accessibilityLabel = "添加成员"
-        addTile.addTarget(self, action: #selector(onInvite), for: .touchUpInside)
 
         // videoFull 先加：它要在最底下一层，头部与控制条浮在它上面。
         videoFull.translatesAutoresizingMaskIntoConstraints = false
@@ -428,8 +418,11 @@ public final class IMCallOverlayViewController: UIViewController {
                        isRinging: !p.hasAccepted, settled: p.settled, networkLevel: p.networkLevel)
             ordered.append(tile)
         }
-        // 加人入口放在网格里（交互稿 §05）：它天然占着「下一个人的位置」。只有主叫、没满员时才有。
-        if imCanShowInvite(for: state) { ordered.append(addTile) }
+        /*
+         **九宫格里没有加号格**（v3.3 撤掉）。加人入口只有标题栏右上角那一颗
+         （`imCanShowInvite` 同一条判据）：网格里再放一个是同一个动作的第二个入口，
+         而它还会占掉一个格位——三个人的通话看起来像四个人，行列也跟着多排一格。
+        */
         gridView.layout(ordered)
         // 层上界按真人的格子数算，加号格不算——它不收流。
         let layer = imTileLayer(visible.count + 1)

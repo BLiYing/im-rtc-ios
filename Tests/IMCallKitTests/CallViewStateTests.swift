@@ -279,10 +279,15 @@ final class GridTests: XCTestCase {
         XCTAssertEqual(imGridDimensions(9, aspect: phone), IMGridDimensions(columns: 3, rows: 3))
     }
 
-    /// 挑出来的排法必须**真的是格子最大的那一种**（这是这条规则的全部意义）。
+    /**
+     除了「竖屏 3~4 格恒为两列」那条明写的规则，挑出来的排法必须**真的是格子最大的那一种**
+     （这是这条规则剩下的全部意义）。
+     */
     func testGridMaximisesSquareCellSide() {
         for count in 1...IMMaxTiles {
-            for aspect in [0.5, 0.7, 1.0, 1.4, 2.0] {
+            for aspect in [0.4, 0.5, 0.648, 0.7, 1.0, 1.4, 2.0] {
+                // 竖屏 3~4 格是产品规则，不参与「格子最大」的比较（见 imGridDimensions 的注释）。
+                if aspect < 1, count == 3 || count == 4 { continue }
                 let chosen = imGridDimensions(count, aspect: aspect)
                 let best = squareSide(count: count, aspect: aspect, dims: chosen)
                 for columns in 1...count {
@@ -294,6 +299,26 @@ final class GridTests: XCTestCase {
                 }
             }
         }
+    }
+
+    /**
+     竖屏上 3~4 格恒为两列——**不管容器多窄**。
+
+     按「格子最大」挑的话，翻转压在手机的常见比例上：iPhone 15 Pro 的舞台区算出来
+     aspect ≈ 0.682（2×2）、16 Pro Max ≈ 0.648（一竖条），同一通电话两种样子。
+     0.48 是 Android 修 stage 下边界之前那个比例（多算了一整条控制条），一并钉住。
+     */
+    func testGridKeepsTwoColumnsOnPortrait() {
+        for aspect in [0.4, 0.48, 0.6, 0.648, 0.682, 0.7, 0.9] {
+            XCTAssertEqual(imGridDimensions(3, aspect: aspect), IMGridDimensions(columns: 2, rows: 2),
+                           "aspect=\(aspect)：三格必须是「第一行两个」")
+            XCTAssertEqual(imGridDimensions(4, aspect: aspect), IMGridDimensions(columns: 2, rows: 2),
+                           "aspect=\(aspect)：四格必须是 2×2")
+        }
+        // 两个人仍然上下摞（那一条是尺寸判据，没被这条规则盖掉）。
+        XCTAssertEqual(imGridDimensions(2, aspect: 0.7), IMGridDimensions(columns: 1, rows: 2))
+        // 横屏不受这条约束：宽容器上三个人一行排开。
+        XCTAssertEqual(imGridDimensions(3, aspect: 2.0), IMGridDimensions(columns: 3, rows: 1))
     }
 
     private func squareSide(count: Int, aspect: Double, dims: IMGridDimensions) -> Double {
@@ -316,9 +341,11 @@ final class GridTests: XCTestCase {
         XCTAssertEqual(imTileLayer(9), "l")
     }
 
+    /// 远端截到 8：**本端恒占一格**，9 个远端加上自己就是 10 格，而只有 9 个坑。
     func testVisibleTilesTruncates() {
         XCTAssertEqual(imVisibleTiles(Array(1...5)).count, 5)
-        XCTAssertEqual(imVisibleTiles(Array(1...20)).count, IMMaxTiles)
+        XCTAssertEqual(imVisibleTiles(Array(1...20)).count, IMMaxRemoteTiles)
+        XCTAssertEqual(imVisibleTiles(Array(1...20)).count + 1, IMMaxTiles)
     }
 
     func testDurationFormat() {
