@@ -165,6 +165,9 @@ final class DemoSession {
         */
         let engine = IMCallEngine(url: wsURL, deviceID: deviceID,
                                   media: IMWebRTCAdapter(videoProfile: videoProfile))
+        // 「添加成员」的候选名单是宿主给的：Demo 用与选人页同一份写死的联系人。
+        kitConfig.inviteCandidates = ["alice", "bob", "carol", "dave", "erin", "frank", "grace", "heidi", "ivan"]
+            .map { IMInviteCandidate(uid: $0) }
         let kit = IMCallKit(engine: engine, config: kitConfig)
         kit.start()
         self.engine = engine

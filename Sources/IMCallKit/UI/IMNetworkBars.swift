@@ -2,44 +2,44 @@
 import UIKit
 
 /*
- 网络质量条 ▂▄▆。草图 §03 通话中那一行「▂▄▆ 网络良好」。
+ 网络质量条（规范 §05 `net-bars`）：三根柱子，1~2 三根亮、3~4 两根、5~6 一根；**0 = 未知时整条隐藏**，
+ 别画一个「三根全灰」让人以为网断了。分档在 `imNetworkBarsLit` / `imNetworkText`（纯函数，有单测）。
 
- 输入是 `networkQuality` 回调的 level（0~6，0 = 未知，服务端节流 2s）。
- 三根柱子按 level 亮起：1~2 亮一根、3~4 两根、5~6 三根。
  **除了柱子还要有文字**——不用颜色/形状作为唯一信息载体（CONVENTIONS §8 无障碍）。
+ `compact` 模式只画柱子（格子角标里没地方放字），文字进 accessibilityLabel。
  */
 public final class IMNetworkBars: UIView {
 
     private let bars = (0..<3).map { _ in UIView() }
     private let textLabel = UILabel()
+    private let compact: Bool
 
-    public override init(frame: CGRect) {
-        super.init(frame: frame)
+    public init(compact: Bool = false) {
+        self.compact = compact
+        super.init(frame: .zero)
         build()
+    }
+
+    public override convenience init(frame: CGRect) {
+        self.init(compact: false)
     }
 
     @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("Kit 不用 storyboard") }
 
-    /// apply 按 level 刷新。0 = 未知时整条隐藏，别画一个「三根全灰」让人以为网断了。
+    /// apply 按 level 刷新。
     public func apply(level: Int) {
         let theme = IMKitTheme.current
         isHidden = level <= 0
-        let lit = level <= 0 ? 0 : min(3, (level + 1) / 2)
+        let lit = imNetworkBarsLit(level: level)
+        // 5 以上是「网络很差」，柱子变橙（规范 §02 warn）。
+        let litColor = level >= 5 ? theme.warning : theme.primaryText
         for (index, bar) in bars.enumerated() {
-            bar.backgroundColor = index < lit ? theme.accept : UIColor(white: 1, alpha: 0.25)
+            bar.backgroundColor = index < lit ? litColor : UIColor(white: 1, alpha: 0.25)
         }
-        textLabel.text = Self.description(for: level)
-        accessibilityLabel = "网络\(textLabel.text ?? "")"
-    }
-
-    private static func description(for level: Int) -> String {
-        switch level {
-        case 5...: return "网络良好"
-        case 3...4: return "网络一般"
-        case 1...2: return "网络较差"
-        default: return ""
-        }
+        textLabel.text = imNetworkText(level: level)
+        textLabel.textColor = level >= 5 ? theme.warning : theme.secondaryText
+        accessibilityLabel = imNetworkText(level: level)
     }
 
     private func build() {
@@ -54,13 +54,14 @@ public final class IMNetworkBars: UIView {
             bar.heightAnchor.constraint(equalToConstant: CGFloat(5 + index * 3)).isActive = true
         }
 
-        textLabel.font = .systemFont(ofSize: 12)
+        textLabel.font = .systemFont(ofSize: 11)
         textLabel.textColor = IMKitTheme.current.secondaryText
+        textLabel.isHidden = compact
 
-        let row = UIStackView(arrangedSubviews: [barsStack, textLabel])
+        let row = UIStackView(arrangedSubviews: compact ? [barsStack] : [barsStack, textLabel])
         row.axis = .horizontal
         row.alignment = .center
-        row.spacing = 6
+        row.spacing = 5
         row.translatesAutoresizingMaskIntoConstraints = false
         addSubview(row)
         NSLayoutConstraint.activate([

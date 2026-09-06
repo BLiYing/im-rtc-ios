@@ -16,6 +16,7 @@ import Foundation
 
  Web 端的同一层是 `packages/call-uikit-react/src/state/callView.ts`，
  两边是同构的：同样的 phase、同样的动作、同样的坑。
+ 判据类的纯函数（红按钮四向分派、要不要加人入口、用哪种版式）在 `IMCallViewRules.swift`。
  */
 
 /// 界面阶段。**不等于** Engine 状态机的状态。
@@ -29,13 +30,21 @@ public enum IMCallPhase: String, Sendable {
     case connecting
     /// 通话中。
     case active
-    /**
-     已结束。
-
-     **Engine 的状态机里没有 `ended` 状态**（ended 是事件）——
-     这里的 ended 是纯展示态：草图 §09 那个停 1.5 秒的方框。
-     */
+    /// 已结束。**Engine 的状态机里没有 `ended` 状态**——这是纯展示态（草图 §09 那个停 1.5 秒的方框）。
     case ended
+}
+
+/// 邀请中的成员给出的终局：拒了 / 没接 / 不在线。`none` = 还没有终局。有终局的格子停 2s 再移除（交互稿 §05 G3）。
+public enum IMSettledOutcome: String, Sendable {
+    case none = ""
+    case rejected
+    case noAnswer = "no_answer"
+    case offline
+}
+
+/// 信令连接的状态，驱动顶部的橙条。
+public enum IMConnectionStatus: String, Sendable {
+    case ok, reconnecting, lost
 }
 
 /// 界面上的一个远端成员。
@@ -53,11 +62,12 @@ public struct IMParticipant: Equatable, Sendable {
     public var hasAccepted: Bool
     /// 网络质量 0~6，0 = 未知。服务端节流 2s。
     public var networkLevel: Int
+    /// 邀请中的格子拿到的终局。
+    public var settled: IMSettledOutcome
 
     /**
      - Note: `hasAudio` 默认 **true**。`userAudioAvailable` 只在状态**变化**时才抛，
        一开始就正常的人不会有事件——默认 false 会让所有人一进来都显示成静音。
-       （Web 端把这条写在同一个位置，是同一个坑。）
      */
     public init(uid: String, hasAccepted: Bool) {
         self.uid = uid
@@ -67,6 +77,7 @@ public struct IMParticipant: Equatable, Sendable {
         self.volume = 0
         self.hasAccepted = hasAccepted
         self.networkLevel = 0
+        self.settled = .none
     }
 }
 
@@ -76,11 +87,15 @@ public struct IMSelfState: Equatable, Sendable {
     public var cameraOn = false
     /// 扬声器外放。**视频通话默认开**：举着手机看画面时不可能贴耳朵听筒。
     public var speakerOn = false
+    /// 摄像头权限被拒（或没有设备）。**通话继续，只是没有画面**（交互稿 §02 P3）：按钮变禁用态写「无权限」。
+    public var cameraBlocked = false
 
-    public init(micOn: Bool = true, cameraOn: Bool = false, speakerOn: Bool = false) {
+    public init(micOn: Bool = true, cameraOn: Bool = false, speakerOn: Bool = false,
+                cameraBlocked: Bool = false) {
         self.micOn = micOn
         self.cameraOn = cameraOn
         self.speakerOn = speakerOn
+        self.cameraBlocked = cameraBlocked
     }
 }
 
@@ -91,13 +106,7 @@ public struct IMCallViewState: Equatable, Sendable {
     public var roomID = ""
     public var mediaType = "audio"
     public var isGroup = false
-    /**
-     是不是「直接进会议房」而来的，不是振铃通话。
-
-     **界面必须分得清**：会议房里根本没有 call，红按钮走 hangup 会被状态机
-     本地拒成 2005——**按钮点了没反应、人退不出去**。会议的结束动作是 leaveRoom。
-     （Web 端三人会议实测撞出来的：三端都退不出同一个房间。）
-     */
+    /// 是不是「直接进会议房」而来的。**界面必须分得清**：会议房里根本没有 call，红按钮走 hangup 会被拒成 2005。
     public var isMeeting = false
     public var role = ""
     /// 1v1 的对端 uid；群通话为空串。
@@ -106,19 +115,18 @@ public struct IMCallViewState: Equatable, Sendable {
     public var selfState = IMSelfState()
     /// 是否收进悬浮小窗。
     public var isMinimized = false
+    /// 1v1 视频里两块画面是否互换了（交互稿 §04）：false = 远端全屏、本端小窗。纯本端行为，但层上界要跟着换。
+    public var isSwapped = false
     /// 接通时刻（`Date` 的秒），0 = 还没接通。计时器从它开始走。
     public var beganAt: TimeInterval = 0
     public var endReason = ""
     /// 一句给用户看的提示（「对方已拒接」这类）。
     public var hint = ""
-    /**
-     媒体是否已经就绪。
-
-     **单独记一个标志而不是只看阶段**：`callBegin` 与「媒体通了」谁先到都可能——
-     会议场景里进房成功几乎与 callBegin 同时发生，先到的那个如果只在
-     「阶段正好是 connecting」时才生效就会被丢掉，界面永远停在「接通中」。
-     */
+    /// 媒体是否已经就绪。**单独记**：`callBegin` 与「媒体通了」谁先到都可能。
     public var isMediaReady = false
+    public var connection: IMConnectionStatus = .ok
+    /// 还能不能加人。主叫默认能；收到 `1407 not_call_owner` 后关掉（正常情况下非主叫根本看不到按钮，这条是兜底）。
+    public var canInvite = true
 
     public init() {}
 
@@ -126,10 +134,7 @@ public struct IMCallViewState: Equatable, Sendable {
     public var isVisible: Bool { phase != .idle }
 }
 
-/// 驱动视图模型的输入。
-///
-/// **写成显式枚举而不是把回调表整个映射过来**：映射过来会把 Kit 不消费的回调
-/// 也拖进类型里，看不出「界面到底用了哪几个」。
+/// 驱动视图模型的输入。**写成显式枚举而不是把回调表整个映射过来**：看得出「界面到底用了哪几个」。
 public enum IMCallViewAction: Sendable {
     case callReceived(callID: String, caller: String, mediaType: String, isGroup: Bool)
     case callPlaced(calleeIDs: [String], mediaType: String, isGroup: Bool)
@@ -139,20 +144,30 @@ public enum IMCallViewAction: Sendable {
     case meetingJoined(roomID: String, now: TimeInterval)
     case roomLeft
     case mediaReady
+    /// 摄像头拿不到（权限被拒 / 没设备）：通话继续，按钮禁用。
+    case cameraBlocked
+    /// 主叫往群通话里又拉了一批人，先摆上占位格。
+    case invited(uids: [String])
     case userEnter(uid: String)
     case userLeave(uid: String)
     case userAccept(uid: String)
-    /// 某人给出了终局裁决（拒接 / 无应答），格子该收掉了。
-    case userSettled(uid: String)
+    /// 某人给出了终局裁决（拒接 / 无应答 / 不在线），格子先标上终局、稍后再收。
+    case userSettled(uid: String, outcome: IMSettledOutcome)
+    /// 终局停够了，把格子收掉。
+    case userRemove(uid: String)
+    /// 服务端说不是主叫（1407）：藏掉加人入口。
+    case inviteDenied
     case userAudio(uid: String, available: Bool)
     case userVideo(uid: String, available: Bool)
     case activeSpeakers([(uid: String, volume: Int)])
     case networkQuality([(uid: String, level: Int)])
+    case connection(IMConnectionStatus)
     case hint(String)
     case setMic(Bool)
     case setCamera(Bool)
     case setSpeaker(Bool)
     case setMinimized(Bool)
+    case setSwapped(Bool)
     case dismiss
 }
 
@@ -163,6 +178,7 @@ public func reduceCallView(_ state: IMCallViewState,
     switch action {
     case let .callReceived(callID, caller, mediaType, isGroup):
         next = IMCallViewState()
+        next.connection = state.connection
         next.phase = .incoming
         next.callID = callID
         next.mediaType = mediaType
@@ -175,6 +191,7 @@ public func reduceCallView(_ state: IMCallViewState,
 
     case let .callPlaced(calleeIDs, mediaType, isGroup):
         next = IMCallViewState()
+        next.connection = state.connection
         next.phase = .outgoing
         next.mediaType = mediaType
         next.isGroup = isGroup
@@ -186,8 +203,7 @@ public func reduceCallView(_ state: IMCallViewState,
                                      speakerOn: mediaType == "video")
 
     case let .callBegin(callID, roomID, mediaType, isGroup, role, now):
-        // callBegin 只说「通话建立」，媒体不一定通了，所以先进 connecting——
-        // 除非媒体已经先一步就绪（会议场景常见）。
+        // callBegin 只说「通话建立」，媒体不一定通了，所以先进 connecting——除非媒体已经先一步就绪。
         next.phase = state.isMediaReady ? .active : .connecting
         next.callID = callID
         next.roomID = roomID
@@ -199,6 +215,7 @@ public func reduceCallView(_ state: IMCallViewState,
 
     case let .meetingJoined(roomID, now):
         next = IMCallViewState()
+        next.connection = state.connection
         // 会议没有振铃，进来就是「接通中」；媒体一通就转 active。
         next.phase = .connecting
         next.roomID = roomID
@@ -209,27 +226,19 @@ public func reduceCallView(_ state: IMCallViewState,
         next.selfState = IMSelfState(micOn: true, cameraOn: true, speakerOn: true)
 
     case let .callEnd(reason):
-        /*
-         **振铃通话的结束出口**（会议走 roomLeft）。
-
-         # 还在响铃的来电直接收起，不留结束画面
-
-         被叫这一侧什么都还没做，界面上只有一个来电页。对方取消 / 自己拒接 /
-         振铃超时之后，**该做的就是让它消失**——原先统一进 ended，
-         于是来电页当场变成通话页的骨架（标题 + 格子 + 本端预览），
-         停一两秒再收走。实测反馈是「怎么还弹出一个接通才有的界面」。
-
-         主叫那一侧不一样：拨出去没打通，人是需要知道为什么的
-         （对方拒接 / 无人接听 / 不在线），所以那边仍然停一下说明原因。
-        */
-        if state.phase == .incoming { return IMCallViewState() }
+        // **振铃通话的结束出口**（会议走 roomLeft）。还在响铃的来电直接收起，不留结束画面：
+        // 被叫这一侧什么都还没做。主叫那一侧要停一下说明原因。
+        if state.phase == .incoming {
+            next = IMCallViewState()
+            next.connection = state.connection
+            return next
+        }
         next.phase = .ended
         next.endReason = reason
         next.isMinimized = false
 
     case .roomLeft:
-        // 会议的结束出口。**已经在 ended/idle 就不动**：通话结束时房间也会被清掉，
-        // 那条路已经由 callEnd 收尾了，重复进 ended 会把 endReason 抹成空串。
+        // 会议的结束出口。**已经在 ended/idle 就不动**：重复进 ended 会把 endReason 抹成空串。
         guard state.phase != .idle, state.phase != .ended else { return state }
         next.phase = .ended
         next.isMinimized = false
@@ -238,28 +247,39 @@ public func reduceCallView(_ state: IMCallViewState,
         next.isMediaReady = true
         if state.phase == .connecting { next.phase = .active }
 
+    case .cameraBlocked:
+        next.selfState.cameraOn = false
+        next.selfState.cameraBlocked = true
+
     case .dismiss:
         next = IMCallViewState()
+        next.connection = state.connection
 
-    case let .userEnter(uid):
-        next = withParticipant(next, uid) { $0.hasAccepted = true }
+    case let .invited(uids):
+        // 被邀请的人**立刻**占一个格子（交互稿 §05 G3）；已在名单里的不重复加。
+        let known = Set(next.participants.map(\.uid))
+        next.participants += uids.filter { !known.contains($0) }
+            .map { IMParticipant(uid: $0, hasAccepted: false) }
 
-    case let .userLeave(uid):
+    case let .userEnter(uid), let .userAccept(uid):
+        next = withParticipant(next, uid) { $0.hasAccepted = true; $0.settled = .none }
+
+    case let .userLeave(uid), let .userRemove(uid):
         next.participants.removeAll { $0.uid == uid }
 
-    case let .userSettled(uid):
-        /*
-         群通话里某人拒接 / 没接：**把他的格子收掉**。
+    case let .userSettled(uid, outcome):
+        // 群通话里某人拒接 / 没接：**先在格子上写明终局，停一会再收**。直接收掉的话拒接就跟没发生过一样。
+        // 已接听的人收到终局（理论上不会）直接忽略。
+        next.participants = next.participants.map {
+            guard $0.uid == uid, !$0.hasAccepted else { return $0 }
+            var p = $0
+            p.settled = outcome
+            return p
+        }
 
-         不收的话那一格会一直挂着「（响铃中）」——从主叫的角度看，
-         对方拒接就跟什么都没发生一样。**这在群通话里是唯一的信号**：
-         那边没有便利事件（不变量 I7），只有 onUser*。
-         1v1 也会抛，但紧跟着就是 callEnd，界面整个收走，收不收格子都一样。
-        */
-        next.participants.removeAll { $0.uid == uid }
-
-    case let .userAccept(uid):
-        next = withParticipant(next, uid) { $0.hasAccepted = true }
+    case .inviteDenied:
+        next.canInvite = false
+        next.hint = "只有发起人可以添加成员"
 
     case let .userAudio(uid, available):
         next = withParticipant(next, uid) { $0.hasAudio = available }
@@ -268,8 +288,7 @@ public func reduceCallView(_ state: IMCallViewState,
         next = withParticipant(next, uid) { $0.hasVideo = available }
 
     case let .activeSpeakers(speakers):
-        // **全量快照不是增量**：不在名单里的人要被清成「没在说话」，
-        // 只加不减的话高亮会一直亮着不灭。
+        // **全量快照不是增量**：不在名单里的人要被清成「没在说话」。
         let volumes = Dictionary(speakers.map { ($0.uid, $0.volume) }) { first, _ in first }
         next.participants = next.participants.map {
             var p = $0
@@ -287,6 +306,9 @@ public func reduceCallView(_ state: IMCallViewState,
             return p
         }
 
+    case let .connection(status):
+        next.connection = status
+
     case let .hint(text):
         next.hint = text
 
@@ -294,6 +316,8 @@ public func reduceCallView(_ state: IMCallViewState,
         next.selfState.micOn = on
 
     case let .setCamera(on):
+        // 权限被拒时开不了：按钮本来就是禁用态，这里再挡一道免得状态漂移。
+        if state.selfState.cameraBlocked && on { return state }
         next.selfState.cameraOn = on
 
     case let .setSpeaker(on):
@@ -301,6 +325,9 @@ public func reduceCallView(_ state: IMCallViewState,
 
     case let .setMinimized(minimized):
         next.isMinimized = minimized
+
+    case let .setSwapped(swapped):
+        next.isSwapped = swapped
     }
     return next
 }
@@ -317,93 +344,4 @@ private func withParticipant(_ state: IMCallViewState, _ uid: String,
         next.participants.append(fresh)
     }
     return next
-}
-
-/// 红按钮该发出的那个动作。
-public enum IMEndAction: String, Sendable {
-    case leaveRoom, cancel, reject, hangup
-}
-
-/**
- 红按钮在**四种场合是四个不同的动作**，分辨这件事是 Kit 的责任——
- 让调用方去分辨，迟早有人分辨错。
-
- 抽成纯函数是因为**最容易错的那一条没法靠点界面发现**：会议房里根本没有 call，
- 发 hangup 会被状态机本地拒成 2005 —— 按钮点了毫无反应、人退不出房间，
- 而宿主只看到一条没头没尾的 error。（Web 端三人会议实测撞出来的：三端都卡在房里。）
- */
-public func imEndAction(for state: IMCallViewState) -> IMEndAction {
-    if state.isMeeting { return .leaveRoom }
-    switch state.phase {
-    case .incoming: return .reject
-    case .outgoing: return .cancel
-    default:        return .hangup
-    }
-}
-
-/**
- 通话中该不该显示「摄像头」按钮。
-
- # 只看 media_type，不看本端摄像头开没开
-
- **语音通话里不给这个按钮。** 协议上没有「转视频」这回事：`media_type` 只在
- `call.invite` 时定死，是振铃界面的元数据；进了房之后房间根本不认识它，
- 你在一通语音通话里发布摄像头轨道，服务端照收、对端照样收到
- `onUserVideoAvailable(true)`。
-
- 所以原先那个按钮是**半实现**：点了确实出镜、对方确实看得见，而本端格子的
- 显示条件写的是 `mediaType == "video"`，于是**你自己不知道自己已经出镜了**。
- 这比「不支持」危险得多，所以按钮直接不给。
- 想真正支持，要的是「邀请对方转视频」那一整套（`call.upgrade_request` /
- `upgrade_accept|reject`）——那是协议改动，改五个仓，单独一刀。
-
- 判据必须是 `mediaType` 而**不是**「本端摄像头开没开」：
- 「以语音接听」接下来的那通电话 `media_type` 仍然是 `video`——
- 对方本来就知道这是视频通话，中途打开摄像头完全合理，按钮必须留着。
-
- 会议房的 `mediaType` 恒为 `video`，所以它天然留着按钮。
- */
-public func imShowsCameraButton(for state: IMCallViewState) -> Bool {
-    state.mediaType == "video"
-}
-
-/**
- 结束原因的人话。**结束画面必须说清为什么**——只写「通话结束」然后 1.5 秒消失，
- 用户根本不知道是对方拒了、忙线、还是压根不在线。
- （实测反馈：拨给不在线的人，界面「消失得很快」且没有任何解释。）
-
- reason 的取值见 `docs/conformance/reasons.json`，八种；未知值兜底成「已结束」，
- **不显示原始英文**——那是给日志看的，不是给用户看的。
- */
-public func imEndReasonText(_ reason: String, role: String, durationSec: Int) -> String {
-    switch reason {
-    case "hangup":
-        // 接通过才有时长；没接通的 hangup 不该出现，真出现了也别显示 00:00。
-        return durationSec > 0 ? "通话结束 · \(imFormatDuration(durationSec))" : "通话结束"
-    case "cancel":
-        return role == "caller" ? "已取消" : "对方已取消"
-    case "reject":
-        return role == "caller" ? "对方已拒接" : "已拒接"
-    case "busy":
-        return "对方忙线中"
-    case "no_answer":
-        return role == "caller" ? "对方无人接听" : "未接来电"
-    case "offline":
-        // 服务端在被叫一台在线设备都没有时立刻结束，**不振铃**（协议 §4.3）——
-        // 对着一个不在的人响 30 秒没有意义。但界面必须说清楚。
-        return "对方当前不在线"
-    case "network":
-        return "网络中断"
-    default:
-        return "已结束"
-    }
-}
-
-/// 结束画面停留多久。**说不清原因的那几种要停久一点**：
-/// 「对方不在线」得让人看清，而正常挂断谁都知道发生了什么。
-public func imEndedHoldSeconds(_ reason: String) -> TimeInterval {
-    switch reason {
-    case "hangup", "cancel": return 1.5
-    default: return 3.0
-    }
 }

@@ -43,6 +43,7 @@ final class FacadeTests: XCTestCase {
             note("acquireMic")
             return IMLocalTrackInfo(cid: "mic-1", kind: "audio", source: "microphone")
         }
+        func probeMicrophone() async throws { note("probeMic") }
         func startLocalPreview() async throws -> IMLocalTrackInfo {
             note("startLocalPreview")
             return IMLocalTrackInfo(cid: "cam-1", kind: "video", source: "camera")

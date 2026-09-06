@@ -1,4 +1,5 @@
 #if canImport(WebRTC) && canImport(UIKit)
+import AVFoundation
 import Foundation
 import UIKit
 import WebRTC
@@ -105,9 +106,36 @@ public final class IMWebRTCAdapter: NSObject, IMMediaAdapter, @unchecked Sendabl
      `simulcast` 为真时**推三层**（rid = h/m/l，协议 §3.5）。三层的
      `scaleResolutionDownBy` 是 1/2/4，服务端按订阅侧报的层上界与带宽估计选一层转发。
      */
+    /**
+     probeMicrophone 只问系统要麦克风权限，不开采集。
+
+     系统框由 `AVCaptureDevice.requestAccess` 弹；已授权时它立刻回 true、不弹框。
+     被拒映射成 2001——Kit 靳着这个码决定是「整通取消」还是「降级继续」（交互稿 §02）。
+     */
+    public func probeMicrophone() async throws {
+        try await Self.ensureAccess(.audio, what: "麦克风")
+    }
+
+    /// ensureAccess 把系统权限状态收敛成结构化错误：拒绝 → 2001。
+    private static func ensureAccess(_ media: AVMediaType, what: String) async throws {
+        switch AVCaptureDevice.authorizationStatus(for: media) {
+        case .authorized:
+            return
+        case .notDetermined:
+            // 这一步会弹系统框，只弹一次；之后系统记住选择。
+            guard await AVCaptureDevice.requestAccess(for: media) else {
+                throw IMRTCError(.devicePermissionDenied, "\(what)权限被拒")
+            }
+        default:
+            throw IMRTCError(.devicePermissionDenied, "\(what)权限被拒")
+        }
+    }
+
     /// startLocalPreview 只起采集，不挂 transceiver。
     public func startLocalPreview() async throws -> IMLocalTrackInfo {
         if let existing = previewTrack { return existing }
+        // 先问权限再开设备：没这一步的话 libwebrtc 的采集器在被拒时只是静默地不出画面。
+        try await Self.ensureAccess(.video, what: "摄像头")
         let cid = "cam-\(UUID().uuidString.prefix(8))"
         let source = ensurePeers().factory.videoSource()
         let capturer = RTCCameraVideoCapturer(delegate: source)

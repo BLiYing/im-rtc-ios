@@ -24,7 +24,7 @@ final class IMCallGridView: UIView {
 
     private let rowsStack = UIStackView()
     /// 当前摆着的格子，按加入顺序。
-    private(set) var tiles: [IMVideoTileView] = []
+    private(set) var tiles: [UIView] = []
 
     /// 当前已经摆出来的行列。变了才重建 arrangedSubviews。
     private var arranged = IMGridDimensions(columns: 0, rows: 0)
@@ -58,7 +58,7 @@ final class IMCallGridView: UIView {
      `renderView` 上的渲染视图会跟着重来，画面会闪。
      真正的摆放在 `layoutSubviews` 里做——那时才知道容器多大。
      */
-    func layout(_ wanted: [IMVideoTileView]) {
+    func layout(_ wanted: [UIView]) {
         guard wanted != tiles else { return }
         tiles = wanted
         arranged = IMGridDimensions(columns: 0, rows: 0) // 强制重建

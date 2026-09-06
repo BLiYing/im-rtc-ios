@@ -208,6 +208,47 @@ import Foundation
         await loop.dispatch(.act(op: "hangup"))
     }
 
+    /**
+     inviteMore 往进行中的群通话里再拉人（协议 §4.1 `call.invite_more`，四端同名）。
+
+     **只有主叫能发**——非主叫会被服务端拒成 `1407 not_call_owner`，
+     所以界面上那个「添加成员」入口对非主叫根本不该显示（交互稿 §05）。房间满了回 `1202 room_full`。
+     名单里含自己就地拒掉，理由与 `call` 一样。
+     */
+    @objc public func inviteMore(_ calleeIDs: [String]) async {
+        let me = uid
+        if !me.isEmpty, calleeIDs.contains(me) {
+            dispatcher.emit(IMEmittedEvent("onError", [
+                "code": .int(Int64(IMErrorCode.badParams.rawValue)),
+                "name": .string(IMErrorCode.badParams.name),
+            ]))
+            IMRTCLog.warn("加人名单里含自己，已就地拒掉", ["uid": me])
+            return
+        }
+        await loop.dispatch(.act(op: "invite_more", args: [
+            "callee_ids": .array(calleeIDs.map { .string($0) }),
+        ]))
+    }
+
+    /**
+     probeMicrophone 在拨出 / 接听**之前**探一下麦克风权限（交互稿 §01，四端同名）。
+
+     不占设备；被拒抛 `2001`、没设备抛 `2002`，并同时走一遍 `onError`——
+     宿主只监听回调表也该知道「这通电话是因为没权限才没打出去」。
+     摄像头那一侧用 `startLocalPreview` 探：它本来就该在拨出时起来给人看见自己。
+     */
+    @objc public func probeMicrophone() async throws {
+        do {
+            try await requireMedia().probeMicrophone()
+        } catch let error as IMRTCError {
+            dispatcher.emit(IMEmittedEvent("onError", [
+                "code": .int(Int64(error.code.rawValue)),
+                "name": .string(error.code.name),
+            ]))
+            throw error
+        }
+    }
+
     // MARK: - 房间（会议）
 
     /// joinRoom 直接进一个会议房（不走振铃）。

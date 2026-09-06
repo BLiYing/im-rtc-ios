@@ -173,17 +173,28 @@ final class CallViewStateTests: XCTestCase {
  */
 final class GroupOutcomeTests: XCTestCase {
 
-    func testRejectedMemberLeavesTheGrid() {
+    func testRejectedMemberIsMarkedThenRemoved() {
         var state = reduceCallView(IMCallViewState(),
                                    .callPlaced(calleeIDs: ["bob", "carol"],
                                                mediaType: "video", isGroup: true))
         XCTAssertEqual(state.participants.map(\.uid), ["bob", "carol"])
 
-        state = reduceCallView(state, .userSettled(uid: "bob"))
-        XCTAssertEqual(state.participants.map(\.uid), ["carol"], "拒接的人不该还占着格子")
+        // **先标不删**（交互稿 §05 G3）：直接消失的话，从主叫的角度看拒接就跟没发生过一样。
+        state = reduceCallView(state, .userSettled(uid: "bob", outcome: .rejected))
+        XCTAssertEqual(state.participants.map(\.settled), [.rejected, .none])
+        XCTAssertEqual(imSettledText(.rejected), "已拒绝")
 
-        state = reduceCallView(state, .userSettled(uid: "carol"))
-        XCTAssertTrue(state.participants.isEmpty)
+        state = reduceCallView(state, .userRemove(uid: "bob"))
+        XCTAssertEqual(state.participants.map(\.uid), ["carol"], "停够 2s 之后才收掉格子")
+    }
+
+    /// 已接听的人收到终局（理论上不会）不受影响。
+    func testAcceptedMemberIgnoresSettle() {
+        var state = reduceCallView(IMCallViewState(),
+                                   .callPlaced(calleeIDs: ["bob"], mediaType: "video", isGroup: true))
+        state = reduceCallView(state, .userAccept(uid: "bob"))
+        state = reduceCallView(state, .userSettled(uid: "bob", outcome: .noAnswer))
+        XCTAssertEqual(state.participants[0].settled, .none)
     }
 }
 

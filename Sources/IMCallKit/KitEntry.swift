@@ -37,6 +37,11 @@ public let IMCallKitVersion = "0.0.1"
     @objc public var bannerFirst: Bool = true
     /// 允许收进悬浮球（草图 §04）。关掉则通话页没有「小窗」按钮。
     @objc public var floatingWindow: Bool = true
+    /**
+     群通话里「添加成员」的候选名单（交互稿 §05）。**名单是宿主给的**——Kit 不内置联系人系统
+     （CONVENTIONS §11）。不给就退化成 uid 输入框。
+     */
+    @objc public var inviteCandidates: [IMInviteCandidate] = []
 
     @objc public override init() {
         super.init()
@@ -59,6 +64,7 @@ public let IMCallKitVersion = "0.0.1"
         self.engine = engine
         self.config = config
         self.controller = IMCallController(engine: engine)
+        self.controller.inviteCandidates = config.inviteCandidates
         super.init()
     }
 

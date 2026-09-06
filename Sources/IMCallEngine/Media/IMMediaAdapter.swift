@@ -89,6 +89,16 @@ public protocol IMMediaAdapter: AnyObject, Sendable {
     func acquireMicrophone() async throws -> IMLocalTrackInfo
 
     /**
+     probeMicrophone **只探一下麦克风权限**，不挂到任何 PC 上（四端同名，Web 的 `probeMicrophone`）。
+
+     权限申请的时机规则（交互稿 §01）：主叫在发 `call.invite` **之前**、被叫在发 `call.accept`
+     **之前**就得知道麦克风拿不拿得到——拿不到就不该去响别人的铃。而 `acquireMicrophone`
+     要等房间开了（pub PC 存在）才能调，那时早就过了该问的时刻。
+     被拒抛 `2001 device_permission_denied`，没设备抛 `2002 device_not_found`。
+     */
+    func probeMicrophone() async throws
+
+    /**
      startLocalPreview 只**起采集**，不发布（设计文档 §7.5 的 `startLocalPreview`）。
 
      拨出中还没有房间，推流无从谈起，但界面这时就该让人看见自己
