@@ -112,7 +112,7 @@ public final class IMWebRTCAdapter: NSObject, IMMediaAdapter, @unchecked Sendabl
      probeMicrophone 只问系统要麦克风权限，不开采集。
 
      系统框由 `AVCaptureDevice.requestAccess` 弹；已授权时它立刻回 true、不弹框。
-     被拒映射成 2001——Kit 靳着这个码决定是「整通取消」还是「降级继续」（交互稿 §02）。
+     被拒映射成 2001——Kit 钉着这个码决定是「整通取消」还是「降级继续」（交互稿 §02）。
      */
     public func probeMicrophone() async throws {
         try await Self.ensureAccess(.audio, what: "麦克风")

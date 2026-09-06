@@ -38,10 +38,6 @@ public final class IMVideoTileView: UIView {
     @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("Kit 不用 storyboard") }
 
-    public override func layoutSubviews() {
-        super.layoutSubviews()
-    }
-
     private func build() {
         let theme = IMKitTheme.current
         backgroundColor = theme.tileBackground

@@ -279,6 +279,9 @@ public final class IMCallOverlayViewController: UIViewController {
         renderBanner(state)
         if isEnded {
             controller.attachLocalPreview(to: nil)
+            // **全屏画面也要摘掉**：1v1 视频挂断后版式仍是 .video，不摘的话结束原因那行字
+            // 压在对方最后一帧上——看着像通话还在。Android 的 render 一直是这么做的。
+            unpinFull()
             return
         }
         switch layout {

@@ -38,6 +38,12 @@
 
 `IMVideoProfile.presets` 是本轮唯一的公开 API 新增（`VideoProfileTests` 钉着顺序与唯一性）。
 
+`/code-review` 在同一批改动里又抓出四条，都已修：**结束画面没把全屏格子摘掉**
+（1v1 视频挂断后版式仍是 `.video`，结束原因那行字压在对方最后一帧上——Android 一直是摘的）、
+**WS 登录失败却留在「已登录」态**（`engine` 在 `engine.login` 之前就赋了值，且自动重登标记也已写下，
+现在失败走 `rollbackFailedLogin()`、标记改到成功之后才写）、
+`IMCallWindow` 里那条「横幅 5s 升级全屏」的过期注释、`IMVideoTileView` 里空的 `layoutSubviews`。
+
 **上一轮（2026-09-05）**：Kit 按设计稿 v3 落地——令牌、SF Symbols、头像 / 小窗算术、
 权限门三段式、`IMPipView` 长按拖动、九宫格加号格与选人半屏、切后台自动 mute 摄像头。
 Engine 的 `inviteMore(_:)` / `probeMicrophone()` 也是那一轮加的。

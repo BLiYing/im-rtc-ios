@@ -41,7 +41,6 @@ public final class IMCallWindow {
     private weak var bubble: IMFloatingBubble?
     /// 悬浮球（视频形态）里挂着哪个人的画面。换主讲人时先摘再挂。
     private var bubbleAttachedUID = ""
-    /// 横幅 5s 不处理就升级为全屏来电页（交互稿 §06）。
     /// 权限说明 / 被拒卡的遮罩。叠在任何形态之上。
     private var promptDimmer: UIView?
 

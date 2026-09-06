@@ -148,7 +148,6 @@ final class DemoSession {
         // 每次启动都带着那个错地址，还以为是默认值有问题。
         UserDefaults.standard.set(server, forKey: Self.serverKey)
         UserDefaults.standard.set(username, forKey: Self.userKey)
-        UserDefaults.standard.set(true, forKey: Self.autoKey)
 
         // 日志回传（仅开发）：Engine 会把每一个公开事件也写进日志，服务端按时间轴合并。
         let sink = RemoteLogSink(server: server, client: "ios-\(username)")
@@ -176,7 +175,33 @@ final class DemoSession {
 
         connectionText = "连接中…"
         notify()
-        try await engine.login(token)
+        /*
+         **换票成功不等于登录成功**：WS 那一步还可能被拒（token 过期 4401、
+         代理放行 HTTP 却挡 WS）。失败时必须把刚摆好的这一摊收干净——
+         否则 `isLoggedIn` 已经是 true，身份卡显示「退出」、拨号按钮全亮，
+         下面却挂着一行红色错误；而「下次自动重登」也已经记上了，重启就撞回同一个坑。
+        */
+        do {
+            try await engine.login(token)
+        } catch {
+            await rollbackFailedLogin()
+            throw error
+        }
+        // 走到这里才算真的登上了，这时候才该记「下次自动重登」。
+        UserDefaults.standard.set(true, forKey: Self.autoKey)
+    }
+
+    /// 登录半路失败时把 engine / kit / 日志回传都收回去，回到干净的未登录态。
+    private func rollbackFailedLogin() async {
+        if let token = observerToken { engine?.removeEventObserver(token) }
+        observerToken = nil
+        await engine?.logout()
+        engine = nil
+        kit = nil
+        IMRTCLog.setSink(nil)
+        logSink = nil
+        connectionText = "未登录"
+        notify()
     }
 
     /**
