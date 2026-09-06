@@ -107,6 +107,10 @@ Engine 的 `inviteMore(_:)` / `probeMicrophone()` 也是那一轮加的。
 
 ## 已知坑 / 限制
 
+- **「人先进来、轨道后到」是常态，不是异常**：`onUserEnter` 那一刻他的远端视频轨道往往还没到。
+  任何「摆好格子就顺手做一次」的动作（层上报、尺寸、订阅）**都要能在轨道到达时再做一遍**，
+  且别让去重表把补做的那次也吃掉——层上界为此空转过整整一版（`report(_:layer:hasVideo:)` 已补）。
+
 - **别单独 `rm -rf ~/Library/Developer/Xcode/DerivedData`**（2026-09-06 踩，半小时）：Xcode 开着时
   那条 `rm` 会半途失败（`Directory not empty`），只删掉 `SourcePackages/`，而
   `~/Library/Caches/org.swift.swiftpm/artifacts/` 里那个 44MB 的 WebRTC zip 还在。SwiftPM 见缓存命中
