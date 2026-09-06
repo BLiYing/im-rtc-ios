@@ -7,8 +7,7 @@ import UIKit
  */
 public final class IMAudioStageView: UIView {
 
-    private let avatar = UILabel()
-    private let gradient = CAGradientLayer()
+    private let avatar = IMAvatarDiscView()
     private let ring = UIView()
     private let nameLabel = UILabel()
     private let statusLabel = UILabel()
@@ -23,16 +22,9 @@ public final class IMAudioStageView: UIView {
     @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("Kit 不用 storyboard") }
 
-    public override func layoutSubviews() {
-        super.layoutSubviews()
-        gradient.frame = avatar.bounds
-    }
-
     /// apply 刷新。`isRinging` 为真时光环呼吸。
     public func apply(uid: String, name: String, status: String, isRinging: Bool, networkLevel: Int) {
-        avatar.text = imAvatarInitial(name)
-        let (top, bottom) = IMKitTheme.avatarGradient(for: uid.isEmpty ? name : uid)
-        gradient.colors = [top.cgColor, bottom.cgColor]
+        avatar.apply(key: uid, name: name, size: IMKitTheme.current.avatarLarge)
         nameLabel.text = name
         statusLabel.text = status
         netChip.isHidden = networkLevel <= 0
@@ -60,16 +52,6 @@ public final class IMAudioStageView: UIView {
     private func build() {
         let theme = IMKitTheme.current
         let size = theme.avatarLarge
-        avatar.font = .systemFont(ofSize: 32, weight: .bold)
-        avatar.textColor = theme.primaryText
-        avatar.textAlignment = .center
-        avatar.backgroundColor = theme.avatarBackground
-        avatar.layer.cornerRadius = size / 2
-        avatar.clipsToBounds = true
-        gradient.startPoint = CGPoint(x: 0.15, y: 0)
-        gradient.endPoint = CGPoint(x: 0.85, y: 1)
-        avatar.layer.insertSublayer(gradient, at: 0)
-
         // 光环：3pt 外环，offset 8（规范 §04）。
         ring.layer.borderWidth = 3
         ring.layer.borderColor = UIColor(white: 1, alpha: 0.25).cgColor

@@ -12,8 +12,7 @@ public final class IMVideoTileView: UIView {
     /// 远端画面的载体。媒体层往这上面挂渲染视图。
     public let renderView = UIView()
 
-    private let avatarDisc = UILabel()
-    private let avatarGradient = CAGradientLayer()
+    private let avatarDisc = IMAvatarDiscView()
     private let nameLabel = UILabel()
     private let namePlate = UIView()
     private let mutedBadge = UIImageView()
@@ -38,8 +37,6 @@ public final class IMVideoTileView: UIView {
 
     public override func layoutSubviews() {
         super.layoutSubviews()
-        avatarGradient.frame = avatarDisc.bounds
-        avatarDisc.layer.cornerRadius = avatarDisc.bounds.width / 2
     }
 
     private func build() {
@@ -52,13 +49,6 @@ public final class IMVideoTileView: UIView {
         layer.borderColor = UIColor.clear.cgColor
 
         renderView.backgroundColor = .clear
-
-        avatarDisc.textAlignment = .center
-        avatarDisc.textColor = theme.primaryText
-        avatarDisc.font = .systemFont(ofSize: 15, weight: .bold)
-        avatarDisc.clipsToBounds = true
-        avatarDisc.backgroundColor = theme.avatarBackground
-        avatarDisc.layer.insertSublayer(avatarGradient, at: 0)
 
         nameLabel.font = .systemFont(ofSize: 12)
         nameLabel.textColor = theme.primaryText
@@ -147,13 +137,8 @@ public final class IMVideoTileView: UIView {
         let theme = IMKitTheme.current
         self.uid = uid
         nameLabel.text = label
-        avatarDisc.text = imAvatarInitial(label)
-        avatarDisc.font = .systemFont(ofSize: (avatarSize / 3).rounded(), weight: .bold)
+        avatarDisc.apply(key: uid, name: label, size: avatarSize)
         avatarSizeConstraints.forEach { $0.constant = avatarSize }
-        let (top, bottom) = IMKitTheme.avatarGradient(for: uid.isEmpty ? label : uid)
-        avatarGradient.colors = [top.cgColor, bottom.cgColor]
-        avatarGradient.startPoint = CGPoint(x: 0.15, y: 0)
-        avatarGradient.endPoint = CGPoint(x: 0.85, y: 1)
         // 没画面时露出头像。**用 isHidden 不用改层级**：层级一动，媒体层挂在 renderView 上的渲染视图会跟着重建。
         avatarDisc.isHidden = hasVideo
         renderView.isHidden = !hasVideo

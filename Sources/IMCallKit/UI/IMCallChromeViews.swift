@@ -6,7 +6,12 @@ import UIKit
  各自单独成文件只会让 UI/ 目录变成一堆 40 行的碎片。
  */
 
-/// 顶部那条（规范 §04）：左 32 圆「收起」、中间标题 + 副标题 + 网络条、右 32 圆「加人」。固定高 64。
+/**
+ 顶部那条（规范 §04）：左 32 圆「小窗」、中间标题 + 副标题 + 网络条、右 32 圆「加人」。固定高 64。
+
+ 左上角那颗就是**收进小窗**的唯一入口（控制条里不再重复放一颗）：那个位置在三端都是
+ 「离开这一屏」的手势位，用户第一反应就是往那儿点。
+ */
 public final class IMCallHeaderView: UIView {
     public let minimizeButton = UIButton(type: .system)
     public let inviteButton = UIButton(type: .system)
@@ -32,7 +37,7 @@ public final class IMCallHeaderView: UIView {
 
     private func build() {
         let theme = IMKitTheme.current
-        for (button, icon, label) in [(minimizeButton, IMKitIcon.chevronDown, "收进小窗"),
+        for (button, icon, label) in [(minimizeButton, IMKitIcon.minimize, "收进小窗"),
                                       (inviteButton, IMKitIcon.personAdd, "添加成员")] {
             button.setImage(icon.image(pointSize: 15), for: .normal)
             button.tintColor = theme.primaryText

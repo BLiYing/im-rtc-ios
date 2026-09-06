@@ -63,10 +63,17 @@ public final class IMPipView: UIView {
         accessibilityHint = "轻点两下互换，轻点两下并按住可移动"
     }
 
-    /// setContent 换里面装的格子。传 nil 清空。
+    /**
+     setContent 换里面装的格子。传 nil 清空。
+
+     **只摘还挂在自己身上的那个**。A/B 互换时调用顺序是「先把本端格子钉到全屏，
+     再把对端格子塞进小窗」——那一刻 `content` 指着的本端格子已经被 `pinFull` 领养走了，
+     无条件 `removeFromSuperview()` 会把它从全屏容器里摘下来，
+     真机上的症状是「点了互换，小窗里对方好好的，大窗一片空白」。
+    */
     public func setContent(_ view: UIView?) {
         guard content !== view else { return }
-        content?.removeFromSuperview()
+        if content?.superview === self { content?.removeFromSuperview() }
         content = view
         guard let view else { return }
         view.isUserInteractionEnabled = false

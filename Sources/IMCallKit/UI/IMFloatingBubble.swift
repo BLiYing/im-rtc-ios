@@ -8,16 +8,22 @@ import UIKit
  两种形态：语音通话是 **56 圆角球**（图标 + 等宽时长）；视频通话是 **90×120 缩略画面**，
  右下角叠时长——只放主讲人，层上界报 `l`，这么小的窗口订 h 层是纯烧带宽。
 
+ 右上角恒有一颗 **22 的红色挂断**：收进小窗之后没有它就只能先展开回全屏才能挂断，
+ 而「随手挂掉」正是小窗最常用的一件事。红色是危险动作的唯一颜色（规范 §01 danger）。
+
  拖完**吸附到最近的左右边缘**（离边 8）：停在屏幕中间会挡住宿主的内容。竖直方向夹在安全区内且上下各留 60。
  图标用 SF Symbols（`IMKitIcon`），**不用 emoji**——真机上 emoji 会渲染成方框问号。
  */
 public final class IMFloatingBubble: UIView {
 
     public var onExpand: (() -> Void)?
+    /// 小窗上的挂断。宿主不接的话按钮不出现——没有出口的按钮比没有按钮更糟。
+    public var onHangup: (() -> Void)?
     /// 视频形态下远端缩略画面的载体。IMCallWindow 往这上面 attachView。
     public let renderView = UIView()
 
     private let iconView = UIImageView()
+    private let hangupButton = UIButton(type: .system)
     private let durationLabel = UILabel()
     private let stack = UIStackView()
     private var dragOffset = CGPoint.zero
@@ -95,11 +101,31 @@ public final class IMFloatingBubble: UIView {
             stack.centerYAnchor.constraint(equalTo: centerYAnchor),
         ])
 
+        hangupButton.setImage(IMKitIcon.phoneDown.image(pointSize: 11), for: .normal)
+        hangupButton.tintColor = theme.primaryText
+        hangupButton.backgroundColor = theme.danger
+        hangupButton.layer.cornerRadius = 11
+        hangupButton.accessibilityLabel = "挂断"
+        hangupButton.addTarget(self, action: #selector(hangupTapped), for: .touchUpInside)
+        hangupButton.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(hangupButton)
+        NSLayoutConstraint.activate([
+            hangupButton.widthAnchor.constraint(equalToConstant: 22),
+            hangupButton.heightAnchor.constraint(equalToConstant: 22),
+            hangupButton.topAnchor.constraint(equalTo: topAnchor, constant: -6),
+            hangupButton.trailingAnchor.constraint(equalTo: trailingAnchor, constant: 6),
+        ])
+
         addGestureRecognizer(UITapGestureRecognizer(target: self, action: #selector(tapped)))
         addGestureRecognizer(UIPanGestureRecognizer(target: self, action: #selector(dragged)))
         isAccessibilityElement = true
         accessibilityLabel = "通话中，点击展开"
         accessibilityTraits = .button
+    }
+
+    /// 挂断按钮探出球体 6pt，默认命中测试到不了它——这里把它捞回来。
+    public override func point(inside point: CGPoint, with event: UIEvent?) -> Bool {
+        super.point(inside: point, with: event) || hangupButton.frame.contains(point)
     }
 
     public override func layoutSubviews() {
@@ -111,6 +137,8 @@ public final class IMFloatingBubble: UIView {
     }
 
     @objc private func tapped() { onExpand?() }
+
+    @objc private func hangupTapped() { onHangup?() }
 
     @objc private func dragged(_ pan: UIPanGestureRecognizer) {
         guard let window = superview else { return }

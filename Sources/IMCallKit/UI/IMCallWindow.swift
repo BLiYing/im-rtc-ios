@@ -235,6 +235,9 @@ public final class IMCallWindow {
         let bounds = scene.coordinateSpace.bounds
         bubble.center = CGPoint(x: bounds.width - 8 - size.width / 2, y: 120 + size.height / 2)
         bubble.onExpand = { [weak self] in self?.controller.setMinimized(false) }
+        // 小窗上的红色挂断走与红按钮同一条路（`imEndAction` 分辨四种场合），
+        // **不能直接 hangup**：会议房里没有 call，那样会被本地拒成 2005。
+        bubble.onHangup = { [weak self] in self?.controller.end() }
         host.view.addSubview(bubble)
         self.bubble = bubble
         (window as? IMPassthroughWindow)?.hitTarget = bubble

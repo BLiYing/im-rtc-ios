@@ -202,14 +202,18 @@ final class LayoutRulesTests: XCTestCase {
         var state = reduceCallView(IMCallViewState(),
                                    .callBegin(callID: "c", roomID: "r", mediaType: "video", isGroup: false, role: "callee", now: 1))
         state = reduceCallView(state, .userEnter(uid: "bob"))
-        XCTAssertEqual(imPickLayout(for: state, hasLocalVideo: false), .audio, "两端都没画面 → 语音版式")
-        // callBegin 不动本端开关（那是来电 / 拨出时定的）；开着摄像头且有轨道就够进视频版式。
-        XCTAssertEqual(imPickLayout(for: reduceCallView(state, .setCamera(true)), hasLocalVideo: true), .video, "本端有画面就够")
-        XCTAssertEqual(imPickLayout(for: state, hasLocalVideo: true), .audio, "摄像头关着，有轨道也不算")
-        XCTAssertEqual(imPickLayout(for: reduceCallView(state, .userVideo(uid: "bob", available: true)), hasLocalVideo: false), .video)
-        XCTAssertEqual(imPickLayout(for: groupCall(role: "caller"), hasLocalVideo: true), .grid)
+        // **接通后的 1v1 视频恒为 video 版式**：两边都关摄像头时也不退回语音页，
+        // 否则小窗整个消失，用户以为断了，而且再也点不到互换。
+        XCTAssertEqual(imPickLayout(for: state), .video, "两端都没画面也留在视频版式")
+        XCTAssertEqual(imPickLayout(for: reduceCallView(state, .setCamera(true))), .video)
+        XCTAssertEqual(imPickLayout(for: reduceCallView(state, .userVideo(uid: "bob", available: true))), .video)
+        XCTAssertEqual(imPickLayout(for: groupCall(role: "caller")), .grid)
         let outgoing = reduceCallView(IMCallViewState(), .callPlaced(calleeIDs: ["bob"], mediaType: "video", isGroup: false))
-        XCTAssertEqual(imPickLayout(for: outgoing, hasLocalVideo: true), .audio, "拨出中是头像页，本端预览另叠一层小窗")
+        XCTAssertEqual(imPickLayout(for: outgoing), .audio, "拨出中是头像页，本端预览另叠一层小窗")
+        let audioCall = reduceCallView(IMCallViewState(),
+                                       .callBegin(callID: "c", roomID: "r", mediaType: "audio",
+                                                  isGroup: false, role: "callee", now: 1))
+        XCTAssertEqual(imPickLayout(for: audioCall), .audio, "语音通话恒为语音版式")
     }
 
     func testSwapAndCameraBlocked() {

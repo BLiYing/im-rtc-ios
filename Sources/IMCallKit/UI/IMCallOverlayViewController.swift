@@ -41,7 +41,6 @@ public final class IMCallOverlayViewController: UIViewController {
     private let micButton = IMControlButton(icon: .mic, caption: "静音", onIcon: .micSlash, onCaption: "已静音")
     private let cameraButton = IMControlButton(icon: .videoSlash, caption: "开摄像头", onIcon: .video, onCaption: "关摄像头")
     private let speakerButton = IMControlButton(icon: .speaker, caption: "扬声器", onIcon: .speaker, onCaption: "扬声器")
-    private let minimizeControl = IMControlButton(icon: .minimize, caption: "小窗")
     private let endButton = IMControlButton(role: .danger, icon: .phoneDown, caption: "挂断")
     private let acceptButton = IMControlButton(role: .accept, icon: .phone, caption: "接听")
     private let rejectButton = IMControlButton(role: .danger, icon: .xmark, caption: "拒绝")
@@ -164,7 +163,6 @@ public final class IMCallOverlayViewController: UIViewController {
         header.inviteButton.addTarget(self, action: #selector(onInvite), for: .touchUpInside)
         micButton.addTarget(self, action: #selector(onMic), for: .touchUpInside)
         cameraButton.addTarget(self, action: #selector(onCamera), for: .touchUpInside)
-        minimizeControl.addTarget(self, action: #selector(onMinimize), for: .touchUpInside)
         endButton.addTarget(self, action: #selector(onEnd), for: .touchUpInside)
         acceptButton.addTarget(self, action: #selector(onAccept), for: .touchUpInside)
         rejectButton.addTarget(self, action: #selector(onReject), for: .touchUpInside)
@@ -172,7 +170,7 @@ public final class IMCallOverlayViewController: UIViewController {
         pip.onTap = { [weak self] in
             guard let self else { return }
             // 拨出中小窗里只有自己、对端还没画面，没什么可换。
-            guard imPickLayout(for: self.controller.state, hasLocalVideo: self.controller.hasLocalCamera) == .video else { return }
+            guard imPickLayout(for: self.controller.state) == .video else { return }
             self.controller.setSwapped(!self.controller.state.isSwapped)
         }
         // 单击画面空白处：显示 / 隐藏控制条（视频版式才生效）。
@@ -210,7 +208,7 @@ public final class IMCallOverlayViewController: UIViewController {
     // MARK: - 渲染
 
     private var currentLayout: IMCallLayout {
-        imPickLayout(for: controller.state, hasLocalVideo: controller.hasLocalCamera)
+        imPickLayout(for: controller.state)
     }
 
     /// startTicking 每秒刷一次时长。**只在通话中跑**，其余状态没有时长可显示。
@@ -258,7 +256,13 @@ public final class IMCallOverlayViewController: UIViewController {
 
     private func renderHeader(_ state: IMCallViewState) {
         let peerLevel = state.isGroup ? 0 : (state.participants.first?.networkLevel ?? 0)
-        header.apply(title: title(state), subtitle: statusLine(state),
+        /*
+         **呼叫中与来电页的标题栏留空。** 那两屏的正中间已经是「大头像 + 名字 + 状态」，
+         顶部再写一遍同样的名字和同一行状态，同一句话在一屏里出现两次。
+         接通之后才有真正只属于顶栏的信息（对方名字 + 计时器 + 网络条）。
+        */
+        let bare = state.phase == .incoming || state.phase == .outgoing
+        header.apply(title: bare ? "" : title(state), subtitle: bare ? "" : statusLine(state),
                      networkLevel: state.phase == .active ? peerLevel : 0,
                      showsMinimize: state.phase != .incoming && state.phase != .ended,
                      showsInvite: imCanShowInvite(for: state))
@@ -297,9 +301,10 @@ public final class IMCallOverlayViewController: UIViewController {
             wanted = imShowsCameraButton(for: state) ? [cameraButton, rejectButton, acceptButton] : [rejectButton, acceptButton]
         } else {
             // 语音通话不给摄像头按钮（imShowsCameraButton）。
+            // 「小窗」不在控制条里——它在标题栏左上角那一颗（IMCallHeaderView 的注释）。
             wanted = imShowsCameraButton(for: state)
-                ? [micButton, cameraButton, speakerButton, minimizeControl, endButton]
-                : [micButton, speakerButton, minimizeControl, endButton]
+                ? [micButton, cameraButton, speakerButton, endButton]
+                : [micButton, speakerButton, endButton]
         }
         if controlsStack.arrangedSubviews != wanted {
             controlsStack.arrangedSubviews.forEach { controlsStack.removeArrangedSubview($0); $0.removeFromSuperview() }
@@ -380,6 +385,9 @@ public final class IMCallOverlayViewController: UIViewController {
     private func pinFull(_ tile: IMVideoTileView) {
         guard fullTile !== tile else { return }
         unpinFull()
+        // 先离开原来的容器（互换时它正待在小窗里）：跨层级残留的约束会被 UIKit 静默丢掉，
+        // 只在控制台留一条警告，而画面已经没了。
+        tile.removeFromSuperview()
         tile.layer.cornerRadius = 0
         tile.translatesAutoresizingMaskIntoConstraints = false
         stage.insertSubview(tile, at: 0)

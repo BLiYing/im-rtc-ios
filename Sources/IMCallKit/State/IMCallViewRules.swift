@@ -68,14 +68,19 @@ public enum IMCallLayout: String, Sendable {
 }
 
 /**
- imPickLayout 决定此刻用哪种版式。**两端都关摄像头 → 整页退回语音版式**（交互稿 §04）。
- `hasLocalVideo` 由 controller 给：本端有没有一条能预览的摄像头轨道，不在 state 里。
+ imPickLayout 决定此刻用哪种版式。
+
+ **接通后的 1v1 视频恒为 video 版式**，哪怕两边都关着摄像头——那时全屏格与小窗各显示一个
+ 头像盘。原先是「都没画面就退回语音版式」，实测下来不对：小窗会整个消失，
+ 用户以为通话断了，而且关掉摄像头之后就再也点不到「互换」。没画面是格子的事，不是版式的事。
+
+ 拨出中与来电页仍用语音版式：那时对端画面不存在，本端预览叠在右上角（草图 §03-E）。
  */
-public func imPickLayout(for state: IMCallViewState, hasLocalVideo: Bool) -> IMCallLayout {
+public func imPickLayout(for state: IMCallViewState) -> IMCallLayout {
     if state.isGroup || state.isMeeting { return .grid }
-    if state.mediaType != "video" || state.phase == .outgoing { return .audio }
-    let peerVideo = state.participants.first?.hasVideo ?? false
-    return peerVideo || (state.selfState.cameraOn && hasLocalVideo) ? .video : .audio
+    if state.mediaType != "video" { return .audio }
+    if state.phase == .outgoing || state.phase == .incoming { return .audio }
+    return .video
 }
 
 /// imSettledText 是占位格上终局的人话（规范 §08）。
