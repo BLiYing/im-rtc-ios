@@ -21,6 +21,14 @@ public final class IMCallOverlayViewController: UIViewController {
     private let banner = IMTopBannerView()
     private let header = IMCallHeaderView()
     private let stage = UIView()
+    /**
+     全屏画面的宿主：**在整个 view 的最底下一层，铺满整屏**（含安全区外的那两条）。
+
+     原先全屏画面钉在 `stage` 里，而 stage 是「头部下方、控制条上方」那一块——
+     于是视频顶上顶着一条黑边、底下再一条，真机上看着就是「没有全屏」。
+     现在头部与控制条浮在画面上（它们自带 scrim），画面自己铺满。
+    */
+    private let videoFull = UIView()
     private let audioStage = IMAudioStageView()
     private let gridView = IMCallGridView()
     private let pip = IMPipView()
@@ -118,6 +126,9 @@ public final class IMCallOverlayViewController: UIViewController {
         addTile.accessibilityLabel = "添加成员"
         addTile.addTarget(self, action: #selector(onInvite), for: .touchUpInside)
 
+        // videoFull 先加：它要在最底下一层，头部与控制条浮在它上面。
+        videoFull.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(videoFull)
         for child in [header, stage, endedLabel, controlsStack, banner] as [UIView] {
             child.translatesAutoresizingMaskIntoConstraints = false
             view.addSubview(child)
@@ -136,6 +147,11 @@ public final class IMCallOverlayViewController: UIViewController {
          头部与控制条都钉了高度（规范 §04：64 / 96），中间的高度就被完全确定了。
         */
         NSLayoutConstraint.activate([
+            videoFull.topAnchor.constraint(equalTo: view.topAnchor),
+            videoFull.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            videoFull.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            videoFull.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+
             header.topAnchor.constraint(equalTo: guide.topAnchor, constant: 8),
             header.leadingAnchor.constraint(equalTo: guide.leadingAnchor),
             header.trailingAnchor.constraint(equalTo: guide.trailingAnchor),
@@ -340,8 +356,12 @@ public final class IMCallOverlayViewController: UIViewController {
         gridView.layout([])
         // 默认远端全屏、本端小窗；互换后反过来。**层上界跟着换**：进小窗的报 l，上全屏的报 h。
         let (full, small): (IMVideoTileView, IMVideoTileView) = state.isSwapped ? (selfTile, remote) : (remote, selfTile)
+        /*
+         **1v1 不做发言高亮**（绿描边 + 绿名牌）：只有两个人，谁在说话本来就一目了然，
+         而那圈绿边压在全屏画面上只会显得像出了什么问题。九宫格里才需要它。
+        */
         remote.apply(uid: peer.uid, label: peer.uid, hasVideo: peer.hasVideo, hasAudio: peer.hasAudio,
-                     isSpeaking: peer.isSpeaking, networkLevel: peer.networkLevel,
+                     isSpeaking: false, networkLevel: peer.networkLevel,
                      avatarSize: state.isSwapped ? 44 : IMKitTheme.current.avatarLarge)
         applySelfTile(state, avatarSize: state.isSwapped ? IMKitTheme.current.avatarLarge : 44)
         pinFull(full)
@@ -390,10 +410,12 @@ public final class IMCallOverlayViewController: UIViewController {
         tile.removeFromSuperview()
         tile.layer.cornerRadius = 0
         tile.translatesAutoresizingMaskIntoConstraints = false
-        stage.insertSubview(tile, at: 0)
+        videoFull.addSubview(tile)
         fullConstraints = [
-            tile.topAnchor.constraint(equalTo: stage.topAnchor), tile.leadingAnchor.constraint(equalTo: stage.leadingAnchor),
-            tile.trailingAnchor.constraint(equalTo: stage.trailingAnchor), tile.bottomAnchor.constraint(equalTo: stage.bottomAnchor),
+            tile.topAnchor.constraint(equalTo: videoFull.topAnchor),
+            tile.leadingAnchor.constraint(equalTo: videoFull.leadingAnchor),
+            tile.trailingAnchor.constraint(equalTo: videoFull.trailingAnchor),
+            tile.bottomAnchor.constraint(equalTo: videoFull.bottomAnchor),
         ]
         NSLayoutConstraint.activate(fullConstraints)
         fullTile = tile
@@ -402,7 +424,7 @@ public final class IMCallOverlayViewController: UIViewController {
     private func unpinFull() {
         NSLayoutConstraint.deactivate(fullConstraints)
         fullConstraints = []
-        if let fullTile, fullTile.superview === stage { fullTile.removeFromSuperview() }
+        if let fullTile, fullTile.superview === videoFull { fullTile.removeFromSuperview() }
         fullTile?.layer.cornerRadius = IMKitTheme.current.tileCornerRadius
         fullTile = nil
     }

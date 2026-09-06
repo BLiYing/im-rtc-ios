@@ -8,8 +8,12 @@ import UIKit
  两种形态：语音通话是 **56 圆角球**（图标 + 等宽时长）；视频通话是 **90×120 缩略画面**，
  右下角叠时长——只放主讲人，层上界报 `l`，这么小的窗口订 h 层是纯烧带宽。
 
- 右上角恒有一颗 **22 的红色挂断**：收进小窗之后没有它就只能先展开回全屏才能挂断，
+ **底部恒有一颗 28 的红色挂断**：收进小窗之后没有它就只能先展开回全屏才能挂断，
  而「随手挂掉」正是小窗最常用的一件事。红色是危险动作的唯一颜色（规范 §01 danger）。
+
+ 位置在**底部居中**而不是右上角：右上角那一版探出球体、又贴着屏幕右边缘，
+ 拇指够过去正好压在球体边界上，十次有三次点不中；而球一旦吸到右边缘，
+ 那颗按钮还会有一半在屏幕外。底部居中在两个吸附边上都够得着，也不会和「点球展开」抢命中区。
 
  拖完**吸附到最近的左右边缘**（离边 8）：停在屏幕中间会挡住宿主的内容。竖直方向夹在安全区内且上下各留 60。
  图标用 SF Symbols（`IMKitIcon`），**不用 emoji**——真机上 emoji 会渲染成方框问号。
@@ -28,6 +32,9 @@ public final class IMFloatingBubble: UIView {
     private let stack = UIStackView()
     private var dragOffset = CGPoint.zero
     private var isVideo = false
+
+    /// 挂断按钮的直径。28 是「拇指够得着」的下限（规范 §04 的小控件尺寸）。
+    private static let hangupSize: CGFloat = 28
 
     public override init(frame: CGRect) {
         super.init(frame: frame)
@@ -101,19 +108,21 @@ public final class IMFloatingBubble: UIView {
             stack.centerYAnchor.constraint(equalTo: centerYAnchor),
         ])
 
-        hangupButton.setImage(IMKitIcon.phoneDown.image(pointSize: 11), for: .normal)
+        hangupButton.setImage(IMKitIcon.phoneDown.image(pointSize: 13), for: .normal)
         hangupButton.tintColor = theme.primaryText
         hangupButton.backgroundColor = theme.danger
-        hangupButton.layer.cornerRadius = 11
+        hangupButton.layer.cornerRadius = Self.hangupSize / 2
+        hangupButton.layer.borderWidth = 2
+        hangupButton.layer.borderColor = theme.overlayBackground.cgColor
         hangupButton.accessibilityLabel = "挂断"
         hangupButton.addTarget(self, action: #selector(hangupTapped), for: .touchUpInside)
         hangupButton.translatesAutoresizingMaskIntoConstraints = false
         addSubview(hangupButton)
         NSLayoutConstraint.activate([
-            hangupButton.widthAnchor.constraint(equalToConstant: 22),
-            hangupButton.heightAnchor.constraint(equalToConstant: 22),
-            hangupButton.topAnchor.constraint(equalTo: topAnchor, constant: -6),
-            hangupButton.trailingAnchor.constraint(equalTo: trailingAnchor, constant: 6),
+            hangupButton.widthAnchor.constraint(equalToConstant: Self.hangupSize),
+            hangupButton.heightAnchor.constraint(equalToConstant: Self.hangupSize),
+            hangupButton.centerXAnchor.constraint(equalTo: centerXAnchor),
+            hangupButton.bottomAnchor.constraint(equalTo: bottomAnchor, constant: Self.hangupSize / 2),
         ])
 
         addGestureRecognizer(UITapGestureRecognizer(target: self, action: #selector(tapped)))
@@ -123,9 +132,10 @@ public final class IMFloatingBubble: UIView {
         accessibilityTraits = .button
     }
 
-    /// 挂断按钮探出球体 6pt，默认命中测试到不了它——这里把它捞回来。
+    /// 挂断按钮探出球体一半，默认命中测试到不了它——这里把它捞回来，并**放宽 6pt**：
+    /// 28 的圆在手指下面已经是下限，再不放宽就是「看得见点不中」。
     public override func point(inside point: CGPoint, with event: UIEvent?) -> Bool {
-        super.point(inside: point, with: event) || hangupButton.frame.contains(point)
+        super.point(inside: point, with: event) || hangupButton.frame.insetBy(dx: -6, dy: -6).contains(point)
     }
 
     public override func layoutSubviews() {
@@ -160,7 +170,9 @@ public final class IMFloatingBubble: UIView {
         let half = bounds.width / 2
         let inset = bounds.width * 0.5 - 8 - self.bounds.width / 2 // 离边缘 8pt
         let targetX = center.x < half ? bounds.midX - inset : bounds.midX + inset
-        let minY = self.bounds.height / 2 + 60, maxY = bounds.height - self.bounds.height / 2 - 60
+        // 下边多留一点：挂断按钮探出球体底下半颗，贴到屏幕最下面就点不到了。
+        let minY = self.bounds.height / 2 + 60
+        let maxY = bounds.height - self.bounds.height / 2 - 60 - Self.hangupSize
         let targetY = min(max(center.y, minY), maxY)
         UIView.animate(withDuration: IMKitTheme.current.snapDuration, delay: 0, usingSpringWithDamping: 0.8,
                        initialSpringVelocity: 0.5) {
