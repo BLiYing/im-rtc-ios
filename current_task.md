@@ -41,7 +41,7 @@ Engine 的 `inviteMore(_:)` / `probeMicrophone()` 也是那一轮加的。
   退出后可被重新邀请、离线成员的格子不再一直转、两端关摄像头小窗仍在、小窗上的红键能直接结束）。
 - 悬浮球拖到底部 = 挂断（交互稿 M2）**没做**，留给下一刀。
 - 「只引 Engine 自画 UI」的 iOS Demo 示范仍未做。
-- `IMCallOverlayViewController` 495 行已过预警线（600 上限）：下次动它先拆版式（audio / video / grid 各一个协作对象）。
+- `IMCallOverlayViewController` 512 行已过预警线（600 上限）：下次动它先拆版式（audio / video / grid 各一个协作对象）。
 - Swift 6 语言模式下的 Sendable 警告（`IMSignalConnection` 的 `Task {}` 捕获）仍是欠账。
 
 ## 已知坑 / 限制
