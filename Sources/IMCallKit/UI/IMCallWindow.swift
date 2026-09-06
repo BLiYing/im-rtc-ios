@@ -230,7 +230,9 @@ public final class IMCallWindow {
                              state: IMCallViewState) {
         let theme = IMKitTheme.current
         let isVideo = state.mediaType == "video"
-        let size = isVideo ? theme.bubbleVideoSize : CGSize(width: theme.bubbleSize, height: theme.bubbleSize)
+        let bodySize = isVideo ? theme.bubbleVideoSize : CGSize(width: theme.bubbleSize, height: theme.bubbleSize)
+        // 容器还要装下球体下面那颗挂断（`IMFloatingBubble` 的类注释）。
+        let size = IMFloatingBubble.totalSize(bodySize: bodySize)
         let bubble = IMFloatingBubble(frame: CGRect(origin: .zero, size: size))
         let bounds = scene.coordinateSpace.bounds
         bubble.center = CGPoint(x: bounds.width - 8 - size.width / 2, y: 120 + size.height / 2)

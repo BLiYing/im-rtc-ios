@@ -22,11 +22,21 @@ public final class IMAudioStageView: UIView {
     @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("Kit 不用 storyboard") }
 
-    /// apply 刷新。`isRinging` 为真时光环呼吸。
-    public func apply(uid: String, name: String, status: String, isRinging: Bool, networkLevel: Int) {
+    /**
+     apply 刷新。`isRinging` 为真时光环呼吸。
+
+     - Parameter showsCaption: 名字与状态这一行要不要显示。
+       **接通之后不显示**：那时候标题栏里已经是「对方名字 + 计时器」，中间再写一遍
+       就是同一句话在一屏里出现两次，还各走各的计时。呼叫中 / 来电页的标题栏是空的，
+       名字与状态只在那两屏出现。
+    */
+    public func apply(uid: String, name: String, status: String, isRinging: Bool,
+                      networkLevel: Int, showsCaption: Bool = true) {
         avatar.apply(key: uid, name: name, size: IMKitTheme.current.avatarLarge)
         nameLabel.text = name
         statusLabel.text = status
+        nameLabel.isHidden = !showsCaption
+        statusLabel.isHidden = !showsCaption
         netChip.isHidden = networkLevel <= 0
         netBars.apply(level: networkLevel)
         setRinging(isRinging)

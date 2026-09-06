@@ -96,7 +96,8 @@ public func imSettledText(_ outcome: IMSettledOutcome) -> String {
 /**
  结束原因的人话。**结束画面必须说清为什么**——只写「通话结束」然后 1.5 秒消失，
  用户根本不知道是对方拒了、忙线、还是压根不在线。未知值兜底成「已结束」，**不显示原始英文**。
- 与 Web 的 `endReasonText` 逐字对齐。
+ 与 Web 的 `endReasonText` / Android 的 `endReasonText` **逐字对齐**——三端漏一条，
+ 同一个结局在两台设备上就会写着不一样的话。
  */
 public func imEndReasonText(_ reason: String, role: String, durationSec: Int) -> String {
     switch reason {
@@ -114,6 +115,14 @@ public func imEndReasonText(_ reason: String, role: String, durationSec: Int) ->
         return "对方当前不在线"
     case "network":
         return "网络中断"
+    case "answered_elsewhere":
+        return "已在其他设备接听"
+    case "rejected_elsewhere":
+        return "已在其他设备拒绝"
+    case "room_closed":
+        return "房间已解散"
+    case "kicked":
+        return "已被移出"
     default:
         return "已结束"
     }

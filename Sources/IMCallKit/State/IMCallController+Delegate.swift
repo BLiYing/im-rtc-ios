@@ -57,7 +57,7 @@ extension IMCallController: IMCallEngineDelegate {
 
     public func callEngine(_ engine: IMCallEngine, callDidEnd callID: String, reason: String,
                            durationSec: Int, endedBy: String) {
-        apply(.callEnd(reason: reason))
+        apply(.callEnd(reason: reason, durationSec: durationSec))
     }
 
     // 四个便利事件只在 1v1 抛，随后必有 callDidEnd——所以这里只做提示，**不改阶段**。

@@ -86,7 +86,7 @@ final class CallViewStateTests: XCTestCase {
         let state = reduce(IMCallViewState(), [
             .callBegin(callID: "c-1", roomID: "r-1", mediaType: "audio",
                        isGroup: false, role: "caller", now: 100),
-            .callEnd(reason: "hangup"),
+            .callEnd(reason: "hangup", durationSec: 0),
             .roomLeft,
         ])
         XCTAssertEqual(state.endReason, "hangup")
@@ -146,7 +146,7 @@ final class CallViewStateTests: XCTestCase {
         let state = reduce(IMCallViewState(), [
             .callBegin(callID: "c-1", roomID: "r-1", mediaType: "video",
                        isGroup: false, role: "caller", now: 100),
-            .callEnd(reason: "hangup"),
+            .callEnd(reason: "hangup", durationSec: 0),
             .dismiss,
         ])
         XCTAssertEqual(state, IMCallViewState(), "收起之后必须回到全空态")
@@ -158,7 +158,7 @@ final class CallViewStateTests: XCTestCase {
             .callBegin(callID: "c-1", roomID: "r-1", mediaType: "audio",
                        isGroup: false, role: "caller", now: 100),
             .setMinimized(true),
-            .callEnd(reason: "hangup"),
+            .callEnd(reason: "hangup", durationSec: 0),
         ])
         XCTAssertFalse(state.isMinimized, "结束画面要展开，收在小窗里等于没告诉用户")
     }

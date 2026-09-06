@@ -263,3 +263,45 @@ final class LayoutRulesTests: XCTestCase {
         XCTAssertEqual(imNetworkText(level: 5), "网络很差")
     }
 }
+
+/// 结束画面的两条：**提示要清掉**、**四端同一张原因表**。
+///
+/// 提示不清的话，结束画面上写的是刚刚那句「bob 已拒接」而不是结束原因「对方已拒接」——
+/// 同一个结局在 iOS 与 Android 上写着不一样的话（真机对比时发现的）。
+final class EndedScreenTests: XCTestCase {
+
+    func testEndClearsHint() {
+        var state = reduceCallView(IMCallViewState(),
+                                   .callPlaced(calleeIDs: ["bob"], mediaType: "audio", isGroup: false))
+        state = reduceCallView(state, .hint("bob 已拒接"))
+        XCTAssertEqual(state.hint, "bob 已拒接")
+        state = reduceCallView(state, .callEnd(reason: "reject", durationSec: 0))
+        XCTAssertEqual(state.hint, "", "结束时提示要清掉，否则它会顶掉结束原因")
+        XCTAssertEqual(state.endReason, "reject")
+    }
+
+    /// 时长由服务端给（不变量 I8）。现算的话，没接通的通话 beganAt 是 0，算出来是一九七〇年到现在。
+    func testEndCarriesServerDuration() {
+        var state = reduceCallView(IMCallViewState(),
+                                   .callPlaced(calleeIDs: ["bob"], mediaType: "audio", isGroup: false))
+        state = reduceCallView(state, .callEnd(reason: "hangup", durationSec: 201))
+        XCTAssertEqual(state.endedDurationSec, 201)
+        XCTAssertEqual(imEndReasonText("hangup", role: "caller", durationSec: state.endedDurationSec),
+                       "通话结束 · 03:21")
+    }
+
+    /// 与 Android 的 `endReasonText` / Web 的 `endReasonText` 逐字对齐——漏一条就是两端写着不一样的话。
+    func testEveryReasonHasItsOwnSentence() {
+        let table: [String: String] = [
+            "cancel": "已取消", "reject": "对方已拒接", "busy": "对方忙线中",
+            "no_answer": "对方无人接听", "offline": "对方当前不在线", "network": "网络中断",
+            "answered_elsewhere": "已在其他设备接听", "rejected_elsewhere": "已在其他设备拒绝",
+            "room_closed": "房间已解散", "kicked": "已被移出",
+        ]
+        for (reason, want) in table {
+            XCTAssertEqual(imEndReasonText(reason, role: "caller", durationSec: 0), want, reason)
+        }
+        XCTAssertEqual(imEndReasonText("什么鬼", role: "caller", durationSec: 0), "已结束",
+                       "未知值兜底成「已结束」，不显示原始英文")
+    }
+}

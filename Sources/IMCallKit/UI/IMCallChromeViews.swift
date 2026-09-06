@@ -37,7 +37,7 @@ public final class IMCallHeaderView: UIView {
 
     private func build() {
         let theme = IMKitTheme.current
-        for (button, icon, label) in [(minimizeButton, IMKitIcon.minimize, "收进小窗"),
+        for (button, icon, label) in [(minimizeButton, IMKitIcon.pip, "收进小窗"),
                                       (inviteButton, IMKitIcon.personAdd, "添加成员")] {
             button.setImage(icon.image(pointSize: 15), for: .normal)
             button.tintColor = theme.primaryText

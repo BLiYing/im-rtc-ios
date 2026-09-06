@@ -119,6 +119,8 @@ public enum IMKitIcon: String {
     case phoneDown = "phone.down.fill"
     case xmark = "xmark"
     case minimize = "arrow.down.right.and.arrow.up.left"
+    /// 收进小窗。**画中画字形**——双向箭头那一版在真机上被认成「全屏」。
+    case pip = "pip.enter"
     case expand = "arrow.up.left.and.arrow.down.right"
     case speaker = "speaker.wave.2.fill"
     case speakerSlash = "speaker.slash.fill"

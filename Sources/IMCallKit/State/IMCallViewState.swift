@@ -120,6 +120,13 @@ public struct IMCallViewState: Equatable, Sendable {
     /// 接通时刻（`Date` 的秒），0 = 还没接通。计时器从它开始走。
     public var beganAt: TimeInterval = 0
     public var endReason = ""
+    /**
+     结束时的通话时长，**由服务端给**（`call.ended.duration_sec`）。
+
+     不变量 I8：四端禁止自己算时长。结束画面原先拿 `Date() - beganAt` 现算，
+     而没接通的通话 `beganAt` 是 0——算出来是一九七〇年到现在的秒数。
+    */
+    public var endedDurationSec = 0
     /// 一句给用户看的提示（「对方已拒接」这类）。
     public var hint = ""
     /// 媒体是否已经就绪。**单独记**：`callBegin` 与「媒体通了」谁先到都可能。
@@ -142,7 +149,7 @@ public enum IMCallViewAction: Sendable {
     case callPlaced(calleeIDs: [String], mediaType: String, isGroup: Bool)
     case callBegin(callID: String, roomID: String, mediaType: String,
                    isGroup: Bool, role: String, now: TimeInterval)
-    case callEnd(reason: String)
+    case callEnd(reason: String, durationSec: Int)
     case meetingJoined(roomID: String, now: TimeInterval)
     case roomLeft
     case mediaReady
@@ -234,7 +241,7 @@ public func reduceCallView(_ state: IMCallViewState,
         next.beganAt = now
         next.selfState = IMSelfState(micOn: true, cameraOn: true, speakerOn: true)
 
-    case let .callEnd(reason):
+    case let .callEnd(reason, durationSec):
         // **振铃通话的结束出口**（会议走 roomLeft）。还在响铃的来电直接收起，不留结束画面：
         // 被叫这一侧什么都还没做。主叫那一侧要停一下说明原因。
         if state.phase == .incoming {
@@ -244,7 +251,17 @@ public func reduceCallView(_ state: IMCallViewState,
         }
         next.phase = .ended
         next.endReason = reason
+        next.endedDurationSec = durationSec
         next.isMinimized = false
+        /*
+         **结束时把提示清掉。**
+
+         `statusLine` 里 hint 优先于一切，而拒接 / 忙线 / 无应答那三条便利事件刚刚写过
+         「bob 已拒接」。不清的话结束画面上写的是那句提示，而不是结束原因
+         （「对方已拒接」）——同一个结局，iOS 和 Android 两台设备上写着不一样的话。
+         Android 的 `IMCallViewReducer.ended` 一直是清的。
+        */
+        next.hint = ""
 
     case .roomLeft:
         // 会议的结束出口。**已经在 ended/idle 就不动**：重复进 ended 会把 endReason 抹成空串。

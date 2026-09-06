@@ -336,7 +336,9 @@ public final class IMCallOverlayViewController: UIViewController {
         let peer = state.participants.first
         audioStage.apply(uid: state.peerUID, name: state.peerUID.isEmpty ? (peer?.uid ?? "通话中") : state.peerUID,
                          status: statusLine(state), isRinging: state.phase == .outgoing,
-                         networkLevel: peer?.networkLevel ?? 0)
+                         networkLevel: peer?.networkLevel ?? 0,
+                         // 接通之后名字与时长归标题栏，中间只留头像——两处各走各的计时是重复也是打架。
+                         showsCaption: state.phase != .active)
         gridView.layout([])
         unpinFull()
         // 拨出视频时右上角叠本端预览（草图 §03-E：拨出时看得见自己）。
@@ -495,9 +497,10 @@ public final class IMCallOverlayViewController: UIViewController {
         case .outgoing:   return "正在呼叫…"
         case .connecting: return state.isMeeting ? "正在进入会议…" : "接通中…"
         case .ended:
+            // 时长用服务端给的那个（不变量 I8）。现算的话，没接通的通话 beganAt 是 0，
+            // 算出来是一九七〇年到现在的秒数。
             return state.isMeeting ? "已离开会议"
-                : imEndReasonText(state.endReason, role: state.role,
-                                  durationSec: Int(Date().timeIntervalSince1970 - state.beganAt))
+                : imEndReasonText(state.endReason, role: state.role, durationSec: state.endedDurationSec)
         case .active:     return imFormatDuration(Int(Date().timeIntervalSince1970 - state.beganAt))
         case .idle:       return ""
         }

@@ -8,12 +8,16 @@ import UIKit
  两种形态：语音通话是 **56 圆角球**（图标 + 等宽时长）；视频通话是 **90×120 缩略画面**，
  右下角叠时长——只放主讲人，层上界报 `l`，这么小的窗口订 h 层是纯烧带宽。
 
- **底部恒有一颗 28 的红色挂断**：收进小窗之后没有它就只能先展开回全屏才能挂断，
+ **球体下面挂一颗 28 的红色挂断**：收进小窗之后没有它就只能先展开回全屏才能挂断，
  而「随手挂掉」正是小窗最常用的一件事。红色是危险动作的唯一颜色（规范 §01 danger）。
 
- 位置在**底部居中**而不是右上角：右上角那一版探出球体、又贴着屏幕右边缘，
- 拇指够过去正好压在球体边界上，十次有三次点不中；而球一旦吸到右边缘，
- 那颗按钮还会有一半在屏幕外。底部居中在两个吸附边上都够得着，也不会和「点球展开」抢命中区。
+ # 为什么本体是「容器 + 球 + 挂断」三层
+
+ 挂断放在球体内部会被圆角裁掉、放在球外又要靠改写 `point(inside:)` 才点得到，
+ 而球上那个 `UITapGestureRecognizer`（点一下展开）还会把按钮的触摸整个吃掉——
+ 三件事凑在一起就是「按钮看不见、看见了也点不动」。所以本类是一个**透明容器**：
+ 球（`body`）在上、挂断在下，两个都在容器边界内；展开手势加了 delegate，
+ 落在按钮上的触摸不归它管。与 Android 的 `IMFloatingBubble` 同一个结构。
 
  拖完**吸附到最近的左右边缘**（离边 8）：停在屏幕中间会挡住宿主的内容。竖直方向夹在安全区内且上下各留 60。
  图标用 SF Symbols（`IMKitIcon`），**不用 emoji**——真机上 emoji 会渲染成方框问号。
@@ -26,6 +30,8 @@ public final class IMFloatingBubble: UIView {
     /// 视频形态下远端缩略画面的载体。IMCallWindow 往这上面 attachView。
     public let renderView = UIView()
 
+    /// 球体本身（圆 / 圆角矩形）。底色、圆角、阴影、视频缩略都在它身上，挂断在它外面。
+    private let body = UIView()
     private let iconView = UIImageView()
     private let hangupButton = UIButton(type: .system)
     private let durationLabel = UILabel()
@@ -34,7 +40,16 @@ public final class IMFloatingBubble: UIView {
     private var isVideo = false
 
     /// 挂断按钮的直径。28 是「拇指够得着」的下限（规范 §04 的小控件尺寸）。
-    private static let hangupSize: CGFloat = 28
+    static let hangupSize: CGFloat = 28
+    /// 球体与挂断之间的间隙。
+    static let hangupGap: CGFloat = 4
+
+    /// 容器的总高 = 球体高 + 间隙 + 挂断。`IMCallWindow` 建视图时要用同一个算法。
+    public static func totalSize(bodySize: CGSize) -> CGSize {
+        CGSize(width: bodySize.width, height: bodySize.height + hangupGap + hangupSize)
+    }
+
+    private var bodyHeightConstraint: NSLayoutConstraint!
 
     public override init(frame: CGRect) {
         super.init(frame: frame)
@@ -53,9 +68,10 @@ public final class IMFloatingBubble: UIView {
         self.isVideo = isVideo
         renderView.isHidden = !isVideo
         iconView.isHidden = isVideo
-        let size = isVideo ? theme.bubbleVideoSize : CGSize(width: theme.bubbleSize, height: theme.bubbleSize)
-        bounds = CGRect(origin: .zero, size: size)
-        layer.cornerRadius = isVideo ? 14 : theme.bubbleSize / 2
+        let bodySize = isVideo ? theme.bubbleVideoSize : CGSize(width: theme.bubbleSize, height: theme.bubbleSize)
+        bounds = CGRect(origin: .zero, size: Self.totalSize(bodySize: bodySize))
+        bodyHeightConstraint.constant = bodySize.height
+        body.layer.cornerRadius = isVideo ? 14 : theme.bubbleSize / 2
         // 视频形态：时长挪到右下角的小标签里。
         stack.axis = .vertical
         if isVideo {
@@ -72,19 +88,30 @@ public final class IMFloatingBubble: UIView {
 
     private func build() {
         let theme = IMKitTheme.current
-        backgroundColor = theme.overlayBackground
-        layer.cornerRadius = theme.bubbleSize / 2
-        layer.shadowColor = UIColor.black.cgColor
-        layer.shadowOpacity = 0.35
-        layer.shadowRadius = 10
-        layer.shadowOffset = CGSize(width: 0, height: 4)
+        backgroundColor = .clear
         clipsToBounds = false
+
+        body.backgroundColor = theme.overlayBackground
+        body.layer.cornerRadius = theme.bubbleSize / 2
+        body.layer.shadowColor = UIColor.black.cgColor
+        body.layer.shadowOpacity = 0.35
+        body.layer.shadowRadius = 10
+        body.layer.shadowOffset = CGSize(width: 0, height: 4)
+        body.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(body)
+        bodyHeightConstraint = body.heightAnchor.constraint(equalToConstant: theme.bubbleSize)
+        NSLayoutConstraint.activate([
+            body.topAnchor.constraint(equalTo: topAnchor),
+            body.leadingAnchor.constraint(equalTo: leadingAnchor),
+            body.trailingAnchor.constraint(equalTo: trailingAnchor),
+            bodyHeightConstraint,
+        ])
 
         renderView.isHidden = true
         renderView.layer.cornerRadius = 14
         renderView.clipsToBounds = true
         renderView.translatesAutoresizingMaskIntoConstraints = false
-        addSubview(renderView)
+        body.addSubview(renderView)
 
         iconView.tintColor = theme.primaryText
         iconView.contentMode = .center
@@ -98,22 +125,20 @@ public final class IMFloatingBubble: UIView {
         stack.alignment = .center
         stack.spacing = 0
         stack.translatesAutoresizingMaskIntoConstraints = false
-        addSubview(stack)
+        body.addSubview(stack)
         NSLayoutConstraint.activate([
-            renderView.topAnchor.constraint(equalTo: topAnchor),
-            renderView.leadingAnchor.constraint(equalTo: leadingAnchor),
-            renderView.trailingAnchor.constraint(equalTo: trailingAnchor),
-            renderView.bottomAnchor.constraint(equalTo: bottomAnchor),
-            stack.centerXAnchor.constraint(equalTo: centerXAnchor),
-            stack.centerYAnchor.constraint(equalTo: centerYAnchor),
+            renderView.topAnchor.constraint(equalTo: body.topAnchor),
+            renderView.leadingAnchor.constraint(equalTo: body.leadingAnchor),
+            renderView.trailingAnchor.constraint(equalTo: body.trailingAnchor),
+            renderView.bottomAnchor.constraint(equalTo: body.bottomAnchor),
+            stack.centerXAnchor.constraint(equalTo: body.centerXAnchor),
+            stack.centerYAnchor.constraint(equalTo: body.centerYAnchor),
         ])
 
         hangupButton.setImage(IMKitIcon.phoneDown.image(pointSize: 13), for: .normal)
         hangupButton.tintColor = theme.primaryText
         hangupButton.backgroundColor = theme.danger
         hangupButton.layer.cornerRadius = Self.hangupSize / 2
-        hangupButton.layer.borderWidth = 2
-        hangupButton.layer.borderColor = theme.overlayBackground.cgColor
         hangupButton.accessibilityLabel = "挂断"
         hangupButton.addTarget(self, action: #selector(hangupTapped), for: .touchUpInside)
         hangupButton.translatesAutoresizingMaskIntoConstraints = false
@@ -122,27 +147,24 @@ public final class IMFloatingBubble: UIView {
             hangupButton.widthAnchor.constraint(equalToConstant: Self.hangupSize),
             hangupButton.heightAnchor.constraint(equalToConstant: Self.hangupSize),
             hangupButton.centerXAnchor.constraint(equalTo: centerXAnchor),
-            hangupButton.bottomAnchor.constraint(equalTo: bottomAnchor, constant: Self.hangupSize / 2),
+            hangupButton.bottomAnchor.constraint(equalTo: bottomAnchor),
         ])
 
-        addGestureRecognizer(UITapGestureRecognizer(target: self, action: #selector(tapped)))
+        // 展开手势只认球体：不加 delegate 的话它会把挂断按钮的触摸整个吃掉。
+        let tap = UITapGestureRecognizer(target: self, action: #selector(tapped))
+        tap.delegate = self
+        addGestureRecognizer(tap)
         addGestureRecognizer(UIPanGestureRecognizer(target: self, action: #selector(dragged)))
-        isAccessibilityElement = true
-        accessibilityLabel = "通话中，点击展开"
-        accessibilityTraits = .button
-    }
-
-    /// 挂断按钮探出球体一半，默认命中测试到不了它——这里把它捞回来，并**放宽 6pt**：
-    /// 28 的圆在手指下面已经是下限，再不放宽就是「看得见点不中」。
-    public override func point(inside point: CGPoint, with event: UIEvent?) -> Bool {
-        super.point(inside: point, with: event) || hangupButton.frame.insetBy(dx: -6, dy: -6).contains(point)
+        body.isAccessibilityElement = true
+        body.accessibilityLabel = "通话中，点击展开"
+        body.accessibilityTraits = .button
     }
 
     public override func layoutSubviews() {
         super.layoutSubviews()
         guard isVideo else { return }
         // 视频形态：时长贴右下角（规范 §06「悬浮球（视频）」）。
-        stack.frame = CGRect(x: bounds.width - 48 - 5, y: bounds.height - 16 - 5, width: 48, height: 16)
+        stack.frame = CGRect(x: body.bounds.width - 48 - 5, y: body.bounds.height - 16 - 5, width: 48, height: 16)
         durationLabel.frame = stack.bounds
     }
 
@@ -170,14 +192,21 @@ public final class IMFloatingBubble: UIView {
         let half = bounds.width / 2
         let inset = bounds.width * 0.5 - 8 - self.bounds.width / 2 // 离边缘 8pt
         let targetX = center.x < half ? bounds.midX - inset : bounds.midX + inset
-        // 下边多留一点：挂断按钮探出球体底下半颗，贴到屏幕最下面就点不到了。
         let minY = self.bounds.height / 2 + 60
-        let maxY = bounds.height - self.bounds.height / 2 - 60 - Self.hangupSize
+        let maxY = bounds.height - self.bounds.height / 2 - 60
         let targetY = min(max(center.y, minY), maxY)
         UIView.animate(withDuration: IMKitTheme.current.snapDuration, delay: 0, usingSpringWithDamping: 0.8,
                        initialSpringVelocity: 0.5) {
             self.center = CGPoint(x: targetX, y: targetY)
         }
+    }
+}
+
+/// 展开手势的 delegate：落在挂断按钮上的触摸不归它管（否则按钮永远收不到点击）。
+extension IMFloatingBubble: UIGestureRecognizerDelegate {
+    public func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer,
+                                  shouldReceive touch: UITouch) -> Bool {
+        !(touch.view?.isDescendant(of: hangupButton) ?? false)
     }
 }
 #endif
