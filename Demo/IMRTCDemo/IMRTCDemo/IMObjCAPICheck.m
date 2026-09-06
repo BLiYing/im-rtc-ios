@@ -45,6 +45,13 @@
     // 挂画面：UI 拿到画面的唯一途径（CONVENTIONS §1）。
     [_engine attachView:@"bob" to:nil];
     [_engine attachLocalView:@"cam-1" to:nil];
+
+    // 采集档位是宿主策略：宿主要能列出档位、也要能自己造一个。
+    for (IMVideoProfile *profile in IMVideoProfile.presets) {
+        NSLog(@"[objc] 档位 %@ %ldx%ld", profile.name, (long)profile.width, (long)profile.height);
+    }
+    // `default` 是 ObjC 的关键字，点语法写不出来，只能走方括号。
+    NSLog(@"[objc] 缺省档位 %@", [IMVideoProfile default].name);
 }
 
 - (void)checkAsyncAPI {

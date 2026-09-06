@@ -29,6 +29,15 @@
 
 `imPickLayout` 的 `hasLocalVideo` 参数随之作废，已删。
 
+**这一轮（2026-09-06 下午）修的是 Demo 侧的两条**（都是真机才看得见的）：
+
+| 症状 | 根因 | 落点 |
+|---|---|---|
+| **点「登录」没有任何反应** | 两条路都会长成这样：① 地址或用户名为空时 `onLogin` 直接 `return`，界面一个字不变（**真机首次装机地址就是空的**）；② 请求要等（超时 10s）期间无反馈，而失败那句话落在整页最下面的 `errorLabel` 上，小屏上在折叠线以下 | 身份卡里加一行 `loginHint`：空值当场说清楚，发请求前写「登录中…」并禁用按钮，失败也写同一行 |
+| 设置里选了 1080p，**杀掉 app 再进来又回到 720p** | `DemoSession.videoProfile` 只在内存里 | 按**档位名**存 UserDefaults（档位表会改参数，存名字才认得回来）；档位表收口到 Engine 的 `IMVideoProfile.presets`，与 Android 的 `PRESETS` 同名同序 |
+
+`IMVideoProfile.presets` 是本轮唯一的公开 API 新增（`VideoProfileTests` 钉着顺序与唯一性）。
+
 **上一轮（2026-09-05）**：Kit 按设计稿 v3 落地——令牌、SF Symbols、头像 / 小窗算术、
 权限门三段式、`IMPipView` 长按拖动、九宫格加号格与选人半屏、切后台自动 mute 摄像头。
 Engine 的 `inviteMore(_:)` / `probeMicrophone()` 也是那一轮加的。
@@ -65,7 +74,10 @@ Engine 的 `inviteMore(_:)` / `probeMicrophone()` 也是那一轮加的。
 - **还在响铃的来电结束时不进 ended**；主叫那一侧要停一下说明原因（`imEndReasonText`，与 Web 逐字对齐）。
 - **`JSONSerialization` 分不清 true 与 1**，本仓用 `CFBooleanGetTypeID` 判；**Swift 块注释可嵌套**，注释里别写 `/*`。
 - **4401 重试上限 3**（五端同一个数）；**日志回传要给请求设超时**（已设 5 秒）。
-- **画质是宿主策略**（`IMVideoProfile`），改档位要同步服务端 `bwe.go` 的 `bitrateHigh`。
+- **画质是宿主策略**（`IMVideoProfile`），改档位要同步服务端 `bwe.go` 的 `bitrateHigh`；
+  **宿主的选择要自己持久化**（Demo 存的是档位名），Engine 不替宿主记。
+- **Demo 里任何一条 `guard … else { return }` 都要留下一句话**：真机上「按钮点了没反应」
+  基本都是静默 return 或者提示落在了看不见的位置（整页最底下的 `errorLabel`）。
 
 ## 关联工程 / 常用命令
 

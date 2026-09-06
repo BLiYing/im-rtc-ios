@@ -18,6 +18,8 @@ final class DialerViewController: UIViewController {
     private let roomField = DemoUI.field(placeholder: "房间号（留空则新建）", text: "")
     private let groupLabel = UILabel()
     private let statusLabel = UILabel()
+    /// 登录这一步自己的进度与错误。**必须贴着登录按钮**，见 onLogin 的注释。
+    private let loginHint = UILabel()
     private let errorLabel = UILabel()
     private let loginButton = UIButton(type: .system)
     private let logoutButton = UIButton(type: .system)
@@ -40,6 +42,7 @@ final class DialerViewController: UIViewController {
     private func refresh() {
         statusLabel.text = session.connectionText
         let loggedIn = session.isLoggedIn
+        if loggedIn { setLoginHint("") }
         loginButton.isHidden = loggedIn
         logoutButton.isHidden = !loggedIn
         serverField.isEnabled = !loggedIn
@@ -55,12 +58,41 @@ final class DialerViewController: UIViewController {
 
     // MARK: - 动作
 
+    /**
+     登录。**每一条出路都要在按钮旁边留下一句话**——真机上报过来的是「点登录没有任何反应」，
+     两条路都会走成那个样子：
+
+     · 地址或用户名是空的（真机首次装机地址就是空的，见 `DemoSession.defaultServer`）
+       原先直接 `return`，界面上一个字都不变，看起来就是按钮坏了；
+     · 请求发出去了要等（超时 10s），期间界面同样一个字都不变，而失败后那句话
+       落在整页最下面的 `errorLabel` 上——小屏上它在折叠线以下，不滚到底根本看不见。
+
+     所以：空值当场说清楚，发请求前先写「登录中…」并禁用按钮，失败也写在同一行。
+    */
     @objc private func onLogin() {
         errorLabel.text = ""
         let server = serverField.text?.trimmingCharacters(in: .whitespaces) ?? ""
         let user = userField.text?.trimmingCharacters(in: .whitespaces) ?? ""
-        guard !server.isEmpty, !user.isEmpty else { return }
-        run { try await self.session.login(server: server, username: user) }
+        guard !server.isEmpty else { return setLoginHint("请先填服务器地址（\(DemoSession.serverPlaceholder)）") }
+        guard !user.isEmpty else { return setLoginHint("请先填用户 ID") }
+        setLoginHint("登录中…", isError: false)
+        loginButton.isEnabled = false
+        Task { @MainActor in
+            do {
+                try await session.login(server: server, username: user)
+                setLoginHint("")
+            } catch {
+                setLoginHint(error.localizedDescription)
+            }
+            loginButton.isEnabled = true
+        }
+    }
+
+    /// 空文案要把整行收起来——留一个空 label 在那儿，身份卡里会平白多出一条缝。
+    private func setLoginHint(_ text: String, isError: Bool = true) {
+        loginHint.text = text
+        loginHint.textColor = isError ? .systemRed : .secondaryLabel
+        loginHint.isHidden = text.isEmpty
     }
 
     @objc private func onLogout() { run { await self.session.logout() } }
@@ -121,6 +153,9 @@ final class DialerViewController: UIViewController {
     private func build() {
         statusLabel.font = .systemFont(ofSize: 13)
         statusLabel.textColor = .secondaryLabel
+        loginHint.font = .systemFont(ofSize: 13)
+        loginHint.numberOfLines = 0
+        loginHint.isHidden = true
         errorLabel.font = .systemFont(ofSize: 13)
         errorLabel.textColor = .systemRed
         errorLabel.numberOfLines = 0
@@ -137,7 +172,7 @@ final class DialerViewController: UIViewController {
 
         let stack = UIStackView(arrangedSubviews: [
             DemoUI.card("身份", [serverField, DemoUI.note(DemoSession.serverHint),
-                               userField, statusLabel, loginButton, logoutButton]),
+                               userField, statusLabel, loginButton, logoutButton, loginHint]),
             DemoUI.card("单人通话", [calleeField, DemoUI.row([audio, video])]),
             DemoUI.card("多人通话（最多 8 人）", [DemoUI.row([groupLabel, pick]), group]),
             DemoUI.card("会议房间", [roomField, join,

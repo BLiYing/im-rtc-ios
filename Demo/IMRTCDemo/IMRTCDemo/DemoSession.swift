@@ -179,9 +179,27 @@ final class DemoSession {
         try await engine.login(token)
     }
 
-    /// 采集画质档位。**换了要重登才生效**——适配器是登录时造的。
-    var videoProfile: IMVideoProfile = .default {
-        didSet { notify() }
+    /**
+     采集画质档位。**换了要重登才生效**——适配器是登录时造的。
+
+     选完要**存下来**：这是宿主的一条配置，不是这一次运行的临时状态。
+     以前只放在内存里，杀掉 app 再进来又回到 720p——用户以为没保存成功，
+     于是反复去点那一行（真机上报过来的就是这个）。
+     存的是**档位名**而不是整个对象：档位表将来会改（码率、帧率），
+     存名字的话改表之后旧值仍然认得回来，存快照就会把过期的参数带回来。
+    */
+    var videoProfile: IMVideoProfile = DemoSession.savedProfile() {
+        didSet {
+            UserDefaults.standard.set(videoProfile.name, forKey: Self.profileKey)
+            notify()
+        }
+    }
+
+    private static let profileKey = "im-rtc-demo.videoProfile"
+
+    private static func savedProfile() -> IMVideoProfile {
+        let name = UserDefaults.standard.string(forKey: profileKey)
+        return IMVideoProfile.presets.first { $0.name == name } ?? .default
     }
 
     func logout() async {

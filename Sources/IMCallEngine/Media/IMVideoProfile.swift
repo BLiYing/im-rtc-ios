@@ -49,6 +49,9 @@ public final class IMVideoProfile: NSObject {
     /// 缺省档位。**1080p 在九宫格里没有意义**，只是白烧上行带宽。
     @objc public static let `default` = IMVideoProfile.p720
 
+    /// 三个预设，按分辨率从低到高。界面拿它列档位（与 Android 的 `IMVideoProfile.PRESETS` 同名同序）。
+    @objc public static let presets: [IMVideoProfile] = [p360, p720, p1080]
+
     /// simulcastEncodings 三层的码率：h 满额、m 三分之一、l 十分之一（协议 §3.5）。
     /// 返回的是 (rid, 缩放倍数, 码率)，由媒体层翻成 `RTCRtpEncodingParameters`。
     public var simulcastLayers: [(rid: String, scaleDownBy: Double, bitrateBps: Int)] {

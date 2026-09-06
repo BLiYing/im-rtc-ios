@@ -47,7 +47,7 @@ final class SettingsViewController: UITableViewController {
      真实宿主从自己的配置接口拿这个值，「后台可控」在产品上就是这个意思。
      放在设置页里是为了让这条边界在 Demo 里看得见。
     */
-    private let profiles: [IMVideoProfile] = [.p360, .p720, .p1080]
+    private let profiles = IMVideoProfile.presets
 
     override func numberOfSections(in tableView: UITableView) -> Int { 3 }
 

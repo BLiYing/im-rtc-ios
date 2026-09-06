@@ -15,6 +15,18 @@ final class VideoProfileTests: XCTestCase {
                        "要与服务端 bwe.go 的 bitrateHigh 一致")
     }
 
+    /**
+     预设表：按分辨率从低到高，与 Android 的 `IMVideoProfile.PRESETS` 同名同序。
+
+     **档位名是持久化的键**（Demo 把选中的档位按名字存进 UserDefaults / SharedPreferences，
+     杀掉 app 再进来照名字认回来），所以名字重了或者顺序变了，两端就会各存各的。
+    */
+    func testPresetsAreOrderedAndUniquelyNamed() {
+        XCTAssertEqual(IMVideoProfile.presets.map(\.name), ["360p", "720p", "1080p"])
+        XCTAssertTrue(IMVideoProfile.presets.contains { $0.name == IMVideoProfile.default.name },
+                      "缺省档位必须在预设表里，否则设置页上一个勾都不打")
+    }
+
     /// simulcast 三层：h 满额、m 三分之一、l 十分之一（协议 §3.5）。
     func testSimulcastLayersScaleWithProfile() {
         let layers = IMVideoProfile.p1080.simulcastLayers
