@@ -35,6 +35,12 @@ import Foundation
     case kickedOut = 1104
     /// 1105 `session_not_resumable` —— session_id 无效或超出 30s 恢复窗口
     case sessionNotResumable = 1105
+    /// 1106 `app_disabled` —— 票据合法但该 app_id 已被停用（宿主在控制台停用了整个应用）
+    ///
+    /// **与 1101/1102 不是一回事**：那两个是「票有问题，换一张再来」，
+    /// 这个是「票没问题，是这个应用被停了」——端上该显示「服务已停用」
+    /// 而不是把人送回登录页反复重试。
+    case appDisabled = 1106
     /// 1201 `room_not_found` —— 房间不存在或已关闭
     case roomNotFound = 1201
     /// 1202 `room_full` —— 超出 max_participants
@@ -153,6 +159,7 @@ extension IMErrorCode {
         .notAuthenticated: Definition(name: "not_authenticated", message: "not authenticated", retryable: false, isLocal: false),
         .kickedOut: Definition(name: "kicked_out", message: "kicked out", retryable: false, isLocal: false),
         .sessionNotResumable: Definition(name: "session_not_resumable", message: "session not resumable", retryable: false, isLocal: false),
+        .appDisabled: Definition(name: "app_disabled", message: "application disabled", retryable: false, isLocal: false),
         .roomNotFound: Definition(name: "room_not_found", message: "room not found", retryable: false, isLocal: false),
         .roomFull: Definition(name: "room_full", message: "room is full", retryable: false, isLocal: false),
         .notInRoom: Definition(name: "not_in_room", message: "not in room", retryable: false, isLocal: false),
