@@ -51,9 +51,17 @@ final class Heartbeat {
     /// missedBeats 供测试与诊断观察。
     var missedBeats: Int { missed }
 
+    /// tick 每个周期跑一次：先记一次静默，够数就判死，否则再敲一次 ping。
+    ///
+    /// **判据是 `>=` 不是 `>`。** 写成 `>` 的话第 3 个周期还在发 ping，
+    /// 要到第 4 个（默认 15s × 4 = 60s）才判死，而协议 §1.3 写的是
+    /// 「连续 3 个周期（45s）未收到对端任何帧即判定连接死亡」。
+    /// 差这 15 秒在**半开连接**（NAT 老化、飞行模式、蜂窝睡死）上是实打实的：
+    /// 服务端的关闭帧根本到不了本机，本机这个定时器是唯一的探测手段，
+    /// 而这期间 Engine 还报着 `.connected`，往里发的请求只能干等 10 秒请求超时。
     private func tick() {
         missed += 1
-        if missed > Self.missLimit {
+        if missed >= Self.missLimit {
             IMRTCLog.warn("心跳超时，判定连接已死", ["missed": String(missed)])
             onDead()
             return
