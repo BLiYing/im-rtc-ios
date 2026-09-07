@@ -67,8 +67,41 @@ run_step "门禁自检（shell）" ./scripts/check-shell-portability.sh --selfte
 run_step "一致性向量可达" check_conformance_available
 run_step "swift build" swift build
 
+# swift test + **用例数对账**。
+#
+# 为什么要对账：源码里 `func testXxx` 的数量必须等于「实际执行 + 显式跳过」。
+# 对不上就说明有用例**根本没被跑到**——最常见的原因是整个测试文件挂在
+# `#if canImport(UIKit)` 里，而这一步跑在 macOS 上，于是它安静地贡献 0 个用例。
+# 这类假绿比失败可怕得多：面板全绿，而那部分代码从来没被验过。
+# （真踩过：ProfileResolverTests 第一版就是这样，7 个用例一个没跑。）
+swift_test_with_census() {
+  local log; log=$(mktemp)
+  swift test 2>&1 | tee "$log"
+  local status=${PIPESTATUS[0]}
+  [ "$status" -eq 0 ] || { rm -f "$log"; return "$status"; }
+
+  # 声明数：去重后统计（同名用例在不同类里各算一个，故连类名一起去重不现实，
+  # 这里按「函数名去重」——足够抓住整文件被跳过这种量级的差异）。
+  local declared executed skipped
+  declared=$(grep -rho "func test[A-Za-z0-9_]*" Tests/ | sort -u | wc -l | tr -d ' ')
+  executed=$(grep -oE "Executed [0-9]+ tests" "$log" | tail -1 | grep -oE "[0-9]+")
+  skipped=$(grep -oE "with [0-9]+ test[s]? skipped" "$log" | tail -1 | grep -oE "[0-9]+")
+  rm -f "$log"
+  : "${executed:=0}"; : "${skipped:=0}"
+
+  if [ "$declared" -ne "$((executed + skipped))" ]; then
+    echo ""
+    echo "  ✗ 用例数对不上：源码声明 ${declared}，实际执行 ${executed} + 跳过 ${skipped}"
+    echo "    有用例没被跑到。最常见原因：整个测试文件挂在 #if canImport(UIKit) 下，"
+    echo "    而这一步跑在 macOS 上——它会安静地贡献 0 个用例，面板照样全绿。"
+    return 1
+  fi
+  echo "  用例数对账：声明 ${declared} = 执行 ${executed} + 跳过 ${skipped} ✓"
+  return 0
+}
+
 if [ "${BUILD_ONLY:-}" != "1" ]; then
-  run_step "swift test" swift test
+  run_step "swift test（含用例数对账）" swift_test_with_census
 fi
 
 # Demo 为 iOS 编译。**不启动模拟器**——`generic/platform=iOS Simulator` 是只编译不跑。
