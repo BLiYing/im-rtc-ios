@@ -286,3 +286,17 @@ Web 端的 uikit 可以直接对照抄结构（`packages/call-uikit-react/src/la
   swift test --filter CallFSMTests # 只跑某一份向量
   RTC_CONFORMANCE_DIR=/path ./scripts/test.sh   # 向量不在同级目录时
   ```
+
+
+---
+
+# 2026-09-08 搬入：上一轮（已完成）
+
+## 上一轮
+
+**握手被拒就一次放弃（同日，已提交 71c0fcd）**。原先的放弃逻辑只认关闭码 4401，
+不认 `sys.hello` 应答里的错误码，于是 1004 走的是「无限退避重连」那条路。
+现在按 `IMErrorCode.isRetryable` 分流，不可重试的一次就停并抛
+`IMKickedOutReason.configRejected`；闩是 `state = .closed`。
+五端契约，Web 同轮补齐，**桌面端仍缺**（它的 `onKickedOut` 没有原因参数，
+补它是公开 API/ABI 变更）。状态见 `CLIENT_PARITY.md` v1.17。

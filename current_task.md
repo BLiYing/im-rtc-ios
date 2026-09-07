@@ -31,15 +31,6 @@ CI 上分不清是断言失败还是环境卡了。现在用 `expectation` + `ti
 **并行**：ObjC 侧的 `NSError` 桥接（`IMRTCErrorDomain` / `IMRTCErrorNameKey` /
 `IMRTCErrorInfo`）由另一轮同时在做，`DeviceIDTests` 里那两条 ObjC 视角的用例来自那一轮。
 
-## 上一轮
-
-**握手被拒就一次放弃（同日，已提交 71c0fcd）**。原先的放弃逻辑只认关闭码 4401，
-不认 `sys.hello` 应答里的错误码，于是 1004 走的是「无限退避重连」那条路。
-现在按 `IMErrorCode.isRetryable` 分流，不可重试的一次就停并抛
-`IMKickedOutReason.configRejected`；闩是 `state = .closed`。
-五端契约，Web 同轮补齐，**桌面端仍缺**（它的 `onKickedOut` 没有原因参数，
-补它是公开 API/ABI 变更）。状态见 `CLIENT_PARITY.md` v1.17。
-
 ## 下一步
 
 - **真机验收本轮的每一条**（清单见交互稿 **v3.1 §09 的 22 条**）：权限说明卡与被拒降级、
