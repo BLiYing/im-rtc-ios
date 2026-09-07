@@ -302,8 +302,3 @@ final class IMEventDispatcher {
         ])
     }
 }
-
-/// NSError 的 domain。**公开常量**：ObjC 宿主要靠它区分是不是我们的错误。
-public let IMRTCErrorDomain = "com.imrtc.engine"
-/// `userInfo` 里放协议错误名（snake_case）的键。
-public let IMRTCErrorNameKey = "IMRTCErrorName"

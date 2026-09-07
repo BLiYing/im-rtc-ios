@@ -114,3 +114,60 @@ final class ProtocolTests: XCTestCase {
         }
     }
 }
+
+/// `IMRTCError` 桥成 `NSError` 的形状。
+///
+/// 首批宿主 IMProgram 是 ObjC 工程，它看错误只能通过 `NSError`。
+/// Swift 的 struct Error 默认桥接是 **domain = "模块名.类型名"、code = 1、detail 丢光**，
+/// 于是宿主那套按 code 分支的处理一条都命中不了。这一组用例把形状钉死。
+final class ErrorBridgingTests: XCTestCase {
+
+    /// **code 必须是协议码**，不是默认的 1——宿主就靠它分支。
+    func testBridgesProtocolCodeNotDefaultOne() {
+        let ns = IMRTCError(.badParams, "随便什么细节") as NSError
+        XCTAssertEqual(ns.code, 1004, "桥出去的必须是协议码；1 是 Swift 的默认值，说明 CustomNSError 没生效")
+        XCTAssertEqual(ns.code, IMErrorCode.badParams.rawValue)
+    }
+
+    /// domain 必须是那个**公开常量**——ObjC 宿主靠它认「这是不是我们的错误」。
+    func testBridgesPublicDomain() {
+        let ns = IMRTCError(.tokenExpired) as NSError
+        XCTAssertEqual(ns.domain, IMRTCErrorDomain)
+        XCTAssertEqual(ns.domain, "com.imrtc.engine")
+        XCTAssertNotEqual(ns.domain, "IMCallEngine.IMRTCError", "这是默认桥接的形状，等于没修")
+    }
+
+    /// detail 要落在 `localizedDescription` 上。
+    ///
+    /// 宿主排查时最先做的就是 `NSLog(@"%@", error)`；detail 丢了，
+    /// 「device_id 只允许 [A-Za-z0-9_-]」这句话就永远到不了人眼前。
+    func testDetailSurvivesAsLocalizedDescription() {
+        let detail = "device_id 只允许 [A-Za-z0-9_-]，出现了 ' '"
+        let ns = IMRTCError(.badParams, detail) as NSError
+        XCTAssertEqual(ns.localizedDescription, detail)
+        XCTAssertNotEqual(ns.localizedDescription, "The operation couldn’t be completed.")
+    }
+
+    /// detail 为空时退回协议里那句英文 message，而不是系统的「操作无法完成」。
+    func testEmptyDetailFallsBackToProtocolMessage() {
+        let ns = IMRTCError(.roomFull) as NSError
+        XCTAssertEqual(ns.localizedDescription, IMErrorCode.roomFull.message)
+        XCTAssertFalse(ns.localizedDescription.isEmpty)
+    }
+
+    /// ObjC 那份常量必须与 Swift 全局常量同值。
+    ///
+    /// Swift 全局常量对 ObjC 不可见（生成的头文件里没有它），所以 `IMRTCErrorInfo`
+    /// 另挂了一份。两份一旦漂开，ObjC 宿主的 domain 比对就会静默失败。
+    func testObjCConstantsMatchSwiftGlobals() {
+        XCTAssertEqual(IMRTCErrorInfo.domain, IMRTCErrorDomain)
+        XCTAssertEqual(IMRTCErrorInfo.nameKey, IMRTCErrorNameKey)
+        XCTAssertEqual((IMRTCError(.badParams, "x") as NSError).domain, IMRTCErrorInfo.domain)
+    }
+
+    /// snake_case 的错误名也要带上——协议里那张表是按名字写的。
+    func testCarriesProtocolNameInUserInfo() {
+        let ns = IMRTCError(.badParams, "x") as NSError
+        XCTAssertEqual(ns.userInfo[IMRTCErrorNameKey] as? String, "bad_params")
+    }
+}

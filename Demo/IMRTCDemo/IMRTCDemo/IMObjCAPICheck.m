@@ -54,10 +54,30 @@
     NSLog(@"[objc] 缺省档位 %@", [IMVideoProfile default].name);
 }
 
+// device_id 的入参校验（协议 §2.5）。宿主可以不等 login 就自己先验一遍。
+- (void)checkDeviceIDAPI {
+    // 用 UIDevice.current.name 当 device_id 是最常见的坑：默认叫「张三的 iPhone」，
+    // 中文加空格，两条规则一起犯。identifierForVendor 的 UUID 反倒是合规的。
+    NSError *err = nil;
+    if (![IMDeviceID checkDeviceID:@"张三的 iPhone" error:&err]) {
+        // 码与服务端拒绝时是同一个 1004，宿主不用为「本地拦的」和「服务端拒的」写两遍。
+        NSLog(@"[objc] device_id 不合规 code=%ld name=%@ detail=%@",
+              (long)err.code, err.userInfo[IMRTCErrorInfo.nameKey], err.localizedDescription);
+    }
+    // 上限是公开常量：宿主拿它裁自己生成的 id，别把 64 抄进自己代码里。
+    NSLog(@"[objc] device_id 上限 %ld 字节", (long)IMDeviceID.maxBytes);
+}
+
 - (void)checkAsyncAPI {
     // Swift 的 async 方法在 ObjC 里是 completionHandler 形式。
     [_engine login:@"token" completionHandler:^(NSError * _Nullable error) {
-        if (error != nil) { return; }
+        // 登录失败要能分支：domain 认「是不是我们的错」，code 是协议码（如 1004）。
+        if (error != nil) {
+            if ([error.domain isEqualToString:IMRTCErrorInfo.domain] && error.code == 1004) {
+                NSLog(@"[objc] 入参不对：%@", error.localizedDescription);
+            }
+            return;
+        }
         [self->_engine call:@[@"bob"] mediaType:@"video" isGroup:NO completionHandler:^{}];
         [self->_engine joinRoom:@"r-1" roomToken:@"rt" autoSubscribe:YES completionHandler:^{}];
         [self->_engine leaveRoomWithCompletionHandler:^{}];

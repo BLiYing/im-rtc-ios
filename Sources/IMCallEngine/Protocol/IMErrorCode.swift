@@ -221,3 +221,69 @@ extension IMRTCError: CustomStringConvertible {
         detail.isEmpty ? "\(code.name)(\(code.rawValue))" : "\(code.name)(\(code.rawValue)): \(detail)"
     }
 }
+
+/// NSError 的 domain。**公开常量**：ObjC 宿主要靠它区分是不是我们的错误。
+///
+/// 放在协议层而不是 Facade 层：`IMRTCError` 自己要用它做桥接（见下面的
+/// `CustomNSError`），依赖只能朝下指。
+public let IMRTCErrorDomain = "com.imrtc.engine"
+/// `userInfo` 里放协议错误名（snake_case）的键。
+public let IMRTCErrorNameKey = "IMRTCErrorName"
+
+/**
+ 上面两个常量的 ObjC 取值入口。
+
+ # 为什么要多这一层
+
+ Swift 的**全局常量根本不会出现在生成的 `IMCallEngine-Swift.h` 里**——
+ `public let IMRTCErrorDomain` 对 ObjC 宿主等于不存在，写 `IMRTCErrorDomain`
+ 只会得到 `use of undeclared identifier`。而「靠 domain 认这是不是我们的错误」
+ 恰恰是这条常量**写给 ObjC 宿主**的用法，首批宿主 IMProgram 就是 ObjC 工程。
+ 全局常量换不了形态（Swift 没有 `@objc let` 这种东西），只能再挂一份到类上。
+
+ 两边是同一个值，有用例钉住（`ErrorBridgingTests`），不会漂。
+ */
+@objc(IMRTCErrorInfo)
+public final class IMRTCErrorInfo: NSObject {
+    /// 等同于 `IMRTCErrorDomain`。ObjC 写 `IMRTCErrorInfo.domain`。
+    @objc public static let domain = IMRTCErrorDomain
+    /// 等同于 `IMRTCErrorNameKey`。ObjC 写 `IMRTCErrorInfo.nameKey`。
+    @objc public static let nameKey = IMRTCErrorNameKey
+
+    /// 纯命名空间，不给实例。
+    private override init() { super.init() }
+}
+
+/**
+ 桥成 `NSError` 时保住 code 与 detail。
+
+ # 不写这一段的后果
+
+ Swift 的 struct Error 默认桥接是 **domain = "模块名.类型名"、code = 1**，
+ `detail` 直接丢掉。于是 `login()` 抛出去的 `bad_params`，ObjC 宿主拿到的是
+ `IMCallEngine.IMRTCError` / `1`，`localizedDescription` 是系统那句
+ 「The operation couldn't be completed.」——**按 code 分支的错误处理一条都命中不了**，
+ 而 `IMDeviceID` 那句「device_id 只允许 [A-Za-z0-9_-]」也到不了宿主手里。
+ 首批宿主 IMProgram 是 ObjC 工程，`login:completionHandler:` 就是它唯一的登录入口。
+
+ # 为什么 `NSLocalizedDescriptionKey` 放 detail
+
+ 宿主排查时最先做的动作就是把 error 整个打进日志、或者把 `localizedDescription`
+ 直接贴到界面上。detail 为空才退回协议里那句英文 `message`（见 §7 的错误表），
+ 至少不是「操作无法完成」。
+
+ - Note: detail 是**给开发者定位用的内部信息**，不对外透传（协议 §7）——
+   发给对端的 `sys.error` 帧里依旧只有 code 与 name，这里桥的是本地错误对象。
+ */
+extension IMRTCError: CustomNSError {
+    public static var errorDomain: String { IMRTCErrorDomain }
+
+    public var errorCode: Int { code.rawValue }
+
+    public var errorUserInfo: [String: Any] {
+        [
+            NSLocalizedDescriptionKey: detail.isEmpty ? code.message : detail,
+            IMRTCErrorNameKey: code.name,
+        ]
+    }
+}
