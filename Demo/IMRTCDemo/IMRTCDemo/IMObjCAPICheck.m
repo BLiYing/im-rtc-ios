@@ -80,8 +80,18 @@
     if (code == 4401) { [engine updateToken:@"refreshed-token"]; }
 }
 
-- (void)callEngineDidGetKickedOut:(IMCallEngine *)engine {
-    NSLog(@"[objc] 登录态失效，回登录页");
+- (void)callEngine:(IMCallEngine *)engine wasKickedOutFor:(IMKickedOutReason)reason {
+    // 两种原因两种处置——ObjC 侧也要能对枚举分支。
+    if (reason == IMKickedOutReasonAuthExpired) {
+        NSLog(@"[objc] 票不好使，取新票重登");
+    } else {
+        NSLog(@"[objc] 账号在别处登录或被吊销，回登录页");
+    }
+}
+
+- (void)callEngine:(IMCallEngine *)engine tokenWillExpireAt:(int64_t)expiresAtMS {
+    // 去自家后台换票，再带着新的到期时刻推回来。
+    [engine updateToken:@"refreshed-token" expiresAtMS:expiresAtMS + 43200000];
 }
 
 - (void)callEngine:(IMCallEngine *)engine callDidBegin:(NSString *)callID roomID:(NSString *)roomID

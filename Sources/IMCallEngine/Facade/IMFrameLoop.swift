@@ -95,6 +95,16 @@ actor IMFrameLoop {
              状态机那条要是带上码就会是一个**假的 4403**。
              */
             if event.callback == "onDisconnected" { continue }
+            /*
+             **`onKickedOut` 同理由连接层独占。**
+
+             状态机那一份不带原因，而宿主真正需要的是**为什么被踢**：`.takenOver`
+             （被顶号/被吊销，回登录页）与 `.authExpired`（票的问题，换票重来）处置相反。
+             状态机不可能知道这个——它只收到一个 `ws_closed_4403` 内部事件，
+             而「鉴权失败到顶」也复用了同一个内部事件。两边都发的话宿主会收到两条，
+             其中一条还没有 reason。（Web 端就是在这里踩了双抛。）
+            */
+            if event.callback == "onKickedOut" { continue }
             dispatcher.emit(event)
         }
         for frame in result.send {

@@ -363,7 +363,7 @@ public final class IMCallOverlayViewController: UIViewController {
 
     private func renderAudio(_ state: IMCallViewState) {
         let peer = state.participants.first
-        audioStage.apply(uid: state.peerUID, name: state.peerUID.isEmpty ? (peer?.uid ?? "通话中") : state.peerUID,
+        audioStage.apply(uid: state.peerUID, name: imResolvedName(controller.profileResolver, uid: state.peerUID, fallback: state.peerUID.isEmpty ? (peer?.uid ?? "通话中") : state.peerUID),
                          status: statusLine(state), isRinging: state.phase == .outgoing,
                          networkLevel: peer?.networkLevel ?? 0,
                          // 接通之后名字与时长归标题栏，中间只留头像——两处各走各的计时是重复也是打架。
@@ -391,9 +391,12 @@ public final class IMCallOverlayViewController: UIViewController {
          **1v1 不做发言高亮**（绿描边 + 绿名牌）：只有两个人，谁在说话本来就一目了然，
          而那圈绿边压在全屏画面上只会显得像出了什么问题。九宫格里才需要它。
         */
-        remote.apply(uid: peer.uid, label: peer.uid, hasVideo: peer.hasVideo, hasAudio: peer.hasAudio,
+        remote.apply(uid: peer.uid,
+                     label: imResolvedName(controller.profileResolver, uid: peer.uid, fallback: peer.uid),
+                     hasVideo: peer.hasVideo, hasAudio: peer.hasAudio,
                      isSpeaking: false, networkLevel: peer.networkLevel,
-                     avatarSize: state.isSwapped ? 44 : IMKitTheme.current.avatarLarge)
+                     avatarSize: state.isSwapped ? 44 : IMKitTheme.current.avatarLarge,
+                     avatarImage: imResolvedAvatar(controller.profileResolver, uid: peer.uid))
         applySelfTile(state, avatarSize: state.isSwapped ? IMKitTheme.current.avatarLarge : 44)
         pinFull(full)
         pip.setContent(small)
@@ -416,8 +419,11 @@ public final class IMCallOverlayViewController: UIViewController {
         ordered.append(selfTile)
         for p in visible {
             let tile = tiles[p.uid] ?? makeTile(for: p.uid)
-            tile.apply(uid: p.uid, label: p.uid, hasVideo: p.hasVideo, hasAudio: p.hasAudio, isSpeaking: p.isSpeaking,
-                       isRinging: !p.hasAccepted, settled: p.settled, networkLevel: p.networkLevel)
+            tile.apply(uid: p.uid,
+                       label: imResolvedName(controller.profileResolver, uid: p.uid, fallback: p.uid),
+                       hasVideo: p.hasVideo, hasAudio: p.hasAudio, isSpeaking: p.isSpeaking,
+                       isRinging: !p.hasAccepted, settled: p.settled, networkLevel: p.networkLevel,
+                       avatarImage: imResolvedAvatar(controller.profileResolver, uid: p.uid))
             ordered.append(tile)
         }
         /*

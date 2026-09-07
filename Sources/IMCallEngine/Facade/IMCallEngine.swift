@@ -122,13 +122,18 @@ import Foundation
 
      在 `didDisconnect` 里看到 `code == 4401` 就去取一枚新票、调这个方法。
      重连是已经排好的（第一档 1 秒起），所以只要赶在下一次尝试之前调到就行；
-     连续 3 次鉴权失败之后 Engine 会抛 `callEngineDidGetKickedOut` 收手，
+     连续 3 次鉴权失败之后 Engine 会抛 `callEngine(_:wasKickedOutFor:)`（`.authExpired`）收手，
      那时只能重新 `login`。
 
      连上着的时候调它也是安全的（比如票快过期了提前换）——当前连接不受影响。
      */
+    @objc public func updateToken(_ token: String, expiresAtMS: Int64) {
+        currentConnection?.updateToken(token, expiresAtMS: expiresAtMS)
+    }
+
+    /// 不带到期时刻的旧形态：定时器留到下一次 `sys.hello.ok` 再武装。
     @objc public func updateToken(_ token: String) {
-        currentConnection?.updateToken(token)
+        currentConnection?.updateToken(token, expiresAtMS: 0)
     }
 
     /// state 是状态机的当前快照，供 UI 渲染。
@@ -413,9 +418,15 @@ import Foundation
                 "code": NSNumber(value: code), "will_reconnect": NSNumber(value: willReconnect),
             ])
         }
-        events.onKickedOut = { [weak self] in
+        events.onKickedOut = { [weak self] reason in
             guard let self else { return }
+            // 状态机只认「被踢了」这一件事；原因是给宿主做处置判断的，两者分开走
+            // （IMFrameLoop 里刻意不外发状态机那份 onKickedOut）。
             Task { await self.loop.dispatch(.internalEvent(name: "ws_closed_4403")) }
+            self.dispatcher.emitKickedOut(reason)
+        }
+        events.onTokenWillExpire = { [weak self] expiresAtMS in
+            self?.dispatcher.emitTokenWillExpire(expiresAtMS)
         }
         events.onError = { [weak self] error in
             self?.dispatcher.emit(IMEmittedEvent("onError", [

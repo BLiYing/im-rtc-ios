@@ -63,6 +63,7 @@ public final class IMCallWindow {
         if wanted == .banner, let banner = window?.rootViewController?.view.subviews
             .first as? IMIncomingBanner {
             banner.apply(caller: state.participants.first?.uid ?? state.peerUID,
+                         resolver: controller.profileResolver,
                          mediaType: state.mediaType, isGroup: state.isGroup,
                          cameraOn: state.selfState.cameraOn)
         }
@@ -189,6 +190,7 @@ public final class IMCallWindow {
                              state: IMCallViewState) {
         let banner = IMIncomingBanner()
         banner.apply(caller: state.participants.first?.uid ?? state.peerUID,
+                         resolver: controller.profileResolver,
                      mediaType: state.mediaType, isGroup: state.isGroup,
                      cameraOn: state.selfState.cameraOn)
         banner.onAccept = { [weak self] in self?.controller.accept() }

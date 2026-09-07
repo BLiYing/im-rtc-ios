@@ -18,7 +18,7 @@ import Foundation
 
 /// 一个公开事件的名字。**与 `IMCallEngineDelegate` 的方法一一对应**。
 @objc public enum IMCallEventName: Int, Sendable {
-    case connected, disconnected, kickedOut, error
+    case connected, disconnected, kickedOut, tokenWillExpire, error
     case callReceived, callBegin, callEnd
     case callCancelled, callRejected, callBusy, callNoAnswer, callMissed, handledOnOtherDevice
     case userEnter, userLeave, userAccept, userReject, userNoResponse
@@ -41,6 +41,7 @@ extension IMCallEventName {
         case .connected: return "connected"
         case .disconnected: return "disconnected"
         case .kickedOut: return "kickedOut"
+        case .tokenWillExpire: return "tokenWillExpire"
         case .error: return "error"
         case .callReceived: return "callReceived"
         case .callBegin: return "callBegin"
@@ -126,6 +127,17 @@ final class IMEventDispatcher {
         deliver(IMCallEvent(name, event.args.mapValues(Self.plain)))
     }
 
+    /// emitKickedOut 分发「被踢」。**原因只有连接层知道**（它才看得见关闭码，
+    /// 而且「鉴权失败到顶」复用了同一个内部事件），所以状态机那份在 IMFrameLoop 里被滤掉。
+    func emitKickedOut(_ reason: IMKickedOutReason) {
+        deliver(IMCallEvent(.kickedOut, ["reason": NSNumber(value: reason.rawValue)]))
+    }
+
+    /// emitTokenWillExpire 分发「票快到期了」。
+    func emitTokenWillExpire(_ expiresAtMS: Int64) {
+        deliver(IMCallEvent(.tokenWillExpire, ["expires_at_ms": NSNumber(value: expiresAtMS)]))
+    }
+
     /// emitConnectionEvent 分发连接层自己产生的事件（关闭码只有它知道）。
     func emitConnectionEvent(_ name: IMCallEventName, _ payload: [String: Any]) {
         deliver(IMCallEvent(name, payload))
@@ -174,7 +186,11 @@ final class IMEventDispatcher {
         case .disconnected:
             d.callEngine?(e, didDisconnect: num("code"), willReconnect: flag("will_reconnect"))
         case .kickedOut:
-            d.callEngineDidGetKickedOut?(e)
+            // reason 走 payload：连接层是唯一知道它的人（见 emitKickedOut）。
+            let raw = num("reason")
+            d.callEngine?(e, wasKickedOutFor: IMKickedOutReason(rawValue: raw) ?? .takenOver)
+        case .tokenWillExpire:
+            d.callEngine?(e, tokenWillExpireAt: (p["expires_at_ms"] as? NSNumber)?.int64Value ?? 0)
         case .error:
             d.callEngine?(e, didFailWithError: Self.nsError(p))
 

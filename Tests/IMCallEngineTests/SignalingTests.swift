@@ -159,8 +159,9 @@ final class SignalingTests: XCTestCase {
     /// 被踢要抛 onKickedOut，且**不重连**。
     func testKickedOutDoesNotReconnect() async throws {
         let kicked = CounterBox()
+        let reasons = ReasonBox()
         var events = IMConnectionEvents()
-        events.onKickedOut = { kicked.bump() }
+        events.onKickedOut = { reason in kicked.bump(); reasons.record(reason) }
         events.onDisconnected = { _, willReconnect in
             XCTAssertFalse(willReconnect, "被踢之后不该重连")
         }
@@ -170,6 +171,8 @@ final class SignalingTests: XCTestCase {
         ws.closeFromServer(IMCloseCode.kickedOut)
         try await Task.sleep(nanoseconds: 100_000_000)
         XCTAssertEqual(kicked.value, 1)
+        // 4403 是「被顶号/被吊销」，宿主该回登录页——与「票不好使」处置相反。
+        XCTAssertEqual(reasons.all, [.takenOver])
         XCTAssertEqual(connection.currentState, .closed)
     }
 
@@ -209,9 +212,10 @@ final class SignalingTests: XCTestCase {
     /// 「废票不会自己敲一整天」这条规则被守住。
     func testConsecutiveAuthFailuresGiveUp() async throws {
         let kicked = CounterBox()
+        let reasons = ReasonBox()
         let lastWillReconnect = CounterBox()
         var events = IMConnectionEvents()
-        events.onKickedOut = { kicked.bump() }
+        events.onKickedOut = { reason in kicked.bump(); reasons.record(reason) }
         events.onDisconnected = { _, willReconnect in
             if willReconnect { lastWillReconnect.bump() }
         }
@@ -235,6 +239,8 @@ final class SignalingTests: XCTestCase {
         ws.closeFromServer(IMCloseCode.unauthorized)
         try await Task.sleep(nanoseconds: 200_000_000)
         XCTAssertEqual(kicked.value, 1)
+        // 4401 用尽是票的问题，宿主取一枚新票重登即可，不必把用户赶回登录页。
+        XCTAssertEqual(reasons.all, [.authExpired])
         XCTAssertEqual(connection.currentState, .closed)
         XCTAssertEqual(lastWillReconnect.value, 2, "到顶那次不该再说「会重连」")
 
@@ -340,6 +346,14 @@ final class EventBox: @unchecked Sendable {
     private var items: [String] = []
     func append(_ value: String) { lock.lock(); items.append(value); lock.unlock() }
     func all() -> [String] { lock.lock(); defer { lock.unlock() }; return items }
+}
+
+/// 记录「被踢」的原因序列。原因决定宿主的处置，两种情况完全相反，必须能断言得开。
+final class ReasonBox: @unchecked Sendable {
+    private let lock = NSLock()
+    private var items: [IMKickedOutReason] = []
+    func record(_ reason: IMKickedOutReason) { lock.lock(); items.append(reason); lock.unlock() }
+    var all: [IMKickedOutReason] { lock.lock(); defer { lock.unlock() }; return items }
 }
 
 final class CounterBox: @unchecked Sendable {

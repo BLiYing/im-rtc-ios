@@ -14,6 +14,8 @@ public final class IMAvatarDiscView: UIView {
 
     private let gradient = CAGradientLayer()
     private let initial = UILabel()
+    /// 宿主给的头像图。**盖在渐变与首字母之上**——有图时就不该看见色块。
+    private let photo = UIImageView()
 
     public override init(frame: CGRect) {
         super.init(frame: frame)
@@ -27,9 +29,19 @@ public final class IMAvatarDiscView: UIView {
         initial.textColor = IMKitTheme.current.primaryText
         initial.translatesAutoresizingMaskIntoConstraints = false
         addSubview(initial)
+        // 图放在首字母之后加，层级才在它上面（同一个坑：渐变当年就是加错了顺序）。
+        photo.contentMode = .scaleAspectFill
+        photo.clipsToBounds = true
+        photo.isHidden = true
+        photo.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(photo)
         NSLayoutConstraint.activate([
             initial.centerXAnchor.constraint(equalTo: centerXAnchor),
             initial.centerYAnchor.constraint(equalTo: centerYAnchor),
+            photo.topAnchor.constraint(equalTo: topAnchor),
+            photo.leadingAnchor.constraint(equalTo: leadingAnchor),
+            photo.trailingAnchor.constraint(equalTo: trailingAnchor),
+            photo.bottomAnchor.constraint(equalTo: bottomAnchor),
         ])
     }
 
@@ -49,7 +61,16 @@ public final class IMAvatarDiscView: UIView {
      - Parameter name: 显示名，取首字母用。
      - Parameter size: 直径，字号按它的 1/3 走。
      */
-    public func apply(key: String, name: String, size: CGFloat) {
+    public func apply(key: String, name: String, size: CGFloat, image: UIImage? = nil) {
+        photo.image = image
+        photo.isHidden = image == nil
+        initial.isHidden = image != nil
+        guard image == nil else { return }
+        /*
+         **底色按 key（uid）取，首字母按 name（显示名）取。**
+         底色跟 uid 走才能五端稳定（规范 §02）——同一个人在谁的屏幕上都是同一个颜色；
+         而显示名是每台设备各算各的（备注！），拿它取色会让同一个人换台设备就变个颜色。
+        */
         initial.text = imAvatarInitial(name)
         initial.font = .systemFont(ofSize: (size / 3).rounded(), weight: .bold)
         let (top, bottom) = IMKitTheme.avatarGradient(for: key.isEmpty ? name : key)

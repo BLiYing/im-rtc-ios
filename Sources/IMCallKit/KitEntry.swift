@@ -43,6 +43,13 @@ public let IMCallKitVersion = "0.0.1"
      */
     @objc public var inviteCandidates: [IMInviteCandidate] = []
 
+    /// uid → 本机该显示的名字与头像（见 `IMProfileResolving`）。
+    ///
+    /// **不设就退化成显示 uid**，与没有这个钩子时行为一致。
+    /// 宿主异步解析回来后调 `IMCallKit.reloadProfiles(_:)` 重画。
+    ///
+    @objc public weak var profileResolver: IMProfileResolving?
+
     @objc public override init() {
         super.init()
     }
@@ -65,6 +72,7 @@ public let IMCallKitVersion = "0.0.1"
         self.config = config
         self.controller = IMCallController(engine: engine)
         self.controller.inviteCandidates = config.inviteCandidates
+        self.controller.profileResolver = config.profileResolver
         super.init()
     }
 
@@ -81,6 +89,11 @@ public let IMCallKitVersion = "0.0.1"
      一行调用即可。**界面的出现与消失由状态驱动**——宿主只管调
      `controller.placeCall` / `joinMeeting`，Kit 自己接住剩下的。
      */
+    /// 宿主的身份解析回来了，重画用到这些 uid 的地方（见 `IMProfileResolving`）。
+    @objc public func reloadProfiles(_ uids: [String]) {
+        controller.reloadProfiles(uids)
+    }
+
     @objc public func start() {
         IMRTCLog.info("[Kit] 启动", ["version": IMCallKitVersion])
         #if canImport(UIKit)
