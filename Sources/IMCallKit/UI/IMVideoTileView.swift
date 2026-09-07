@@ -139,11 +139,14 @@ public final class IMVideoTileView: UIView {
     /// - Parameter isMirrored: 本端预览水平镜像（人照镜子的习惯）；远端不镜像。
     public func apply(uid: String, label: String, hasVideo: Bool, hasAudio: Bool, isSpeaking: Bool,
                       isRinging: Bool = false, settled: IMSettledOutcome = .none, networkLevel: Int = 0,
-                      avatarSize: CGFloat = 44, isMirrored: Bool = false) {
+                      avatarSize: CGFloat = 44, isMirrored: Bool = false,
+                      avatarImage: UIImage? = nil) {
         let theme = IMKitTheme.current
         self.uid = uid
         nameLabel.text = label
-        avatarDisc.apply(key: uid, name: label, size: avatarSize)
+        // key 用 uid、name 用已解析的显示名：底色跟 uid 走才能五端稳定，
+        // 而显示名各机各算（备注），拿它取色会让同一个人换台设备就变色。
+        avatarDisc.apply(key: uid, name: label, size: avatarSize, image: avatarImage)
         avatarSizeConstraints.forEach { $0.constant = avatarSize }
         // 没画面时露出头像。**用 isHidden 不用改层级**：层级一动，媒体层挂在 renderView 上的渲染视图会跟着重建。
         avatarDisc.isHidden = hasVideo

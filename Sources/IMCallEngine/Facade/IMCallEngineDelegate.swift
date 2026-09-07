@@ -36,7 +36,7 @@ import Foundation
     ///
     /// `code == 4401` 是宿主**唯一需要特殊处理**的一个：去换一枚新的接入票，
     /// 调 `updateToken(_:)`（协议 §1.5）。连续三次失败之后 Engine 会抛
-    /// `callEngineDidGetKickedOut` 收手。
+    /// `callEngine(_:wasKickedOutFor:)`（reason 为 `.authExpired`）收手。
     @objc optional func callEngine(_ engine: IMCallEngine,
                                    didDisconnect code: Int, willReconnect: Bool)
 

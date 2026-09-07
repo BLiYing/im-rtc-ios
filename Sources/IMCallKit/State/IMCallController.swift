@@ -51,6 +51,17 @@ public final class IMCallController: NSObject {
     public private(set) var promptCard: IMPromptCard?
     /// 「添加成员」的候选名单，由 `IMCallKitConfig.inviteCandidates` 灌进来。
     public var inviteCandidates: [IMInviteCandidate] = []
+    /// 身份解析器，由 `IMCallKitConfig.profileResolver` 灌进来。**弱引用**：
+    /// 宿主多半让自己的某个长生命周期对象来实现它，Kit 不该延长它的寿命。
+    public weak var profileResolver: IMProfileResolving?
+
+    /// 宿主的身份解析回来了，重画用到这些 uid 的地方。
+    ///
+    /// **参数目前只用于日志**：一次通话最多 9 个格子，整屏重画比按 uid 精细失效便宜得多，
+    /// 也少一类「漏刷某一格」的 bug。签名保留 uids 是为了将来真需要精细化时不破坏调用方。
+    public func reloadProfiles(_ uids: [String]) {
+        broadcast()
+    }
 
     let engine: IMCallEngine
     private let observers = NSHashTable<AnyObject>.weakObjects()

@@ -122,7 +122,7 @@ import Foundation
 
      在 `didDisconnect` 里看到 `code == 4401` 就去取一枚新票、调这个方法。
      重连是已经排好的（第一档 1 秒起），所以只要赶在下一次尝试之前调到就行；
-     连续 3 次鉴权失败之后 Engine 会抛 `callEngineDidGetKickedOut` 收手，
+     连续 3 次鉴权失败之后 Engine 会抛 `callEngine(_:wasKickedOutFor:)`（`.authExpired`）收手，
      那时只能重新 `login`。
 
      连上着的时候调它也是安全的（比如票快过期了提前换）——当前连接不受影响。
