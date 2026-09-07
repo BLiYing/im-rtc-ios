@@ -11,6 +11,28 @@
 
 ## 当前焦点
 
+**会话恢复之后重新协商上行（2026-09-07）**，`./scripts/test.sh` 全绿。
+
+真机断网实测抓到一条硬伤：**昨夜那个 ICE 自愈，在它唯一该生效的场景里等于不存在**。
+```
+11:48:30  PC 状态 pc=pub state=failed
+11:48:30  上行通路失败，重启 ICE
+11:48:30  动作被状态机本地拒绝  op=restart_pub_ice  room_state=reconnecting
+```
+网一断**信令也跟着断**，房间立刻变成 `reconnecting`，而 PC 要等约 30 秒才判 `failed`——
+那时 `restart_pub_ice` 被状态机拒掉，且它**不进 bufferedOps**，于是永远丢失。
+
+改法：触发点搬到**会话恢复之后**（协议 §1.4 本来就写着「客户端的 pub PC 若已失效则重发
+`room.offer{pc:"pub"}`」，只是从没实现）。`onConnected` 里 `resumed==true` → `restartPubICE()`
+\+ dispatch `restart_pub_ice`。**不查 PC 当前状态、无条件重启**：服务端那侧也是无条件重启
+`sub`，两边对称；多一次协商比漏一次自愈便宜得多。失败那一刻的旧触发点保留（信令还活着时它是对的）。
+
+**没做 / 已知限制**：本轮**没有任何真机复验**——ICE 那条尤其要真的拔网线才验得了。
+Android「无法挂断」的**根因未定**（Android 不上报日志到 logsink，只有 logcat），
+只做了「红按钮永不静默」的兜底；服务端补发一落地，那个僵尸态本身就不该再出现了。
+
+## 上一轮
+
 **上行 ICE 断了自己重连 + 补上「轨道后到要重报层上界」那个洞（2026-09-06 夜）**，
 `./scripts/test.sh` 十步全绿。
 
@@ -21,78 +43,6 @@
 
 **没做**：这两条都只有编译 + macOS 单测，**Kit 的界面代码在本仓只编得到**，
 `report(...)` 是 VC 的私有方法，没法单测；ICE 重启更要真机断网才验得了。
-
-## 上一轮
-
-**合成画面：模拟器上终于能验视频了（2026-09-06 傍晚）**，`./scripts/test.sh` 十步全绿
-（119 个 macOS 用例 + Demo 为 iOS 编译通过）。
-
-**模拟器没有摄像头**（`RTCCameraVideoCapturer.captureDevices()` 恒为空），
-于是模拟器上一切视频联调只能看头像——九宫格版式、画面通没通、层上界对不对，一条都验不了，
-非插真机不可。新增 `IMSyntheticVideoCapturer`（`RTCVideoCapturer` 子类，定时把自己画的
-`CVPixelBuffer` 推给 `RTCVideoSource`）：深色底 + 走动的秒针 + 用户名 + 墙上时钟，
-**与 Web 的 `demo/src/syntheticMedia.ts` 同一套画面语言**——画面必须是活的，
-静态图看不出「卡住了」和「通了」的区别。
-
-| 落点 | 说明 |
-|---|---|
-| `Sources/IMCallEngineWebRTC/IMSyntheticVideoCapturer.swift`（新） | 走 `CVPixelBufferPool`（每帧新建在模拟器上就是稳定的一串卡顿）；帧率上限压到 15 |
-| `IMWebRTCAdapter(videoProfile:syntheticVideo:label:)` | 多两个默认参数，`startLocalPreview` 分叉。**合成时不问摄像头权限**——模拟器上那个框毫无意义，真机上问了又不用 |
-| `DemoSession.syntheticVideo` + 拨号页身份卡的开关 | 与画质档位同一条规矩：**换了要重登才生效**（适配器是登录时造的），所以登录后开关就锁上。**模拟器默认开、真机默认关** |
-
-**「合成音视频」在 iOS 上实际是「合成视频 + 真麦克风」**：模拟器的麦克风是通的
-（转发宿主 Mac 的），而 WebRTC 的 ObjC SDK **没有注入音频采样的公开口子**——
-那要自己写 `AudioDeviceModule`（C++），而且没必要。
-
-**没做**：模拟器实测。只有编译过；这一条按老规矩等明确通知再上设备。
-
-**九宫格三端拉齐（2026-09-06）**，`./scripts/test.sh` 十步全绿（118 个 macOS 用例 + Demo 为 iOS 编译通过）。
-起因是用户在三端并排看九宫格报了五条，落点分给四个仓；本仓这一份是最轻的——iOS 的容器与刷新本来就是对的。
-
-| 改动 | 为什么 |
-|---|---|
-| **撤掉网格里的加号格**（`IMCallOverlayViewController.renderGrid`） | 加人入口只留标题栏右上角那一颗（`imCanShowInvite` 同一条判据）。同一个动作两个入口，而且加号格**占掉一个格位**——三个人的通话看起来像四个人，行列跟着多排一格。设计稿 `RTC_CALL_UI_SPEC` 差异 8 与 `UX_FLOWS §05` 已同步改（v3.3） |
-| **3~4 格在竖屏容器恒为两列**（`imGridDimensions`） | 原判据「正方形格子最大」的翻转压在手机常见比例上（3 格 ≈0.662、4 格 ≈0.495），而舞台区算出来 **iPhone 15 Pro 是 0.682（2×2）、16 Pro Max 是 0.648（一竖条）**——同一通电话换台手机就是另一种版式，而差的那点边长（2%）根本看不出来。这条是产品决定不是尺寸最优解，所以写成一句明规则；横屏不受约束 |
-| **远端格子截到 8**（`IMMaxRemoteTiles`） | **本端恒占一格**。原先 `imVisibleTiles` 按 9 截远端，会议房（服务端 `UnlimitedParticipants`，不设上限）进到第 10 个人时 iOS 会**悄悄丢掉**多出来的、Web 的 CSS grid 溢出、Android 越过 `rowCount`——同一个房间三端三种样子 |
-
-**没做**：真机实测。这三条只有 macOS 单测 + Demo 编译过，**版式的事没在设备上看过一眼**。
-
-**上一轮（2026-09-06 早）：按三端真机联调日志修根因**，`./scripts/test.sh` 十步全绿
-（115 个 macOS 用例 + Demo 为 iOS 编译通过——**Kit 的界面代码只有这一步编得到**）。
-**真机仍未验**：下面每一条都是「编得过 + 纯逻辑有单测」。
-
-| 症状（用户报的） | 根因 | 落点 |
-|---|---|---|
-| 通话中第三个人打进来，**这边的通话被拆掉**（媒体面全关、通话页收起），而对面还显示着通话中 | 状态机**不看 call_id**：忙线那条 `call.ended` 的 call_id 是**新来那通**的 | `CallStateMachine+Recv.isForAnotherCall`；新增便利事件 `onCallMissed` |
-| 群通话里被叫只看到两格，主叫却是四格 | `call.incoming` 的 `callee_ids` 一直在发，只是没人往上抛 | `handleIncoming` + `didReceiveCall(...calleeIDs:...)` |
-| **居中头像没有首字母** | 渐变是 `label.layer.insertSublayer(gradient, at: 0)` 加的，而 CALayer 的绘制顺序是「背景 → 自身内容 → 子层」——`at: 0` 只在子层之间排序，渐变照样盖在字上 | 新的 `IMAvatarDiscView`（头像盘与格子共用） |
-| 点小窗互换后**大窗一片空白** | 互换是「先钉全屏、再塞小窗」，而 `IMPipView.setContent` 无条件摘旧内容——那一刻它已经被全屏容器领养走了 | `setContent` 只摘还挂在自己身上的那个 |
-| 两端都关摄像头时**小窗整个消失** | `imPickLayout` 会退回语音版式 | 接通后的 1v1 视频恒为视频版式（没画面是格子的事，不是版式的事） |
-| 小窗入口两处、悬浮球没法挂断、呼叫页标题重复 | —— | 入口只留标题栏左上角；悬浮球加红色挂断（走 `controller.end()` 四向分派）；呼叫 / 来电页标题栏留空 |
-| **1v1 视频没有真的全屏**（上下各一条黑边） | 全屏画面钉在 `stage` 里，而 stage 是「头部下方、控制条上方」那一块 | 新的 `videoFull` 挂在整个 view 最底下一层，头部与控制条浮在它上面 |
-| 全屏画面上有一圈绿色描边 | 发言高亮 | **1v1 不做发言高亮**（绿描边 + 绿名牌），九宫格保留 |
-| 悬浮球上的挂断点不中 | 22 的圆探出球体、又贴着屏幕边缘，球吸到右边时有一半在屏幕外 | 挪到**底部居中**、放大到 28、命中区再放宽 6 |
-
-`imPickLayout` 的 `hasLocalVideo` 参数随之作废，已删。
-
-**这一轮（2026-09-06 下午）修的是 Demo 侧的两条**（都是真机才看得见的）：
-
-| 症状 | 根因 | 落点 |
-|---|---|---|
-| **点「登录」没有任何反应** | 两条路都会长成这样：① 地址或用户名为空时 `onLogin` 直接 `return`，界面一个字不变（**真机首次装机地址就是空的**）；② 请求要等（超时 10s）期间无反馈，而失败那句话落在整页最下面的 `errorLabel` 上，小屏上在折叠线以下 | 身份卡里加一行 `loginHint`：空值当场说清楚，发请求前写「登录中…」并禁用按钮，失败也写同一行 |
-| 设置里选了 1080p，**杀掉 app 再进来又回到 720p** | `DemoSession.videoProfile` 只在内存里 | 按**档位名**存 UserDefaults（档位表会改参数，存名字才认得回来）；档位表收口到 Engine 的 `IMVideoProfile.presets`，与 Android 的 `PRESETS` 同名同序 |
-
-`IMVideoProfile.presets` 是本轮唯一的公开 API 新增（`VideoProfileTests` 钉着顺序与唯一性）。
-
-`/code-review` 在同一批改动里又抓出四条，都已修：**结束画面没把全屏格子摘掉**
-（1v1 视频挂断后版式仍是 `.video`，结束原因那行字压在对方最后一帧上——Android 一直是摘的）、
-**WS 登录失败却留在「已登录」态**（`engine` 在 `engine.login` 之前就赋了值，且自动重登标记也已写下，
-现在失败走 `rollbackFailedLogin()`、标记改到成功之后才写）、
-`IMCallWindow` 里那条「横幅 5s 升级全屏」的过期注释、`IMVideoTileView` 里空的 `layoutSubviews`。
-
-**上一轮（2026-09-05）**：Kit 按设计稿 v3 落地——令牌、SF Symbols、头像 / 小窗算术、
-权限门三段式、`IMPipView` 长按拖动、九宫格与选人半屏、切后台自动 mute 摄像头。
-Engine 的 `inviteMore(_:)` / `probeMicrophone()` 也是那一轮加的。
 
 ## 下一步
 

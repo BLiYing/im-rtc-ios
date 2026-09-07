@@ -404,6 +404,26 @@ import Foundation
                     "session_id": .string(hello.sessionID),
                     "resumed": .bool(hello.resumed),
                 ]))
+                /*
+                 协议 §1.4：恢复之后媒体面要重新协商。服务端那侧主动下发
+                 `room.offer{pc:"sub"}`，而 `pub` 这条的 offerer 是本端，只能自己重发。
+
+                 **这一条不能只挂在「PC 判 failed 的那一刻」**——网一断信令也跟着断，
+                 房间立刻变成 `reconnecting`，而 PC 要等约 30 秒才判 `failed`：那时
+                 `restart_pub_ice` 会被状态机以 `invalid_state` 拒掉，而它**不进
+                 bufferedOps**，于是永远丢失。真机 2026-09-07 抓到的正是这一幕
+                 （`动作被状态机本地拒绝 op=restart_pub_ice room_state=reconnecting`），
+                 ICE 自愈在它唯一该生效的场景里等于不存在。
+
+                 **不查 PC 当前状态、无条件重启**：换了连接就等于换了网络路径，
+                 旧候选多半已废；服务端那侧也是无条件重启 `sub`，两边对称。
+                 代价是一次多余的协商，比漏掉一次自愈便宜得多。
+                 房间不在 joined 时状态机自会拒掉，不必在这里判。
+                */
+                guard hello.resumed else { return }
+                IMRTCLog.info("会话已恢复，重新协商上行", [:])
+                self.media?.restartPubICE()
+                await self.loop.dispatch(.act(op: "restart_pub_ice"))
             }
         }
         events.onEvent = { [weak self] type, data in

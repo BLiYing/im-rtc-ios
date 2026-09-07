@@ -169,6 +169,53 @@ final class FacadeTests: XCTestCase {
             .payload["resumed"] as? NSNumber, NSNumber(value: true))
     }
 
+    /*
+     **会话恢复之后必须重新协商上行**（协议 §1.4：客户端的 pub PC 若已失效
+     则重发 `room.offer{pc:"pub"}`）。
+
+     这一条不能只挂在「PC 判 failed 的那一刻」：网一断信令也跟着断，房间立刻变成
+     `reconnecting`，而 PC 要等约 30 秒才判 `failed`——那时 `restart_pub_ice`
+     会被状态机以 `invalid_state` 拒掉，且它**不进 bufferedOps**，于是永远丢失。
+     真机 2026-09-07 抓到的正是这一幕：`动作被状态机本地拒绝 op=restart_pub_ice
+     room_state=reconnecting`，ICE 自愈在它唯一该生效的场景里等于不存在。
+    */
+    func testResumeRenegotiatesTheUplink() async throws {
+        let h = makeEngine()
+        let first = try await login(h)
+        try await joinRoom(h, first)
+        first.closeFromServer(IMCloseCode.goingAway)
+        let next = try await waitForNewSocket(h.sockets, after: first)
+        next.open()
+        let hello = try await waitForFrame(next, ofType: IMFrameType.hello)
+        next.receive(helloOKFrame(reqID: hello.reqID, resumed: true))
+        try await settle()
+
+        XCTAssertTrue(h.media.calls().contains("restartPubICE"),
+                      "恢复后要让下一个上行 offer 带上 ICE restart")
+        // 光置位不发帧等于没做——必须真的补一条 room.offer{pc:"pub"} 到**新那条连接**上。
+        let offer = next.frames().last(where: { $0.type == IMFrameType.roomOffer })
+        XCTAssertNotNil(offer, "恢复后没补协商帧")
+        XCTAssertEqual(offer?.data["pc"]?.stringValue, "pub")
+    }
+
+    /// 恢复失败就不该重协商：那时房间已归零，发上去只会换回 1203。
+    func testFailedResumeDoesNotRenegotiate() async throws {
+        let h = makeEngine()
+        let first = try await login(h)
+        try await joinRoom(h, first)
+
+        first.closeFromServer(IMCloseCode.goingAway)
+        let next = try await waitForNewSocket(h.sockets, after: first)
+        next.open()
+        let hello = try await waitForFrame(next, ofType: IMFrameType.hello)
+        next.receive(helloOKFrame(reqID: hello.reqID, resumed: false))
+        try await settle()
+
+        XCTAssertFalse(h.media.calls().contains("restartPubICE"))
+        XCTAssertNil(next.frames().last(where: { $0.type == IMFrameType.roomOffer }),
+                     "恢复失败时房间已归零，不该再发协商帧")
+    }
+
     /// 断线只抛一条 disconnected，**且带得上关闭码**。
     ///
     /// 状态机也有一份 onDisconnected，但它是空载荷的（关闭码不是状态机的事）。
