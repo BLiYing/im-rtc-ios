@@ -248,6 +248,7 @@ public final class IMSignalConnection {
             guard let self else { return }
             switch result {
             case let .failure(error):
+                self.abortIfHandshakeRejected(error)
                 continuation.resume(throwing: error)
             case let .success(reply):
                 guard reply.envelope.type == IMEnvelope.okType(IMFrameType.hello) else {
@@ -269,6 +270,35 @@ public final class IMSignalConnection {
                 continuation.resume(returning: ok)
             }
         }
+    }
+
+    /// 握手被拒且**重试不可能变好**时，一次就放弃。
+    ///
+    /// 判据是错误码表里的 `retryable`，不是在这里另立一张名单——那张表是四端共用的
+    /// 一致性向量的一部分（`error_codes.json`），另立名单等于给它开了个后门。
+    ///
+    /// # 为什么不像 4401 那样给三次机会
+    ///
+    /// 4401 给三次是因为「票刚好过期」换一枚新票就能好，而重连时宿主可能已经
+    /// `updateToken` 了。这里不一样：**`device_id` 里有个空格这件事，重连一万次
+    /// 它还是有空格**。给三次机会只是把同一条错误在日志里刷三遍，把真正的原因埋掉。
+    ///
+    /// 只拦服务端应答（`sys.error`）带回来的码；超时（2004）与断线（2003）都是
+    /// retryable，照常走重连。
+    ///
+    /// `state = .closed` 就是那道闩：重连定时器的处理块只在 `.reconnecting` 时才动手，
+    /// 随后到来的 `handleClose` 也会因为它而把 `willReconnect` 判成 false。
+    private func abortIfHandshakeRejected(_ error: IMRTCError) {
+        guard !error.code.isRetryable else { return }
+        IMRTCLog.error("握手参数被拒，不再重连", [
+            "code": String(error.code.rawValue),
+            "name": error.code.name,
+        ])
+        reconnectTimer?.cancel()
+        reconnectTimer = nil
+        tokenExpiry.disarm()
+        state = .closed
+        events.onKickedOut?(.configRejected)
     }
 
     private func parseHelloOK(_ data: [String: IMJSON]) -> IMHelloOK {

@@ -11,38 +11,30 @@
 
 ## 当前焦点
 
-**会话恢复之后重新协商上行（2026-09-07）**，`./scripts/test.sh` 全绿。
+**握手被拒就一次放弃（2026-09-07）**，`./scripts/test.sh` 10 步全绿（136 用例）。
 
-真机断网实测抓到一条硬伤：**昨夜那个 ICE 自愈，在它唯一该生效的场景里等于不存在**。
-```
-11:48:30  PC 状态 pc=pub state=failed
-11:48:30  上行通路失败，重启 ICE
-11:48:30  动作被状态机本地拒绝  op=restart_pub_ice  room_state=reconnecting
-```
-网一断**信令也跟着断**，房间立刻变成 `reconnecting`，而 PC 要等约 30 秒才判 `failed`——
-那时 `restart_pub_ice` 被状态机拒掉，且它**不进 bufferedOps**，于是永远丢失。
-
-改法：触发点搬到**会话恢复之后**（协议 §1.4 本来就写着「客户端的 pub PC 若已失效则重发
-`room.offer{pc:"pub"}`」，只是从没实现）。`onConnected` 里 `resumed==true` → `restartPubICE()`
-\+ dispatch `restart_pub_ice`。**不查 PC 当前状态、无条件重启**：服务端那侧也是无条件重启
-`sub`，两边对称；多一次协商比漏一次自愈便宜得多。失败那一刻的旧触发点保留（信令还活着时它是对的）。
-
-**没做 / 已知限制**：本轮**没有任何真机复验**——ICE 那条尤其要真的拔网线才验得了。
-Android「无法挂断」的**根因未定**（Android 不上报日志到 logsink，只有 logcat），
-只做了「红按钮永不静默」的兜底；服务端补发一落地，那个僵尸态本身就不该再出现了。
-
-## 上一轮
-
-**上行 ICE 断了自己重连 + 补上「轨道后到要重报层上界」那个洞（2026-09-06 夜）**，
-`./scripts/test.sh` 十步全绿。
+补的是 Android 那条五端契约（`CLIENT_PARITY.md` v1.17）。原先 `handleClose` 的放弃逻辑
+**只认关闭码 4401**，不认 `sys.hello` 应答里的错误码：`device_id` 不合规回的是 1004 错误帧，
+于是握手抛错 → 连接断 → 普通关闭码 → 无限退避重连。真机上的样子是界面写着「登录失败」，
+日志刷满同一条错误，真正的原因被埋在里面。
 
 | 改动 | 为什么 |
 |---|---|
-| **`pub` PC failed → `restartPubICE()` + 新 act `restart_pub_ice`**（`IMCallEngine.mediaEvents` / `RoomStateMachine` / `IMWebRTCAdapter`） | 那条 PC 的 offerer 是本端，**只能自己救**；`sub` 那条由服务端救（协议 §3.3 已补规则）。不救的后果：切网 / 进电梯 / 锁屏久了，人就**永久掉出这通通话**，对端格子从此是一块黑，而界面上一切正常、谁也不挂断——真机日志里抓到过两条 PC 从某一刻起五分钟一轮地失败、再没回到 connected。做成「置一位、下一个 offer 生效」而不是「立刻发帧」：发帧是 Engine 的事，媒体层不认识信令。`restart_pub_ice` **不进 `bufferableOps`** |
-| **`report(_:layer:hasVideo:)`：轨道刚到就把去重表划掉重报一次** | `setRemoteLayer` 按 uid 找他当前的视频轨道再发帧，而**人先进来、轨道后到是常态**：`onUserEnter` 一到就摆格子并报层，那一次什么都没发出去，可去重表已经记下「报过了」——之后除非格数变化就再也不重发，服务端一直按默认的 `m` 下发。症状只是「画面卡」，一条报错都没有。（Android 走 `invalidateReportedLayer`、Web 把 `hasVideo` 放进 effect 依赖，同一条） |
+| `SignalConnection.handshake` 的 `.failure` 分支先走 `abortIfHandshakeRejected` | 判据是 `IMErrorCode.isRetryable`（四端共用的一致性向量），不另立名单。超时 2004 / 断线 2003 都是可重试，照常重连 |
+| 闩是 `state = .closed` | 重连定时器的处理块只在 `.reconnecting` 时动手，随后到来的 `handleClose` 也会因此把 `willReconnect` 判成 false |
+| `IMKickedOutReason` 加 `case configRejected = 2` | `takenOver` 是回登录页、`authExpired` 是换票重来，都救不了 `device_id` 里的空格。`@objc` 枚举加 case 会打断宿主的穷尽 `switch`——那正是想要的 |
 
-**没做**：这两条都只有编译 + macOS 单测，**Kit 的界面代码在本仓只编得到**，
-`report(...)` 是 VC 的私有方法，没法单测；ICE 重启更要真机断网才验得了。
+**测试里踩到一个空断言**：假服务端只回错误帧、不关连接，于是没有任何东西会去排下一次
+重连，`box.count` 那条**永远为真、注入 bug 也不红**。补上 `closeFromServer` 才载重
+（注入后立刻红：`("3") is not equal to ("2")`）。两个方向都验过红。
+
+## 上一轮
+
+**会话恢复之后重新协商上行（2026-09-07）**。真机断网抓到实证：`动作被状态机本地拒绝
+op=restart_pub_ice room_state=reconnecting`——网一断信令也断，房间立刻 `reconnecting`，
+而 PC 要约 30 秒才判 `failed`，那时动作被拒且**不进 bufferedOps**，永远丢失。
+改法是把触发点搬到会话恢复之后（协议 §1.4 本来就写着，只是没实现），
+`onConnected` 里 `resumed==true` → 无条件 `restartPubICE()` + dispatch。**没有真机复验。**
 
 ## 下一步
 

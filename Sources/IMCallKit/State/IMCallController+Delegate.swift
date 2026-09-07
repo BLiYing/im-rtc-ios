@@ -16,8 +16,8 @@ extension IMCallController: IMCallEngineDelegate {
     }
 
     public func callEngine(_ engine: IMCallEngine, wasKickedOutFor reason: IMKickedOutReason) {
-        // Kit 对两种原因的界面表达一致（都是「连接没了」）；**分岔是宿主的事**——
-        // 回登录页还是静默换票重登，只有宿主知道自己的账号体系怎么走。
+        // Kit 对三种原因的界面表达一致（都是「连接没了」）；**分岔是宿主的事**——
+        // 回登录页、静默换票重登、还是去后台改配置，只有宿主知道该走哪条。
         apply(.connection(.lost))
     }
 

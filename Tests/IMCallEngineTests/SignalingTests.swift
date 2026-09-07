@@ -282,7 +282,84 @@ final class SignalingTests: XCTestCase {
         XCTAssertEqual(IMBackoff.delayMS(attempt: 0, random: { 1 }), 1_200)
     }
 
+    // MARK: - 握手被拒（retryable=false）
+
+    /// 握手被拒之后不该再重连——这是 Pixel 2 XL 那个 bug 的通用形状。
+    ///
+    /// 安卓那边 `Build.MODEL` 里带空格 → device_id 不合规 → 服务端回 1004。参数不会
+    /// 因为重连而改变，可当时四端都在无限重连：界面只写「登录失败」，日志刷满同一条
+    /// 错误，真正的原因被埋在里面。
+    ///
+    /// **必须走重连路径**：首次 `connect()` 失败只是把错误抛给宿主，重连器压根没参与，
+    /// 在那里数 socket 恒等于 1，测不出「会不会无限重连」。
+    func testNonRetryableHandshakeErrorStopsReconnecting() async throws {
+        for (code, wireName) in [(1004, "bad_params"),
+                                 (1006, "protocol_version_unsupported"),
+                                 (1106, "app_disabled")] {
+            let kicked = CounterBox()
+            let reasons = ReasonBox()
+            var events = IMConnectionEvents()
+            events.onKickedOut = { reason in kicked.bump(); reasons.record(reason) }
+            let (connection, box) = makeConnection(events: events)
+            let first = try await handshake(connection, box)
+
+            first.closeFromServer(IMCloseCode.goingAway)
+            let ws = try await waitForNewSocket(box, after: first)
+            ws.open()
+            let hello = try await waitForFrame(ws, ofType: IMFrameType.hello)
+            ws.receive(errorFrame(reqID: hello.reqID, code: code,
+                                  name: wireName, retryable: false))
+            // 真实服务端拒了握手就会关连接——**这一步不能省**：不关的话没有任何东西
+            // 会去排下一次重连，「不再重连」这条断言就成了永远为真的空断言。
+            ws.closeFromServer(IMCloseCode.goingAway)
+
+            try await Task.sleep(nanoseconds: 200_000_000)
+            XCTAssertEqual(reasons.all, [.configRejected], "\(wireName) 该抛 configRejected")
+            XCTAssertEqual(connection.currentState, .closed)
+
+            // 再等过最长一档退避也不该有第三条连接。
+            let madeBefore = box.count
+            try await Task.sleep(nanoseconds: 2_500_000_000)
+            XCTAssertEqual(box.count, madeBefore, "\(wireName) 被拒之后还在重连")
+        }
+    }
+
+    /// 可重试的握手错误照常重连——别把 1102 也一起停了。
+    ///
+    /// 判据是错误码表里的 `retryable`，不是「握手失败就放弃」。token_expired 恰恰是
+    /// 那个例外：重连时宿主可能已经 `updateToken` 了，换一枚新票就能好。
+    func testRetryableHandshakeErrorKeepsReconnecting() async throws {
+        let reasons = ReasonBox()
+        var events = IMConnectionEvents()
+        events.onKickedOut = { reason in reasons.record(reason) }
+        let (connection, box) = makeConnection(events: events)
+        let first = try await handshake(connection, box)
+
+        first.closeFromServer(IMCloseCode.goingAway)
+        let ws = try await waitForNewSocket(box, after: first)
+        ws.open()
+        let hello = try await waitForFrame(ws, ofType: IMFrameType.hello)
+        ws.receive(errorFrame(reqID: hello.reqID, code: 1102,
+                              name: "token_expired", retryable: true))
+        ws.closeFromServer(IMCloseCode.goingAway)
+
+        try await Task.sleep(nanoseconds: 200_000_000)
+        XCTAssertEqual(reasons.all, [], "可重试的握手错误不该把宿主踢下线")
+        // 真正要守的是这条：1102 之后重连必须继续。
+        let next = try await waitForNewSocket(box, after: ws)
+        XCTAssertNotNil(next, "1102 之后不该停止重连")
+    }
+
     // MARK: - 辅助
+
+    /// errorFrame 造一个针对某个 req_id 的 sys.error 应答。
+    private func errorFrame(reqID: String, code: Int, name: String, retryable: Bool) -> String {
+        """
+        {"type":"sys.error","req_id":"\(reqID)","ts":1,\
+        "data":{"code":\(code),"name":"\(name)","msg":"\(name)",\
+        "for_type":"sys.hello","retryable":\(retryable)}}
+        """
+    }
 
     private func handshake(_ connection: IMSignalConnection,
                            _ socket: SocketBox) async throws -> FakeWebSocket {

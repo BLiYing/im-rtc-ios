@@ -40,14 +40,14 @@ import Foundation
     @objc optional func callEngine(_ engine: IMCallEngine,
                                    didDisconnect code: Int, willReconnect: Bool)
 
-    /// 登录态失效：同账号同设备号在别处登录，**或者接入票连续三次换不上**。
-    /// 两种情况的处置一样——回登录页。
     /// 被踢下线，**不会自动重连**。
     ///
-    /// `reason` 决定宿主该做什么，两者处置相反——合并的话宿主只能都当登录失效处理，
-    /// 把本可静默恢复的场景也变成「请重新登录」：
+    /// `reason` 决定宿主该做什么，三者处置完全不同——合并的话宿主只能都当登录失效处理，
+    /// 把本可静默恢复的场景也变成「请重新登录」，把该改配置的场景变成让用户干瞪眼：
     /// - `.takenOver` —— 账号在别处登录，或被宿主后台吊销。**回登录页**，换票没用。
     /// - `.authExpired` —— 票不好使且三次没换上。取一枚新票再 `login` 即可。
+    /// - `.configRejected` —— 服务端拒绝了接入参数（`device_id` 不合规、应用被停用……）。
+    ///   **去改配置**：换票和重试都救不了，具体哪里不对看 `login()` 抛出的错误。
     @objc optional func callEngine(_ engine: IMCallEngine,
                                    wasKickedOutFor reason: IMKickedOutReason)
 
