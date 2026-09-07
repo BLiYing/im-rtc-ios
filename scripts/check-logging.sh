@@ -24,6 +24,35 @@ sources() {
 fail=0
 note() { echo "  ✗ $1"; fail=1; }
 
+# strip_comments 把一个文件的**注释内容抹掉**，只留代码，行号照旧（输出 `行号:代码`）。
+#
+# 为什么要真的解析而不是 `grep -v '//'`：本仓大量用 `/** */` 写「为什么」，
+# 而且块注释的正文**不带 `*` 前缀**（就是空格加正文）。于是「解释为什么禁止 NSLog」
+# 这种再正常不过的注释会被当成真的调用拦下——IMErrorCode.swift 上真撞过一次。
+# 只按前缀排也不行，正文长什么样都有可能，只能跟着 /* */ 的配对走。
+strip_comments() {
+  awk '
+    {
+      line = $0
+      if (inblock) {
+        idx = index(line, "*/")
+        if (idx > 0) { line = substr(line, idx + 2); inblock = 0 } else { line = "" }
+      }
+      while (1) {
+        s = index(line, "/*")
+        if (s == 0) break
+        rest = substr(line, s + 2)
+        e = index(rest, "*/")
+        if (e == 0) { line = substr(line, 1, s - 1); inblock = 1; break }
+        line = substr(line, 1, s - 1) substr(rest, e + 2)
+      }
+      c = index(line, "//")
+      if (c > 0) line = substr(line, 1, c - 1)
+      print NR ":" line
+    }
+  ' "$1"
+}
+
 # ---- 自检：门禁本身是 fail-open 的闸，回归会静默放行 ----
 # **先于扫描分支处理**：写在后面的话自检会跑成"扫描真仓库"，永远是绿的。
 if [ "${1:-}" = "--selftest" ]; then
@@ -48,6 +77,21 @@ GOOD
     echo "✗ selftest 失败：门禁误报了合规代码"
     exit 1
   fi
+  # 块注释里提到被禁的 API **不是**违规——解释「为什么禁 NSLog」时必然要写出这个名字。
+  cat > "$tmp/Sources/X/Bad.swift" <<'DOC'
+/**
+ 桥成 NSError 时保住 code。
+
+ 不这么做的话宿主 NSLog(@"%@", error) 打出来的是没有意义的默认值。
+ */
+func f() {
+    IMRTCLog.info("这一行是合规的")
+}
+DOC
+  if ! CHECK_ROOT="$tmp" "$0" >/dev/null 2>&1; then
+    echo "✗ selftest 失败：门禁把块注释里提到的 NSLog 当成了真的调用"
+    exit 1
+  fi
   echo "✓ check-logging selftest 通过"
   exit 0
 fi
@@ -58,10 +102,12 @@ echo "  [1/3] 直接打印（print / NSLog / debugPrint）"
 while IFS= read -r file; do
   [ -n "$file" ] || continue
   # 只看真正的调用：行首或非标识符字符之后紧跟函数名与左括号。
-  if grep -nE '(^|[^A-Za-z0-9_.])(print|debugPrint|NSLog)[[:space:]]*\(' "$file" \
-     | grep -v '//' >/dev/null; then
+  # 注释先被 strip_comments 抹掉，所以「解释为什么禁止 NSLog」不会被算成违规。
+  hits=$(strip_comments "$file" \
+         | grep -E '(^|[^A-Za-z0-9_.])(print|debugPrint|NSLog)[[:space:]]*\(')
+  if [ -n "$hits" ]; then
     note "$file 里有直接打印，请改用 IMRTCLog"
-    grep -nE '(^|[^A-Za-z0-9_.])(print|debugPrint|NSLog)[[:space:]]*\(' "$file" | head -3 | sed 's/^/      /'
+    echo "$hits" | head -3 | sed 's/^/      /'
   fi
 done < <(sources)
 
@@ -80,7 +126,8 @@ done < <(sources)
 echo "  [3/3] 凭据与 SDP 是否过了脱敏"
 while IFS= read -r file; do
   [ -n "$file" ] || continue
-  if grep -nE 'IMRTCLog\.[a-z]+\([^)]*(token|roomToken|sdp|candidate)[^)]*\)' "$file" \
+  if strip_comments "$file" \
+     | grep -E 'IMRTCLog\.[a-z]+\([^)]*(token|roomToken|sdp|candidate)[^)]*\)' \
      | grep -viE 'redact' >/dev/null; then
     note "$file 里把凭据/SDP 直接打进了日志，请过 IMRTCLog.redact*"
     grep -nE 'IMRTCLog\.[a-z]+\([^)]*(token|roomToken|sdp|candidate)[^)]*\)' "$file" \
