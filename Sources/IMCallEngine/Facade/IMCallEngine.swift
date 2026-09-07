@@ -60,6 +60,10 @@ import Foundation
      而且只被媒体 target 实现一次，没有让 ObjC 宿主自己实现的场景。
      所以这个 init 不导出到 ObjC，ObjC 宿主用下面那个。
      */
+    /// - Note: `deviceID` 的合规性在 ``login(_:)`` 里校验，**不在这里**——
+    ///   这个 init 是 `@objc` 且不抛错，给它加 `throws` 会打断每一个宿主。
+    ///   `login` 本来就 `async throws`，宿主已经在处理它抛的错，
+    ///   而且校验发生在开 socket 之前，早到足以起作用。规则见 ``IMDeviceID``。
     public init(url: URL, deviceID: String, media: IMMediaAdapter?) {
         self.url = url
         self.deviceID = deviceID
@@ -91,6 +95,10 @@ import Foundation
 
     /// login 建立信令连接并完成握手。
     @objc public func login(_ token: String) async throws {
+        // **在开 socket 之前拦**：不拦的话服务端回 1004，而它那句「device_id 只允许
+        // [A-Za-z0-9_-]」到不了宿主手里——宿主看到的只有一个 bad_params，
+        // 界面上就是「登录失败」四个字。安卓真机上为此查了一轮（见 IMDeviceID）。
+        try IMDeviceID.check(deviceID)
         let connection = makeConnection(token: token)
         stateQueue.sync { self.connection = connection }
         media?.open(mediaEvents())

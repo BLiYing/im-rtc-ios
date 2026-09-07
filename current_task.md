@@ -11,30 +11,34 @@
 
 ## 当前焦点
 
-**握手被拒就一次放弃（2026-09-07）**，`./scripts/test.sh` 10 步全绿（136 用例）。
+**SDK 层校验 device_id（2026-09-07）**。补齐 Android 那半个改动，和 Web 同一轮。
 
-补的是 Android 那条五端契约（`CLIENT_PARITY.md` v1.17）。原先 `handleClose` 的放弃逻辑
-**只认关闭码 4401**，不认 `sys.hello` 应答里的错误码：`device_id` 不合规回的是 1004 错误帧，
-于是握手抛错 → 连接断 → 普通关闭码 → 无限退避重连。真机上的样子是界面写着「登录失败」，
-日志刷满同一条错误，真正的原因被埋在里面。
+**不拦的症状是「登录失败，没有下文」**：服务端回 1004，而它那句说得很清楚的
+「device_id 只允许 `[A-Za-z0-9_-]`」到不了宿主手里——宿主看到的只有一个 `bad_params`。
+安卓真机上踩过一次（`Build.MODEL` 是 `Pixel 2 XL`），查了一轮才定位到是机型名。
 
-| 改动 | 为什么 |
+| 决定 | 为什么 |
 |---|---|
-| `SignalConnection.handshake` 的 `.failure` 分支先走 `abortIfHandshakeRejected` | 判据是 `IMErrorCode.isRetryable`（四端共用的一致性向量），不另立名单。超时 2004 / 断线 2003 都是可重试，照常重连 |
-| 闩是 `state = .closed` | 重连定时器的处理块只在 `.reconnecting` 时动手，随后到来的 `handleClose` 也会因此把 `willReconnect` 判成 false |
-| `IMKickedOutReason` 加 `case configRejected = 2` | `takenOver` 是回登录页、`authExpired` 是换票重来，都救不了 `device_id` 里的空格。`@objc` 枚举加 case 会打断宿主的穷尽 `switch`——那正是想要的 |
+| 校验放在 `login()` 里，**不在 init** | `init(url:deviceID:media:)` 是 `@objc` 且不抛错，加 `throws` 会打断每一个宿主。`login` 本来就 `async throws`，而且校验发生在开 socket 之前，早到足以起作用 |
+| **只校验不改写** | `device_id` 要求跨重启稳定，SDK 悄悄改掉，宿主自己那套设备管理就跟服务端对不上账。清洗是宿主的事——而且别用「删掉非法字符」：`MI 8` 与 `MI8` 删完撞成同一个 id，两台设备会互相顶号 |
+| 抛 `IMRTCError(.badParams)` | 和服务端拒绝时**同一个 1004**，宿主不用为「本地拦的」和「服务端拒的」写两遍分支 |
+| `IMDeviceID.maxBytes` 公开 | 不给常量，宿主就把 64 抄进自己代码里，协议一改两边对不上 |
 
-**测试里踩到一个空断言**：假服务端只回错误帧、不关连接，于是没有任何东西会去排下一次
-重连，`box.count` 那条**永远为真、注入 bug 也不红**。补上 `closeFromServer` 才载重
-（注入后立刻红：`("3") is not equal to ("2")`）。两个方向都验过红。
+**测试里踩到的坑**：校验一失灵，`login` 会去等一条永不 open 的假 socket，于是那条
+用例**不是变红而是挂死**——注入 bug 验证时 xctest 一声不吭地悬在那里。挂死是最糟的红：
+CI 上分不清是断言失败还是环境卡了。现在用 `expectation` + `timeout: 2.0` 限住。
+
+**并行**：ObjC 侧的 `NSError` 桥接（`IMRTCErrorDomain` / `IMRTCErrorNameKey` /
+`IMRTCErrorInfo`）由另一轮同时在做，`DeviceIDTests` 里那两条 ObjC 视角的用例来自那一轮。
 
 ## 上一轮
 
-**会话恢复之后重新协商上行（2026-09-07）**。真机断网抓到实证：`动作被状态机本地拒绝
-op=restart_pub_ice room_state=reconnecting`——网一断信令也断，房间立刻 `reconnecting`，
-而 PC 要约 30 秒才判 `failed`，那时动作被拒且**不进 bufferedOps**，永远丢失。
-改法是把触发点搬到会话恢复之后（协议 §1.4 本来就写着，只是没实现），
-`onConnected` 里 `resumed==true` → 无条件 `restartPubICE()` + dispatch。**没有真机复验。**
+**握手被拒就一次放弃（同日，已提交 71c0fcd）**。原先的放弃逻辑只认关闭码 4401，
+不认 `sys.hello` 应答里的错误码，于是 1004 走的是「无限退避重连」那条路。
+现在按 `IMErrorCode.isRetryable` 分流，不可重试的一次就停并抛
+`IMKickedOutReason.configRejected`；闩是 `state = .closed`。
+五端契约，Web 同轮补齐，**桌面端仍缺**（它的 `onKickedOut` 没有原因参数，
+补它是公开 API/ABI 变更）。状态见 `CLIENT_PARITY.md` v1.17。
 
 ## 下一步
 
