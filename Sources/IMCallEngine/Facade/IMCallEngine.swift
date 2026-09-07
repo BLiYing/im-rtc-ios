@@ -25,11 +25,11 @@ import Foundation
 
     private let url: URL
     private let deviceID: String
-    private let media: IMMediaAdapter?
+    let media: IMMediaAdapter?
 
     private lazy var dispatcher = IMEventDispatcher(engine: self)
     private lazy var sender = IMFrameSender(media: media)
-    private lazy var loop = IMFrameLoop(
+    lazy var loop = IMFrameLoop(
         sender: sender, dispatcher: dispatcher, media: media,
         connection: { [weak self] in self?.currentConnection })
 
@@ -38,11 +38,34 @@ import Foundation
     private var connection: IMSignalConnection?
     /// 握手拿到的自己的 uid。用来挡「呼叫自己」，也供宿主读。
     private var myUID = ""
-    private let stateQueue = DispatchQueue(label: "com.imrtc.engine.facade")
+    /// internal 而不是 private：帧泵拆到了 IMCallEngine+FramePump.swift。
+    let stateQueue = DispatchQueue(label: "com.imrtc.engine.facade")
 
     private var currentConnection: IMSignalConnection? {
         stateQueue.sync { connection }
     }
+
+    /**
+     下行帧的**串行泵**。所有要喂给状态机的东西都从这一条流进去。
+
+     # 为什么不能每帧一个 `Task {}`
+
+     旧实现是 `events.onEvent = { Task { await loop.handleIncoming(...) } }`。
+     Task 的**创建**顺序确实是线路顺序（`handleMessage` 跑在信令那条串行队列上），
+     但它们没有 actor 隔离，会被丢到全局并发执行器上，**谁先跑到状态机没有保证**。
+     反序的后果是实打实的：`participant_joined` 与 `participant_left` 掉个个儿，
+     离开先被空房间吃掉、加入再把人放回去，格子里就永远留着一个已经走了的人；
+     `call.ringing` 排到 `call.connected` 后面则会被状态机拒成 2005。
+     一致性向量抓不到这一类——它是直接喂 reducer 的，验不到「帧怎么到达 reducer」。
+
+     # 连接生命周期的事件也走这里
+
+     `sys.hello.ok`、断线、被踢**必须与帧保持同一个顺序**：hello.ok 要是排到
+     它之后的帧后面，状态机就会拿着旧房间去处理新会话的帧。所以泵里送的是
+     `IMLoopWork` 而不是裸帧。
+     */
+    var frameInlet: AsyncStream<IMLoopWork>.Continuation?
+    var framePump: Task<Void, Never>?
 
     /// WebSocket 工厂的注入口。**只给测试用**，所以是 internal 不是 public——
     /// 宿主该换的是 `IMMediaAdapter`，传输层不是产品的接缝。
@@ -93,16 +116,48 @@ import Foundation
 
     // MARK: - 连接
 
-    /// login 建立信令连接并完成握手。
+    /**
+     login 建立信令连接并完成握手。
+
+     # 重复调用会被拒掉
+
+     **两条 WS 带着同一个 uid + device_id，服务端会按顶号把先来的那条踢下线**
+     （`handshake.go` 的 4403，它自己有 `TestSameDeviceLoginKicksOldConnection` 盯着）。
+     旧实现直接覆盖 `connection`，前一条既不关也不撒手，于是宿主收到一个
+     **假的 `onKickedOut(.takenOver)`**——「账号在别处登录」，可根本没有别处，
+     就是这台机器自己把自己踢了。所以已经有连接时就地抛 `invalid_state`。
+
+     要换账号或换一枚票，先 `logout()`。（连着的时候换票用 `updateToken`。）
+
+     # 失败会把摊子收干净
+
+     握手失败时把连接关掉、`connection` 置回 nil。不收的话上面那道门会把
+     **重试**也一起挡掉，用户从此再也登不上——比原来的 bug 还糟。
+     */
     @objc public func login(_ token: String) async throws {
         // **在开 socket 之前拦**：不拦的话服务端回 1004，而它那句「device_id 只允许
         // [A-Za-z0-9_-]」到不了宿主手里——宿主看到的只有一个 bad_params，
         // 界面上就是「登录失败」四个字。安卓真机上为此查了一轮（见 IMDeviceID）。
         try IMDeviceID.check(deviceID)
-        let connection = makeConnection(token: token)
+        guard currentConnection == nil else {
+            throw IMRTCError(.invalidState, "已经登录了：换账号或换票请先 logout()")
+        }
+        // 帧泵要先起来——它是下行帧进状态机的唯一入口（见 startFramePump）。
+        let inlet = startFramePump()
+        let connection = makeConnection(token: token, inlet: inlet)
         stateQueue.sync { self.connection = connection }
         media?.open(mediaEvents())
-        _ = try await connection.connect()
+        do {
+            _ = try await connection.connect()
+        } catch {
+            connection.close()
+            media?.close()
+            stopFramePump()
+            stateQueue.sync {
+                if self.connection === connection { self.connection = nil }
+            }
+            throw error
+        }
     }
 
     /// logout 关掉连接与媒体，并把状态机归零。
@@ -114,6 +169,7 @@ import Foundation
         }
         old?.close()
         media?.close()
+        stopFramePump()
         await loop.reset()
     }
 
@@ -391,7 +447,8 @@ import Foundation
         return media
     }
 
-    private func makeConnection(token: String) -> IMSignalConnection {
+    private func makeConnection(token: String,
+                                inlet: AsyncStream<IMLoopWork>.Continuation) -> IMSignalConnection {
         var options = IMConnectionOptions(url: url, token: token, deviceID: deviceID)
         options.sdk = "ios/0.0.1"
         if let webSocketFactory { options.webSocketFactory = webSocketFactory }
@@ -407,40 +464,15 @@ import Foundation
         events.onConnected = { [weak self] hello in
             guard let self else { return }
             self.stateQueue.sync { self.myUID = hello.uid }
-            Task {
-                await self.loop.dispatch(.recv(type: IMEnvelope.okType(IMFrameType.hello), data: [
-                    "session_id": .string(hello.sessionID),
-                    "resumed": .bool(hello.resumed),
-                ]))
-                /*
-                 协议 §1.4：恢复之后媒体面要重新协商。服务端那侧主动下发
-                 `room.offer{pc:"sub"}`，而 `pub` 这条的 offerer 是本端，只能自己重发。
-
-                 **这一条不能只挂在「PC 判 failed 的那一刻」**——网一断信令也跟着断，
-                 房间立刻变成 `reconnecting`，而 PC 要等约 30 秒才判 `failed`：那时
-                 `restart_pub_ice` 会被状态机以 `invalid_state` 拒掉，而它**不进
-                 bufferedOps**，于是永远丢失。真机 2026-09-07 抓到的正是这一幕
-                 （`动作被状态机本地拒绝 op=restart_pub_ice room_state=reconnecting`），
-                 ICE 自愈在它唯一该生效的场景里等于不存在。
-
-                 **不查 PC 当前状态、无条件重启**：换了连接就等于换了网络路径，
-                 旧候选多半已废；服务端那侧也是无条件重启 `sub`，两边对称。
-                 代价是一次多余的协商，比漏掉一次自愈便宜得多。
-                 房间不在 joined 时状态机自会拒掉，不必在这里判。
-                */
-                guard hello.resumed else { return }
-                IMRTCLog.info("会话已恢复，重新协商上行", [:])
-                self.media?.restartPubICE()
-                await self.loop.dispatch(.act(op: "restart_pub_ice"))
-            }
+            inlet.yield(.connected(sessionID: hello.sessionID, resumed: hello.resumed))
         }
-        events.onEvent = { [weak self] type, data in
-            guard let self else { return }
-            Task { await self.loop.handleIncoming(type, data) }
+        // **进泵，不要各自开 Task**：顺序就是在这里保住的（见 frameInlet）。
+        events.onEvent = { type, data in
+            inlet.yield(.frame(type, data))
         }
         events.onDisconnected = { [weak self] code, willReconnect in
             guard let self else { return }
-            Task { await self.loop.dispatch(.internalEvent(name: "disconnected")) }
+            inlet.yield(.disconnected)
             // 关闭码只有连接层知道，所以这一条由它独占上报（见 IMFrameLoop.dispatch）。
             self.dispatcher.emitConnectionEvent(.disconnected, [
                 "code": NSNumber(value: code), "will_reconnect": NSNumber(value: willReconnect),
@@ -448,9 +480,10 @@ import Foundation
         }
         events.onKickedOut = { [weak self] reason in
             guard let self else { return }
-            // 状态机只认「被踢了」这一件事；原因是给宿主做处置判断的，两者分开走
-            // （IMFrameLoop 里刻意不外发状态机那份 onKickedOut）。
-            Task { await self.loop.dispatch(.internalEvent(name: "ws_closed_4403")) }
+            // 状态机只认「被踢了」这一件事，走泵（与帧同一个顺序）；
+            // **原因是给宿主做处置判断的，由连接层独占上报**——`.takenOver` 要回登录页、
+            // `.authExpired` 是换票重来，处置相反，而状态机不可能知道是哪一种。
+            inlet.yield(.kickedOut)
             self.dispatcher.emitKickedOut(reason)
         }
         events.onTokenWillExpire = { [weak self] expiresAtMS in

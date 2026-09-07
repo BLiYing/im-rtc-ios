@@ -98,6 +98,8 @@ public final class IMSignalConnection {
     private var sessionID = ""
     private var seq = 0
     private var reconnectAttempt = 0
+    /// 还没有结果的那个 `connect()`。见 `takeConnectContinuation()`。
+    private var connectContinuation: CheckedContinuation<IMHelloOK, Error>?
     private var reconnectTimer: DispatchSourceTimer?
     /// 连续鉴权失败次数。握手一成功、或宿主换了票，就清零——只有**连续**失败才说明票是死的。
     private var authFailures = 0
@@ -155,11 +157,33 @@ public final class IMSignalConnection {
         }
     }
 
-    /// connect 建立连接并完成握手。
+    /**
+     connect 建立连接并完成握手。
+
+     # 结果必须恰好送达一次
+
+     `connect()` 的 continuation 曾经只交给 `onOpen` 那条路：**连不上的时候
+     （服务端没起来、DNS/TLS 失败、飞行模式）socket 根本不会 open，只会 close**，
+     于是它悬在那里没人 resume，`login()` 永远不返回也不抛错——宿主界面停在
+     「连接中…」，连收摊的 `catch` 都等不到。Swift 运行时对此有明确诊断：
+     `SWIFT TASK CONTINUATION MISUSE: connect() leaked its continuation`。
+
+     现在它存进 `connectContinuation`，由 `takeConnectContinuation()` 取走，
+     取出即置 nil——**握手成功、握手被拒、连接关闭、被新的尝试取代，四条路都会经过它**，
+     谁先到谁负责，天然保证恰好一次。
+     */
     public func connect() async throws -> IMHelloOK {
         try await withCheckedThrowingContinuation { continuation in
             queue.async { self.startConnect(continuation) }
         }
+    }
+
+    /// takeConnectContinuation 取走还没有结果的那个 connect，**取出即置 nil**。
+    ///
+    /// 只在 `queue` 上调用，所以不用锁。返回 nil 表示已经有人给过结果了。
+    private func takeConnectContinuation() -> CheckedContinuation<IMHelloOK, Error>? {
+        defer { connectContinuation = nil }
+        return connectContinuation
     }
 
     /// close 主动关闭，**不会**触发重连。
@@ -171,6 +195,9 @@ public final class IMSignalConnection {
             self.reconnectTimer?.cancel()
             self.reconnectTimer = nil
             self.pending.rejectAll(IMRTCError(.invalidState, "连接已关闭"))
+            // 正连着一半就 logout：同样不能把 connect() 的调用方丢在那儿。
+            self.takeConnectContinuation()?.resume(throwing:
+                IMRTCError(.invalidState, "连接已关闭"))
             self.socket?.close(code: IMCloseCode.normal, reason: "client logout")
             self.socket = nil
         }
@@ -206,6 +233,11 @@ public final class IMSignalConnection {
             continuation.resume(throwing: IMRTCError(.invalidState, "已经连上了"))
             return
         }
+        // 上一次尝试还没有结果就又开一次（重连定时器与 login 撞在一起）：
+        // 先把它结束掉。**绝不让任何一个 continuation 悬着。**
+        takeConnectContinuation()?.resume(throwing:
+            IMRTCError(.invalidState, "有新的连接尝试取代了它"))
+        connectContinuation = continuation
         state = sessionID.isEmpty ? .connecting : .reconnecting
 
         let socket = options.webSocketFactory(options.url)
@@ -213,7 +245,7 @@ public final class IMSignalConnection {
         socket.resume(handlers: IMWebSocketHandlers(
             onOpen: { [weak self] in
                 guard let self else { return }
-                self.queue.async { self.handshake(continuation) }
+                self.queue.async { self.handshake() }
             },
             onMessage: { [weak self] text in
                 guard let self else { return }
@@ -230,7 +262,7 @@ public final class IMSignalConnection {
     /// **它必须在 connecting 状态下发出去**，所以走的是不检查状态的 dispatchRequest。
     /// Web 端在这里踩过一次：让握手走公开的 request()，被状态检查挡住，
     /// 所有时序测试都挂在「一帧都没发出去」。
-    private func handshake(_ continuation: CheckedContinuation<IMHelloOK, Error>) {
+    private func handshake() {
         var hello = FieldCodec.defaults(SysFrames.hello)
         hello["token"] = .string(options.token)
         hello["device_id"] = .string(options.deviceID)
@@ -249,10 +281,10 @@ public final class IMSignalConnection {
             switch result {
             case let .failure(error):
                 self.abortIfHandshakeRejected(error)
-                continuation.resume(throwing: error)
+                self.takeConnectContinuation()?.resume(throwing: error)
             case let .success(reply):
                 guard reply.envelope.type == IMEnvelope.okType(IMFrameType.hello) else {
-                    continuation.resume(throwing:
+                    self.takeConnectContinuation()?.resume(throwing:
                         IMRTCError(.notAuthenticated, "握手应答是 \(reply.envelope.type)"))
                     return
                 }
@@ -267,7 +299,7 @@ public final class IMSignalConnection {
                 // 先抛事件再 resume：`connect()` 返回时，门面那边的状态机应该已经吃过
                 // hello.ok 了——首次登录的调用方 await 到的就该是最终状态。
                 self.events.onConnected?(ok)
-                continuation.resume(returning: ok)
+                self.takeConnectContinuation()?.resume(returning: ok)
             }
         }
     }
@@ -394,6 +426,18 @@ public final class IMSignalConnection {
         // 断线时把所有在途请求一次性失败掉——不做的话它们会一直挂到超时，
         // 用户看到的是「点了没反应」，而真实原因明明早就知道了。
         pending.rejectAll(IMRTCError(.networkUnreachable, "连接已断开"))
+        /*
+         **握手还没发出去就断了的那一种，`rejectAll` 够不着。**
+
+         socket 没 open 过就没有在途的 `sys.hello`，在途表是空的；而 `connect()`
+         的 continuation 那时还挂在 `connectContinuation` 上。这一行就是它的兜底：
+         没有它，服务端没起来时 `login()` 永远不返回（真机与单测都验过）。
+
+         握手已经发出去的那一种，上面的 `rejectAll` 会先把 hello 结算成失败、
+         那条路已经取走了 continuation，所以这里拿到 nil，不会重复 resume。
+        */
+        takeConnectContinuation()?.resume(throwing:
+            IMRTCError(.networkUnreachable, "连接已断开（关闭码 \(code)）"))
 
         if code == IMCloseCode.kickedOut { events.onKickedOut?(.takenOver) }
 
