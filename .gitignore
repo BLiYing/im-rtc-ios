@@ -34,3 +34,6 @@ Pods/
 
 # git worktree（隔离工作区），不进版本库
 .claude/worktrees/
+
+# CodeGraph 本地索引缓存，不进版本库
+.codegraph/
