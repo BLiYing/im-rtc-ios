@@ -73,6 +73,9 @@ extension IMCallEngine {
             */
             guard resumed else { return }
             IMRTCLog.info("会话已恢复，重新协商上行", [:])
+            // **先放闸再重新协商**：换了连接，之前那个 offer 的 answer 永远不会回来了；
+            // 不放的话下面这次重新协商只会被排队，那条 PC 就此永久沉默。
+            await loop.resetPubNegotiation()
             media?.restartPubICE()
             await loop.dispatch(.act(op: "restart_pub_ice"))
 

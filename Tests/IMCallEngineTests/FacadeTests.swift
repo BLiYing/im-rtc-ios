@@ -453,6 +453,65 @@ final class FacadeTests: XCTestCase {
 
     // MARK: - 辅助
 
+    /*
+      **两条轨道连着发布时，pub offer 必须一个一个来。**
+
+      两个 offer 一起在飞：offer#2 的 setLocalDescription 覆盖掉 offer#1，
+      answer#1 回来把状态推回 stable，answer#2 再来就是
+      `Called in wrong state: stable (INVALID_STATE)` + `error 1501`
+      ——真机 2026-09-08 的 iOS 日志里就是这一串。
+
+      「帧泵是 actor 所以串行」挡不住：`request` 只等到 `room.offer.ok`，
+      answer 是随后一条独立的帧，整个回合不在串行范围内。
+    */
+    func testSecondPublishWaitsForTheFirstPubAnswer() async throws {
+        let h = makeEngine()
+        let ws = try await login(h)
+        try await joinRoom(h, ws)
+
+        // 第一条轨道：publish.ok 之后会发出 offer#1，**先不给它 answer**。
+        async let firstPublish = h.engine.publishMicrophone()
+        let publish1 = try await waitForFrame(ws, ofType: IMFrameType.roomPublish)
+        ws.receive("""
+        {"type":"room.publish.ok","req_id":"\(publish1.reqID)","ts":1,\
+        "data":{"cid":"mic-1","track_id":"t-1"}}
+        """)
+        let offer1 = try await waitForFrame(ws, ofType: IMFrameType.roomOffer)
+
+        // 第二条轨道在 answer#1 之前完成 publish——状态机会再要一帧 offer。
+        async let secondPublish = h.engine.publishCamera()
+        let publish2 = try await waitForFrame(ws, ofType: IMFrameType.roomPublish)
+        ws.receive("""
+        {"type":"room.publish.ok","req_id":"\(publish2.reqID)","ts":1,\
+        "data":{"cid":"cam-1","track_id":"t-2"}}
+        """)
+        try await settle(6)
+
+        let offersBeforeAnswer = ws.frames().filter { $0.type == IMFrameType.roomOffer }
+        XCTAssertEqual(offersBeforeAnswer.count, 1,
+                       "answer#1 还没回来就发第二个 offer——两个一起在飞就是 INVALID_STATE")
+
+        // answer#1 落地之后，排队的那一个才补出去。
+        ws.receive("""
+        {"type":"room.answer","req_id":"\(offer1.reqID)","ts":1,\
+        "data":{"pc":"pub","sdp":"v=0 answer"}}
+        """)
+        try await settle(8)
+
+        let offersAfter = ws.frames().filter { $0.type == IMFrameType.roomOffer }
+        XCTAssertEqual(offersAfter.count, 2, "排队的那个 offer 必须补出去，不能吞掉")
+
+        if let offer2 = offersAfter.last {
+            ws.receive("""
+            {"type":"room.answer","req_id":"\(offer2.reqID)","ts":1,\
+            "data":{"pc":"pub","sdp":"v=0 answer"}}
+            """)
+        }
+        _ = try? await firstPublish
+        _ = try? await secondPublish
+        try await settle(4)
+    }
+
     private func joinRoom(_ h: Harness, _ ws: FakeWebSocket) async throws {
         async let joining: Void = h.engine.joinRoom("r-1", roomToken: "rt-1")
         let join = try await waitForFrame(ws, ofType: IMFrameType.roomJoin)

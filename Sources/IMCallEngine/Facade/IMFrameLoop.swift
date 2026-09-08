@@ -40,6 +40,19 @@ actor IMFrameLoop {
      `room.answer(pub)` 要**先把 SDP 应用到媒体层再推进状态机**，
      否则状态机说「已发布」的时候上行其实还没协商完。
      */
+    /// 上行协商闸门：一条 pub PC 上同一时刻只许一个 offer 在飞。见 `IMPubOfferGate`。
+    private var pubOffer = IMPubOfferGate()
+
+    /**
+     放开上行协商闸门。**会话恢复与通话结束都要调**。
+
+     换了一条连接，之前那个 offer 的 answer 永远不会回来了；不放的话闸门一直关着，
+     恢复后的重新协商只会排队，那条 PC 就此永久沉默（Android 上真机撞到过）。
+     */
+    func resetPubNegotiation() {
+        pubOffer.reset()
+    }
+
     func handleIncoming(_ type: String, _ data: [String: IMJSON]) async {
         if type == IMFrameType.roomICECandidate {
             await addRemoteCandidate(data)
@@ -50,11 +63,23 @@ actor IMFrameLoop {
             await sender.noteSubOffer(data["sdp"]?.stringValue ?? "")
         }
         if type == IMFrameType.roomAnswer, pc == IMPCRole.pub.wireValue, let media {
+            var owesAnother = false
             do {
                 try await media.applyPubAnswer(data["sdp"]?.stringValue ?? "")
+                owesAnother = pubOffer.finish()
             } catch {
+                // **失败也要放闸**：少放一处就是永久卡死，而且一条错误都没有。
+                pubOffer.abort()
                 emitError(error)
             }
+            await dispatch(.recv(type: type, data: data))
+            // 排队的那一个补在**状态机吃过这条 answer 之后**——早了的话新 offer
+            // 会撞上一个还没收工的房间状态。
+            if owesAnother {
+                IMRTCLog.info("上行补一次协商（上一轮在飞时排下的）", [:])
+                await dispatch(.act(op: "restart_pub_ice"))
+            }
+            return
         }
         await dispatch(.recv(type: type, data: data))
     }
@@ -72,6 +97,9 @@ actor IMFrameLoop {
         // Engine 已经是干净的，下一通不会带着上一通的 PeerConnection。
         if result.emit.contains(where: { Self.leaveCallbacks.contains($0.callback) }) {
             media?.close()
+            // PC 都关了，在飞的那个 offer 的 answer 永远不会来——不归零的话
+            // 下一通电话的第一个 offer 就会被闸门挡在门外。
+            pubOffer.reset()
         }
 
         /*
@@ -115,11 +143,19 @@ actor IMFrameLoop {
     /// sendFrame 发一帧，并把应答喂回状态机。
     private func sendFrame(_ frame: IMOutgoingFrame) async {
         guard let connection = connection() else { return }
+        let isPubOffer = frame.type == IMFrameType.roomOffer
+            && frame.data["pc"]?.stringValue == IMPCRole.pub.wireValue
+        if isPubOffer, !pubOffer.begin() {
+            IMRTCLog.debug("pub 协商进行中，offer 排队", [:])
+            return
+        }
         do {
             guard let reply = try await sender.send(connection, frame) else { return }
             // **应答也要喂回状态机**：join.ok / publish.ok 都是状态推进的关键一步。
             await handleIncoming(reply.envelope.type, reply.data)
         } catch {
+            // **失败也要放闸**（见 IMPubOfferGate）：这一轮的 answer 不会来了。
+            if isPubOffer { pubOffer.abort() }
             // 请求失败不该中断整个事件流：转成 error 事件交给宿主。
             emitError(error)
             /*

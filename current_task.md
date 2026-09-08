@@ -11,6 +11,35 @@
 
 ## 当前焦点
 
+**上行协商闸门补上了（2026-09-08）**，`./scripts/test.sh` 十步全绿。**未真机复验。**
+
+真机日志里的这一串：
+
+```
+event userVideoAvailable available=1 uid=alice
+(sdp_offer_answer.cc:4305): Called in wrong state: stable (INVALID_STATE)
+event error code=1501 name=internal
+```
+
+发布 audio 与 video 两条轨道 → 两次 `publish.ok` → 状态机连吐两帧 `room.offer{pub}`。
+两个一起在飞：offer#2 的 `setLocalDescription` 覆盖掉 offer#1，answer#1 把状态推回 `stable`，
+answer#2 再来就是上面那条。那一次自愈了，**但 Android 上同一个缺陷的后果是上行再也协商不出去**。
+
+**「帧泵是 actor 所以串行」挡不住这一类**：`connection.request` 只等到 `room.offer.ok`，
+answer 是随后一条独立的帧，offer→answer 整个回合不在串行范围内。
+
+闸门落在 `IMFrameLoop`（不是媒体层）——只有那里能表达「这一帧先别发」。
+与 Android 的 `IMNegotiationGate` **有两处刻意的不同**，别照抄：
+
+| | Android | iOS |
+|---|---|---|
+| 锁 | 要（三个线程碰） | **不要**，`IMFrameLoop` 是 actor |
+| `pendingIceRestart` | 要 | **不要**，那一位在 `IMWebRTCAdapter.pubICERestartPending` 上，排队不会弄丢 |
+
+放闸的四个终局一个都不能少：answer 落地、answer 应用失败、发帧失败、通话结束；
+**会话恢复时还要 `resetPubNegotiation()`** —— 换了连接旧 answer 永远不会回来，
+不放就是 Android 上那个「上行永久沉默」。
+
 **网络一直不回来时通话再也退不出去，已修（2026-09-08）**，`./scripts/test.sh` 十步全绿。
 **未真机复验。**
 
