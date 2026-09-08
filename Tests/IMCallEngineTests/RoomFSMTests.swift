@@ -45,6 +45,16 @@ final class RoomFSMTests: XCTestCase {
 
         ctx.room.state = IMRoomState(rawValue: initial["room"] as? String ?? "idle") ?? .idle
         ctx.room.roomID = "r-1"
+        /*
+         **向量里说「初始就在房里」的，`didJoin` 也要跟着置上。**
+
+         向量断言的是 `room` / `publish` / `subscribe` 那几个键，`didJoin` 是本端
+         为了分辨「reconnecting 是从 joined 断的还是从 joining 断的」自己记的账
+         （见 `IMRoomMachine.resume`）。种子里漏掉它，
+         `reconnect_resumed_replays_buffered_intent` 就会被当成「那次进房从未落地」
+         而去重发 room.join——**是种子不完整，不是实现错了**。
+        */
+        ctx.room.didJoin = ctx.room.state != .idle && ctx.room.state != .joining
         for (cid, raw) in initial["publish"] as? [String: String] ?? [:] {
             ctx.room.publish[cid] = IMPublishState(rawValue: raw)
             // 向量里的初始 publish 用 cid 作键，这里补上 cid → track_id 的映射，

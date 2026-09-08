@@ -57,6 +57,17 @@ public struct IMRoomContext: Equatable, Sendable {
     public var layers: [String: String] = [:]
     /// joining / reconnecting 期间缓存的用户意图（不变量 R2）。
     public var buffered: [IMBufferedIntent] = []
+    /**
+     这个房间**真的收到过 `room.join.ok`** 吗。
+
+     只有它能区分 `reconnecting` 的两种来路：从 `joined` 断的（服务端那边成员关系还在，
+     恢复后直接回 `joined`），还是从 `joining` 断的（`room.join` 还在飞，服务端从没受理过）。
+     少了它，`resume` 会把后者也宣布成 `joined`——见 ``IMRoomMachine/resume(_:resumed:)``。
+
+     不进一致性向量：向量只断言 `room` / `publish` / `subscribe` 那几个键，
+     这是本端为了分辨来路自己记的账。
+     */
+    public var didJoin = false
 
     public init() {}
 }
@@ -127,22 +138,75 @@ public enum IMRoomMachine {
             guard ctx.state == .joining else { return out(ctx) }
             return out(cleared(.idle),
                        emit: [IMEmittedEvent("onRoomLeft", ["room_id": .string(ctx.roomID)])])
+        case "leave_failed":
+            /*
+             离房被拒。**照样退回 idle**——这是 join_failed 的镜像，漏掉它的代价更大。
+
+             `room.leave` 会被拒是真事：服务端在「会话已不在房间里」时回 1203
+             （两人同时离房、或房间刚被「已空，已关闭」销毁掉，都撞得上）。
+             而被拒的语义恰恰是**我们已经不在房里了**，本地却还停在 leaving：
+             媒体停不掉（摄像头、麦克风一直开着），再 leave 被 R1 拒成 2005，
+             再 join 因为「不在 idle」也被拒——除非 logout，这台 Engine 永远进不了房。
+
+             所以「被拒」与「leave.ok」在本地是同一个收场：归零 + onRoomLeft。
+             （Android 的 `IMRoomMachine` 一直有这一支。）
+            */
+            guard ctx.state == .leaving else { return out(ctx) }
+            return out(cleared(.idle),
+                       emit: [IMEmittedEvent("onRoomLeft", ["room_id": .string(ctx.roomID)])])
         default:
             return out(ctx)
         }
     }
 
-    /// resume 在重连成功后恢复房间：重放缓存的用户意图。
-    ///
-    /// `resumed == false` 时**必须回到 idle 并重新 join**（§1.4）——
-    /// 服务端那边的成员关系已经过期了，装作还在只会让 UI 撒谎。
+    /**
+     resume 在重连成功后恢复房间：重放缓存的用户意图。
+
+     `resumed == false` 时**必须回到 idle 并重新 join**（§1.4）——
+     服务端那边的成员关系已经过期了，装作还在只会让 UI 撒谎。
+
+     # `reconnecting` 有两种来路，不能一视同仁
+
+     `disconnected` 会把**任何**非 idle 状态推进 `reconnecting`，`joining` 也在内。
+     而从 `joining` 断的那一种，`room.join` 当时还在飞：服务端从没受理过我们，
+     恢复的只是那条 WS 会话，**不是房间成员关系**。原先这里无条件宣布 `joined`，
+     于是本端以为自己在房里，之后每一帧都换回 1201/1203，
+     而重新 join 又因为「不在 idle」被本地拒成 2005——一个哑掉的死局。
+
+     （那条本该兜住它的 `join_failed` 指望不上：`rejectAll` 唤醒的是隔着两跳 actor 的
+     `IMFrameSender`，而 `disconnected` 走帧泵，`IMFrameLoop` 又是可重入 actor——
+     `disconnected` 完全可能先到，随后的 `join_failed` 因为 `guard state == .joining`
+     变成空操作。所以不能靠时序，要靠 `didJoin` 这笔账。）
+
+     所以这一种走的是**重发一次 `room.join`**：房号与房票都还在手上，
+     该做的正是把那次没落地的进房重来一遍，攒下的意图也照旧留着等进房后重放。
+     */
     public static func resume(_ ctx: IMRoomContext,
                               resumed: Bool) -> IMMachineOutput<IMRoomContext> {
         guard resumed else { return out(cleared(.idle)) }
         guard ctx.state == .reconnecting else { return out(ctx) }
+        guard ctx.didJoin else { return rejoin(ctx) }
         var joined = ctx
         joined.state = .joined
         return replayBuffered(joined)
+    }
+
+    /// rejoin 把「进房还没落地就断了」的那一轮重发一遍。**攒下的意图原样留着。**
+    ///
+    /// - Note: 这里不记日志——状态机是纯函数（CONVENTIONS §2），
+    ///   不碰网络、不碰 UI、也不写日志，否则一致性向量就不是纯输入输出了。
+    private static func rejoin(_ ctx: IMRoomContext) -> IMMachineOutput<IMRoomContext> {
+        guard !ctx.roomID.isEmpty else {
+            // 连房号都没有（`join` 的帧还没产出就断了）：没得重发，干净地回 idle。
+            return out(cleared(.idle))
+        }
+        var next = ctx
+        next.state = .joining
+        return out(next, send: [IMOutgoingFrame(IMFrameType.roomJoin, [
+            "room_id": .string(ctx.roomID),
+            "room_token": .string(ctx.roomToken),
+            "auto_subscribe": .bool(ctx.autoSubscribe),
+        ])])
     }
 
     /// replayBuffered 在 joined 态把攒下的意图重新走一遍。

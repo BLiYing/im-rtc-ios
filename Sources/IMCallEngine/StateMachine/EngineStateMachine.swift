@@ -117,7 +117,9 @@ public enum IMEngineMachine {
                 IMEmittedEvent("onDisconnected"),
             ])
         }
-        if name == "join_failed" {
+        // 进房 / 离房被服务端拒了：两条都只关房间机的事，原样转交。
+        // **leave_failed 少接一条的代价见 IMRoomMachine 那一支**——媒体停不掉、房也再进不去。
+        if name == "join_failed" || name == "leave_failed" {
             let room = IMRoomMachine.reduce(ctx.room, .internalEvent(name: name))
             var next = ctx
             next.room = room.state

@@ -192,6 +192,18 @@ final class IMURLSessionWebSocket: NSObject, IMWebSocket, URLSessionWebSocketDel
         lock.unlock()
         guard !alreadyClosed else { return }
         IMRTCLog.debug("连接关闭", ["code": String(code), "reason": reason])
+        /*
+         **这条路也必须 invalidate。**
+
+         `URLSession` 强引用它的 delegate 直到被 invalidate——而 delegate 就是 self，
+         self 又拿着 `handlers`（里面捕获着 `IMSignalConnection`）。原先只有主动
+         `close()` 那条路 invalidate，服务端关闭与连接失败这条**从不**，
+         于是每一次失败的重连尝试都漏一条 URLSession + socket + 一整条回调链。
+         退避封顶 30 秒，锁屏放一小时就是上百份，重连成功或 logout 都收不回来。
+
+         用 `finishTasksAndInvalidate` 而不是 `invalidateAndCancel`，理由与 `close()` 那处相同。
+        */
+        session?.finishTasksAndInvalidate()
         handlers?.onClose(code, reason)
     }
 

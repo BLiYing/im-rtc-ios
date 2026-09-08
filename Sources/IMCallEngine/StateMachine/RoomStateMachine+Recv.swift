@@ -81,6 +81,9 @@ extension IMRoomMachine {
         var emit = [IMEmittedEvent("onRoomJoined", ["room_id": .string(Wire.string(data, "room_id"))])]
         var next = ctx
         next.state = .joined
+        // **这一笔账只在这里记**：它是「服务端真的受理了我们」的唯一证据，
+        // `resume` 靠它分辨 reconnecting 的两种来路（见 IMRoomMachine.resume）。
+        next.didJoin = true
         next.roomID = Wire.string(data, "room_id")
         next.participantID = Wire.string(data, "participant_id")
 

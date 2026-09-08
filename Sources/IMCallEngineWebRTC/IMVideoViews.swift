@@ -81,6 +81,8 @@ final class IMVideoRegistry {
     private var orphans: [String: RTCVideoTrack] = [:]
     /// track_id → owner，认领之后的记账。
     private var owners: [String: String] = [:]
+    /// 已经把视图接到轨道上的 owner。见 ``attachRenderer(owner:)``——`add` 不去重。
+    private var rendered: Set<String> = []
 
     /// addTrack 收下一条轨道。`owner` 为空表示「还不知道是谁的」，先进 orphans 等认领。
     func addTrack(_ trackID: String, _ track: RTCVideoTrack, owner: String) {
@@ -116,7 +118,7 @@ final class IMVideoRegistry {
         onMain { [self] in
             guard let container else {
                 if let view = views[owner] {
-                    tracks[owner]?.remove(view)
+                    detachRenderer(owner: owner, view: view)
                     view.removeFromSuperview()
                 }
                 views[owner] = nil
@@ -130,7 +132,7 @@ final class IMVideoRegistry {
                 container.addSubview(view)
             }
             views[owner] = view
-            tracks[owner]?.add(view)
+            attachRenderer(owner: owner)
         }
     }
 
@@ -138,13 +140,14 @@ final class IMVideoRegistry {
     func removeAll() {
         onMain { [self] in
             for (owner, view) in views {
-                tracks[owner]?.remove(view)
+                detachRenderer(owner: owner, view: view)
                 view.removeFromSuperview()
             }
             views = [:]
             tracks = [:]
             orphans = [:]
             owners = [:]
+            rendered = []
         }
     }
 
@@ -155,9 +158,38 @@ final class IMVideoRegistry {
         // 不摘的话新轨道的帧会和旧轨道的最后一帧抢同一个渲染器，画面停在旧的那一帧。
         if let previous = tracks[owner], previous !== track, let view = views[owner] {
             previous.remove(view)
+            rendered.remove(owner)
         }
         tracks[owner] = track
-        if let view = views[owner] { track.add(view) }
+        attachRenderer(owner: owner)
+    }
+
+    /**
+     attachRenderer 把 owner 的渲染视图接到它的轨道上，**同一对最多接一次**。
+
+     # 为什么必须自己判重
+
+     `RTCVideoTrack.add(_:)` **不去重**：每调一次就新造一个 renderer adapter 挂到
+     native 的 sink 列表上。而这条路被调得非常勤——`IMCallOverlayViewController.render`
+     每次状态变化都无条件 `attachLocalPreview`，而 `onActiveSpeakers` 每 300ms 就改一次
+     音量、状态就变一次，于是一秒好几轮。一通视频打几分钟，同一个 `RTCMTLVideoView`
+     上就挂了几百个重复 sink，每一帧渲染几百遍（CPU/GPU 与内存一起涨）；
+     而卸载时只 `remove` 一次，多出来的那些**永远回收不掉**。
+
+     `rendered` 记的就是「这个 owner 的视图已经接在它当前那条轨道上了」。
+     换轨道（`bind`）与卸载（`detachRenderer`）都会把它划掉。
+     */
+    private func attachRenderer(owner: String) {
+        guard let view = views[owner], let track = tracks[owner] else { return }
+        guard !rendered.contains(owner) else { return }
+        track.add(view)
+        rendered.insert(owner)
+    }
+
+    /// detachRenderer 把 owner 的视图从它的轨道上摘下来。**重复调用安全。**
+    private func detachRenderer(owner: String, view: RTCMTLVideoView) {
+        guard rendered.remove(owner) != nil else { return }
+        tracks[owner]?.remove(view)
     }
 
     private func makeRenderView() -> RTCMTLVideoView {

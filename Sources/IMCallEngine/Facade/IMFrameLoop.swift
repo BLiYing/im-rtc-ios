@@ -170,11 +170,32 @@ actor IMFrameLoop {
                 await dispatch(.internalEvent(name: "join_failed"))
             }
             /*
-             同理，**发起呼叫被拒也要退回 idle**。不退的话界面停在「正在呼叫…」，
+             **离房被拒也要退回 idle**，这是 join_failed 的镜像，漏掉它的代价更大。
+
+             `room.leave` 会被拒是真事：服务端在「会话已不在房间里」时回 1203
+             （两人同时离房、或房间刚被「已空，已关闭」销毁掉，都撞得上）。
+             而被拒的语义恰恰是**我们已经不在房里了**，本地却还停在 leaving：
+             `leaveCallbacks` 一个都不会抛，于是 `media.close()` 永远不调用
+             （摄像头、麦克风一直开着），再点离房被 R1 拒成 2005，
+             再 join 也因为「不在 idle」被拒——除非 logout，这台 Engine 永远进不了房。
+             （Android 的 `IMCallEngine.onRequestFailed` 一直接着这一条。）
+            */
+            if frame.type == IMFrameType.roomLeave {
+                await dispatch(.internalEvent(name: "leave_failed"))
+            }
+            /*
+             同理，**通话类请求被拒也要退回 idle**。不退的话界面停在「正在呼叫…」，
              而服务端根本没有这通电话，之后每次挂断都换回 1401 call_not_found，
              用户永远退不出那一屏。
+
+             **三帧都要接，不只是 invite。** `call.accept` 被拒（主叫刚取消，
+             服务端回 1401/1405）时通话机永久停在 `accepting`：onCallEnd 不抛、
+             来电页收不起来，而那时红按钮算出来的是 reject，
+             `reduceAct("reject")` 又要求 `ringing`——只换回又一个 2005，
+             用户除了杀进程出不去。`call.join` 同理。
+             （Android 的 onRequestFailed 一直是 INVITE / ACCEPT / JOIN 三个一起接的。）
             */
-            if frame.type == IMFrameType.callInvite {
+            if Self.callFailFrames.contains(frame.type) {
                 await dispatch(.internalEvent(name: "call_failed"))
             }
         }
@@ -249,6 +270,14 @@ actor IMFrameLoop {
             "room_state": ctx.room.state.rawValue,
         ])
     }
+
+    /// callFailFrames 是「这一帧被拒 = 这通电话没建立起来」的那几帧。
+    ///
+    /// 少接一帧的后果都一样：通话机停在中间态，界面收不起来，
+    /// 而红按钮在那个状态下算出的动作又会被本地拒成 2005。
+    private static let callFailFrames: Set<String> = [
+        IMFrameType.callInvite, IMFrameType.callAccept, IMFrameType.callJoin,
+    ]
 
     /// leaveCallbacks 是「这一轮媒体到此为止」的信号。
     ///
