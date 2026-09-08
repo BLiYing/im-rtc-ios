@@ -112,7 +112,7 @@ extension IMCallController: IMCallEngineDelegate {
     public func callEngine(_ engine: IMCallEngine, activeSpeakersDidChange speakers: [[String: Any]]) {
         apply(.activeSpeakers(speakers.map {
             (uid: $0["uid"] as? String ?? "", volume: ($0["volume"] as? NSNumber)?.intValue ?? 0)
-        }))
+        }, selfUID: engine.uid))
     }
 
     public func callEngine(_ engine: IMCallEngine, networkQualityDidChange entries: [[String: Any]]) {

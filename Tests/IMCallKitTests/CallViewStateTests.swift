@@ -123,11 +123,11 @@ final class CallViewStateTests: XCTestCase {
     func testActiveSpeakersClearsPeopleNoLongerSpeaking() {
         var state = reduce(IMCallViewState(), [
             .callPlaced(calleeIDs: ["bob", "carol"], mediaType: "audio", isGroup: true),
-            .activeSpeakers([(uid: "bob", volume: 80)]),
+            .activeSpeakers([(uid: "bob", volume: 80)], selfUID: "alice"),
         ])
         XCTAssertTrue(state.participants.first { $0.uid == "bob" }!.isSpeaking)
 
-        state = reduce(state, [.activeSpeakers([])])
+        state = reduce(state, [.activeSpeakers([], selfUID: "alice")])
         XCTAssertFalse(state.participants.contains { $0.isSpeaking }, "名单空了就该全灭")
         XCTAssertTrue(state.participants.allSatisfy { $0.volume == 0 })
     }
@@ -457,5 +457,54 @@ final class EndReasonTextTests: XCTestCase {
         XCTAssertEqual(imEndedHoldSeconds("cancel"), 1.5)
         XCTAssertEqual(imEndedHoldSeconds("offline"), 3.0)
         XCTAssertEqual(imEndedHoldSeconds("busy"), 3.0)
+    }
+}
+
+/// 「谁在说话」改版（2026-09-09）：绿描边换成名牌里一枚图标，本端那格也显示。
+final class SpeakingIndicatorTests: XCTestCase {
+
+    private func room(_ uids: [String]) -> IMCallViewState {
+        var state = IMCallViewState()
+        state.participants = uids.map { IMParticipant(uid: $0, hasAccepted: true) }
+        return state
+    }
+
+    /// 三个人同时说话，三格都要亮——不能像 Android 那样只留音量最大的一个。
+    func testAllSimultaneousSpeakersLightUp() {
+        let state = reduceCallView(room(["bob", "carol", "dave"]), .activeSpeakers(
+            [(uid: "bob", volume: 60), (uid: "carol", volume: 45), (uid: "dave", volume: 30)],
+            selfUID: "alice"))
+
+        XCTAssertEqual(state.participants.filter(\.isSpeaking).map(\.uid), ["bob", "carol", "dave"])
+        XCTAssertEqual(state.participants.first { $0.uid == "carol" }?.volume, 45,
+                       "音量要按人记，图标的条高靠它")
+    }
+
+    /// 本端那格没有 participant，说话状态单独记（拍板：本端也显示）。
+    func testSelfSpeakingIsTrackedSeparately() {
+        let state = reduceCallView(room(["bob"]), .activeSpeakers(
+            [(uid: "alice", volume: 70), (uid: "bob", volume: 20)], selfUID: "alice"))
+
+        XCTAssertTrue(state.selfSpeaking)
+        XCTAssertEqual(state.selfVolume, 70)
+        XCTAssertTrue(state.participants[0].isSpeaking, "远端不该被本端抢掉")
+    }
+
+    /// 本端不在名单里就不许误亮。
+    func testSelfNotSpeakingStaysDark() {
+        let state = reduceCallView(room(["bob"]), .activeSpeakers(
+            [(uid: "bob", volume: 40)], selfUID: "alice"))
+        XCTAssertFalse(state.selfSpeaking)
+        XCTAssertEqual(state.selfVolume, 0)
+    }
+
+    /// 全量快照：名单空了，本端与远端一起灭。
+    func testEmptySnapshotClearsEveryone() {
+        var state = reduceCallView(room(["bob"]), .activeSpeakers(
+            [(uid: "alice", volume: 70), (uid: "bob", volume: 20)], selfUID: "alice"))
+        state = reduceCallView(state, .activeSpeakers([], selfUID: "alice"))
+
+        XCTAssertFalse(state.selfSpeaking)
+        XCTAssertTrue(state.participants.allSatisfy { !$0.isSpeaking })
     }
 }

@@ -421,7 +421,7 @@ public final class IMCallOverlayViewController: UIViewController {
             let tile = tiles[p.uid] ?? makeTile(for: p.uid)
             tile.apply(uid: p.uid,
                        label: imResolvedName(controller.profileResolver, uid: p.uid, fallback: p.uid),
-                       hasVideo: p.hasVideo, hasAudio: p.hasAudio, isSpeaking: p.isSpeaking,
+                       hasVideo: p.hasVideo, hasAudio: p.hasAudio, isSpeaking: p.isSpeaking, volume: p.volume,
                        isRinging: !p.hasAccepted, settled: p.settled, networkLevel: p.networkLevel,
                        avatarImage: imResolvedAvatar(controller.profileResolver, uid: p.uid))
             ordered.append(tile)
@@ -439,7 +439,11 @@ public final class IMCallOverlayViewController: UIViewController {
 
     private func applySelfTile(_ state: IMCallViewState, avatarSize: CGFloat) {
         selfTile.apply(uid: "", label: "我", hasVideo: state.selfState.cameraOn && controller.hasLocalCamera,
-                       hasAudio: state.selfState.micOn, isSpeaking: false, avatarSize: avatarSize, isMirrored: true)
+                       hasAudio: state.selfState.micOn,
+                       // **本端那格也显示**（2026-09-09 拍板）。只在九宫格里有意义，
+                       // 1v1 版式那两处调用照旧传 false——两个人时谁在说话本来就一目了然。
+                       isSpeaking: state.selfSpeaking, volume: state.selfVolume,
+                       avatarSize: avatarSize, isMirrored: true)
     }
 
     private func pinFull(_ tile: IMVideoTileView) {

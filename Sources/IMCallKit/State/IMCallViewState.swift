@@ -129,6 +129,10 @@ public struct IMCallViewState: Equatable, Sendable {
     public var endedDurationSec = 0
     /// 一句给用户看的提示（「对方已拒接」这类）。
     public var hint = ""
+    /// 本端在不在说话。**本端那格不是 participant，只能单独记**（2026-09-09：本端也显示）。
+    public var selfSpeaking = false
+    /// 本端音量 0~100，映射到说话图标的条高。
+    public var selfVolume = 0
     /// 媒体是否已经就绪。**单独记**：`callBegin` 与「媒体通了」谁先到都可能。
     public var isMediaReady = false
     public var connection: IMConnectionStatus = .ok
@@ -168,7 +172,9 @@ public enum IMCallViewAction: Sendable {
     case inviteDenied
     case userAudio(uid: String, available: Bool)
     case userVideo(uid: String, available: Bool)
-    case activeSpeakers([(uid: String, volume: Int)])
+    /// 说话人名单（全量快照）。**`selfUID` 由调用方现给**——本端也在这份名单里，
+    /// 但它没有对应的 participant；存进 state 的话每次 reset 都要记得带上它，迟早漏一处。
+    case activeSpeakers([(uid: String, volume: Int)], selfUID: String)
     case networkQuality([(uid: String, level: Int)])
     case connection(IMConnectionStatus)
     case hint(String)
@@ -314,7 +320,7 @@ public func reduceCallView(_ state: IMCallViewState,
     case let .userVideo(uid, available):
         next = withParticipant(next, uid) { $0.hasVideo = available }
 
-    case let .activeSpeakers(speakers):
+    case let .activeSpeakers(speakers, selfUID):
         // **全量快照不是增量**：不在名单里的人要被清成「没在说话」。
         let volumes = Dictionary(speakers.map { ($0.uid, $0.volume) }) { first, _ in first }
         next.participants = next.participants.map {
@@ -323,6 +329,9 @@ public func reduceCallView(_ state: IMCallViewState,
             p.volume = volumes[p.uid] ?? 0
             return p
         }
+        // 本端也在这份名单里（服务端不区分谁是谁），但它没有对应的 participant。
+        next.selfSpeaking = !selfUID.isEmpty && volumes[selfUID] != nil
+        next.selfVolume = volumes[selfUID] ?? 0
 
     case let .networkQuality(entries):
         let levels = Dictionary(entries.map { ($0.uid, $0.level) }) { first, _ in first }

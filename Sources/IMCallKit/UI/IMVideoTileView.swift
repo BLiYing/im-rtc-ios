@@ -15,8 +15,8 @@ public final class IMVideoTileView: UIView {
     private let avatarDisc = IMAvatarDiscView()
     private let nameLabel = UILabel()
     private let namePlate = UIView()
-    private let mutedBadge = UIImageView()
-    private let mutedPlate = UIView()
+    /** 名牌气泡里那枚说话/静音图标（2026-09-09 改版，见 [IMSpeechIconView]）。 */
+    private let speechIcon = IMSpeechIconView()
     private let netBadge = IMNetworkBars(compact: true)
     private let netPlate = UIView()
 
@@ -55,15 +55,7 @@ public final class IMVideoTileView: UIView {
         namePlate.layer.cornerRadius = 6
         namePlate.clipsToBounds = true
 
-        mutedPlate.backgroundColor = theme.scrim
-        mutedPlate.layer.cornerRadius = 10
-        mutedPlate.isHidden = true
-        mutedBadge.image = IMKitIcon.micSlash.image(pointSize: 11)
-        mutedBadge.tintColor = theme.mutedBadge
-        mutedBadge.contentMode = .center
         // 角标是纯图形，读屏软件念不出「静音」。
-        mutedPlate.isAccessibilityElement = true
-        mutedPlate.accessibilityLabel = "已静音"
 
         netPlate.backgroundColor = theme.scrim
         netPlate.layer.cornerRadius = 12
@@ -76,11 +68,11 @@ public final class IMVideoTileView: UIView {
         ringingLabel.textAlignment = .center
         ringingLabel.isHidden = true
 
-        for view in [renderView, avatarDisc, namePlate, mutedPlate, netPlate, ringingLabel] {
+        for view in [renderView, avatarDisc, namePlate, netPlate, ringingLabel] {
             view.translatesAutoresizingMaskIntoConstraints = false
             addSubview(view)
         }
-        for (child, plate) in [(nameLabel, namePlate), (mutedBadge, mutedPlate), (netBadge, netPlate)] {
+        for (child, plate) in [(nameLabel, namePlate), (speechIcon, namePlate), (netBadge, netPlate)] {
             child.translatesAutoresizingMaskIntoConstraints = false
             plate.addSubview(child)
         }
@@ -105,12 +97,6 @@ public final class IMVideoTileView: UIView {
              原先在右上角，而 1v1 的全屏画面是铺满整屏的——那个位置正好压在状态栏的
              时间与电量上。挪下来之后两者一起排，也不会再和系统栏打架。
             */
-            mutedPlate.leadingAnchor.constraint(equalTo: namePlate.trailingAnchor, constant: 4),
-            mutedPlate.centerYAnchor.constraint(equalTo: namePlate.centerYAnchor),
-            mutedPlate.widthAnchor.constraint(equalToConstant: 20),
-            mutedPlate.heightAnchor.constraint(equalToConstant: 20),
-            mutedBadge.centerXAnchor.constraint(equalTo: mutedPlate.centerXAnchor),
-            mutedBadge.centerYAnchor.constraint(equalTo: mutedPlate.centerYAnchor),
 
             netPlate.topAnchor.constraint(equalTo: topAnchor, constant: Self.plateInset),
             netPlate.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -Self.plateInset),
@@ -126,7 +112,12 @@ public final class IMVideoTileView: UIView {
             namePlate.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -40),
             nameLabel.centerYAnchor.constraint(equalTo: namePlate.centerYAnchor),
             nameLabel.leadingAnchor.constraint(equalTo: namePlate.leadingAnchor, constant: 8),
-            nameLabel.trailingAnchor.constraint(equalTo: namePlate.trailingAnchor, constant: -8),
+            // 图标**永远占位**（拍板：留位），名字不会随说话左右跳。
+            speechIcon.leadingAnchor.constraint(equalTo: nameLabel.trailingAnchor, constant: 5),
+            speechIcon.trailingAnchor.constraint(equalTo: namePlate.trailingAnchor, constant: -8),
+            speechIcon.centerYAnchor.constraint(equalTo: namePlate.centerYAnchor),
+            speechIcon.widthAnchor.constraint(equalToConstant: IMSpeechIconView.iconSize.width),
+            speechIcon.heightAnchor.constraint(equalToConstant: IMSpeechIconView.iconSize.height),
 
             ringingLabel.topAnchor.constraint(equalTo: topAnchor, constant: 10),
             ringingLabel.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 4),
@@ -137,7 +128,7 @@ public final class IMVideoTileView: UIView {
     /// apply 按成员状态刷新格子。
     /// - Parameter avatarSize: 头像盘直径，默认 44；1v1 全屏那一格给 96。
     /// - Parameter isMirrored: 本端预览水平镜像（人照镜子的习惯）；远端不镜像。
-    public func apply(uid: String, label: String, hasVideo: Bool, hasAudio: Bool, isSpeaking: Bool,
+    public func apply(uid: String, label: String, hasVideo: Bool, hasAudio: Bool, isSpeaking: Bool, volume: Int = 0,
                       isRinging: Bool = false, settled: IMSettledOutcome = .none, networkLevel: Int = 0,
                       avatarSize: CGFloat = 44, isMirrored: Bool = false,
                       avatarImage: UIImage? = nil) {
@@ -152,14 +143,16 @@ public final class IMVideoTileView: UIView {
         avatarDisc.isHidden = hasVideo
         renderView.isHidden = !hasVideo
         renderView.transform = isMirrored ? CGAffineTransform(scaleX: -1, y: 1) : .identity
-        mutedPlate.isHidden = hasAudio
         netPlate.isHidden = !imIsNetworkPoor(level: networkLevel)
         netBadge.apply(level: networkLevel)
-        layer.borderColor = isSpeaking ? theme.speakingBorder.cgColor : UIColor.clear.cgColor
-        // 正在说话：名字标签底变绿、字变深（规范 §06）。
-        namePlate.backgroundColor = isSpeaking ? theme.accept : theme.scrim
-        nameLabel.textColor = isSpeaking ? theme.acceptText : theme.primaryText
-        nameLabel.font = .systemFont(ofSize: 12, weight: isSpeaking ? .semibold : .regular)
+        /*
+         说话 / 静音都收进名牌气泡里那一枚图标（2026-09-09 改版）。
+         **静音优先**：静音的人不可能在说话，两者互斥。
+         绿描边与绿名牌一并删掉——留着就是三处同时表达同一件事。
+        */
+        speechIcon.apply(speaking: isSpeaking, muted: !hasAudio, volume: volume)
+        namePlate.accessibilityLabel = !hasAudio ? "\(label)，已静音"
+            : isSpeaking ? "\(label)，正在说话" : label
         // 邀请中的占位格：整格 55% 不透明 + 顶部一行终局（规范 §06）。
         alpha = isRinging ? 0.55 : 1
         ringingLabel.isHidden = !isRinging
