@@ -142,7 +142,23 @@ actor IMFrameLoop {
 
     /// sendFrame 发一帧，并把应答喂回状态机。
     private func sendFrame(_ frame: IMOutgoingFrame) async {
-        guard let connection = connection() else { return }
+        /*
+         **没有连接不是「什么都不做」，是一次失败。**
+
+         原先这里是裸的 `guard let connection = connection() else { return }`：状态机已经
+         迁移过了，帧却没发出去，既不回滚也不报错。宿主在 `login()` 之前（或 `logout()`
+         之后）调一次 `call()`，通话机就永久停在 `.inviting`——界面「正在呼叫…」转个不停，
+         之后 `hangup()` 被本地拒成 2005、`cancel()` 产出的帧同样被丢掉，**再也回不到
+         idle**，下一通真电话也被 2005 挡住。走下面这条收场路径之后，宿主拿到的是一条
+         `2007 not_logged_in` 加一次正常的 `onCallEnd`，界面收得掉。
+         （Android 的 `IMSignalConnection.request` 未连接时就是立刻回 `NOT_LOGGED_IN`；
+         Web 的 `frameLoop.sendFrame` 同日补上。）
+         */
+        guard let connection = connection() else {
+            emitError(IMRTCError(.notLoggedIn, "\(frame.type)：信令未连接"))
+            await rollback(frame.type)
+            return
+        }
         let isPubOffer = frame.type == IMFrameType.roomOffer
             && frame.data["pc"]?.stringValue == IMPCRole.pub.wireValue
         if isPubOffer, !pubOffer.begin() {
@@ -158,46 +174,56 @@ actor IMFrameLoop {
             if isPubOffer { pubOffer.abort() }
             // 请求失败不该中断整个事件流：转成 error 事件交给宿主。
             emitError(error)
-            /*
-             **进房失败要把房间状态退回 idle**。
+            await rollback(frame.type)
+        }
+    }
 
-             不退的话状态机永远停在 `joining`，之后每一次 publish 都会被不变量 R1
-             本地拒成 2005，而宿主只看到两条没头没尾的 2005——真正的原因
-             （那条 room.join 被服务端拒了）已经淹在上一条 error 里了。
-             退回 idle 至少让「重进一次」成为可能。
-             */
-            if frame.type == IMFrameType.roomJoin {
-                await dispatch(.internalEvent(name: "join_failed"))
-            }
-            /*
-             **离房被拒也要退回 idle**，这是 join_failed 的镜像，漏掉它的代价更大。
+    /// rollback 把「这一帧没送到」翻译成状态机能收场的内部事件。
+    ///
+    /// **一张表管住所有中间态**：留在中间态的代价永远是同一种——界面停在一个转圈的屏上，
+    /// 而之后每一个动作都被不变量本地拒成 2005，宿主只看到一串没头没尾的 2005，
+    /// 真正的原因早淹在上一条 error 里了。四端同一张表
+    /// （Android 的 `IMCallEngine.onRequestFailed`、Web 的 `frameLoop.rollback`）。
+    private func rollback(_ type: String) async {
+        /*
+         **进房失败要把房间状态退回 idle**。
 
-             `room.leave` 会被拒是真事：服务端在「会话已不在房间里」时回 1203
-             （两人同时离房、或房间刚被「已空，已关闭」销毁掉，都撞得上）。
-             而被拒的语义恰恰是**我们已经不在房里了**，本地却还停在 leaving：
-             `leaveCallbacks` 一个都不会抛，于是 `media.close()` 永远不调用
-             （摄像头、麦克风一直开着），再点离房被 R1 拒成 2005，
-             再 join 也因为「不在 idle」被拒——除非 logout，这台 Engine 永远进不了房。
-             （Android 的 `IMCallEngine.onRequestFailed` 一直接着这一条。）
-            */
-            if frame.type == IMFrameType.roomLeave {
-                await dispatch(.internalEvent(name: "leave_failed"))
-            }
-            /*
-             同理，**通话类请求被拒也要退回 idle**。不退的话界面停在「正在呼叫…」，
-             而服务端根本没有这通电话，之后每次挂断都换回 1401 call_not_found，
-             用户永远退不出那一屏。
+         不退的话状态机永远停在 `joining`，之后每一次 publish 都会被不变量 R1
+         本地拒成 2005，而宿主只看到两条没头没尾的 2005——真正的原因
+         （那条 room.join 被服务端拒了）已经淹在上一条 error 里了。
+         退回 idle 至少让「重进一次」成为可能。
+         */
+        if type == IMFrameType.roomJoin {
+            await dispatch(.internalEvent(name: "join_failed"))
+        }
+        /*
+         **离房被拒也要退回 idle**，这是 join_failed 的镜像，漏掉它的代价更大。
 
-             **三帧都要接，不只是 invite。** `call.accept` 被拒（主叫刚取消，
-             服务端回 1401/1405）时通话机永久停在 `accepting`：onCallEnd 不抛、
-             来电页收不起来，而那时红按钮算出来的是 reject，
-             `reduceAct("reject")` 又要求 `ringing`——只换回又一个 2005，
-             用户除了杀进程出不去。`call.join` 同理。
-             （Android 的 onRequestFailed 一直是 INVITE / ACCEPT / JOIN 三个一起接的。）
-            */
-            if Self.callFailFrames.contains(frame.type) {
-                await dispatch(.internalEvent(name: "call_failed"))
-            }
+         `room.leave` 会被拒是真事：服务端在「会话已不在房间里」时回 1203
+         （两人同时离房、或房间刚被「已空，已关闭」销毁掉，都撞得上）。
+         而被拒的语义恰恰是**我们已经不在房里了**，本地却还停在 leaving：
+         `leaveCallbacks` 一个都不会抛，于是 `media.close()` 永远不调用
+         （摄像头、麦克风一直开着），再点离房被 R1 拒成 2005，
+         再 join 也因为「不在 idle」被拒——除非 logout，这台 Engine 永远进不了房。
+         （Android 的 `IMCallEngine.onRequestFailed` 一直接着这一条。）
+        */
+        if type == IMFrameType.roomLeave {
+            await dispatch(.internalEvent(name: "leave_failed"))
+        }
+        /*
+         同理，**通话类请求被拒也要退回 idle**。不退的话界面停在「正在呼叫…」，
+         而服务端根本没有这通电话，之后每次挂断都换回 1401 call_not_found，
+         用户永远退不出那一屏。
+
+         **三帧都要接，不只是 invite。** `call.accept` 被拒（主叫刚取消，
+         服务端回 1401/1405）时通话机永久停在 `accepting`：onCallEnd 不抛、
+         来电页收不起来，而那时红按钮算出来的是 reject，
+         `reduceAct("reject")` 又要求 `ringing`——只换回又一个 2005，
+         用户除了杀进程出不去。`call.join` 同理。
+         （Android 的 onRequestFailed 一直是 INVITE / ACCEPT / JOIN 三个一起接的。）
+        */
+        if Self.callFailFrames.contains(type) {
+            await dispatch(.internalEvent(name: "call_failed"))
         }
     }
 

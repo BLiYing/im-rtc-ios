@@ -11,6 +11,27 @@
 
 ## 当前焦点
 
+**会话没了却不给收场信号 + 没连接时帧被静默丢弃（2026-09-08）**，`./scripts/test.sh`
+十步全绿、186 条用例。分支 `fix/parity-room-left`（worktree `../wt-ios-parity`，
+**叠在 `fix/code-review-0908` 之上**）。**未真机复验。**
+
+这两条是 **Web 那轮 `/code-review high` 的跨端对账**查出来的，不是 iOS 自审出来的。
+
+| # | 缺口 | 症状 | 改法 |
+|---|---|---|---|
+| 1 | `IMRoomMachine.resume(_:resumed: false)` 只清房间、**一个事件都不抛** | 有 call 的场合有 `onCallEnd(network)` 兜着，**会议压根没有 call**：房间悄悄回 idle，而界面还显示「会议中」、计时器还在走；更要命的是一个结束类回调都没抛 → `leaveCallbacks` 不命中 → `media.close()` 永不调用，**摄像头麦克风一直开着**，上一轮 PC 还被带进下一次进房 | `IMEngineMachine` 抽出 `dropLostSession`：有 call 抛 `onCallEnd`（唯一出口，不重复补），没 call 但在房里补一条 `onRoomLeft` |
+| 2 | `IMFrameLoop.sendFrame` 的 `guard let connection else { return }` | 状态机已经迁移、帧却没发出去，既不回滚也不报错。`login()` 之前调一次 `call()` → 通话机永久停在 `.inviting`，`hangup()` 拒 2005、`cancel()` 的帧同样被丢，**再也回不到 idle**，下一通真电话也被 2005 挡住 | 改成一次失败：抛 `2007 not_logged_in` 并走 `rollback(frame.type)`（顺手把 catch 里那三段回滚抽成同一个 `rollback`，与 Android 的 `onRequestFailed` 逐条对齐） |
+
+**第 1 条三端同源**：Web（`engineMachine.dropLostSession`）与 Android
+（`IMEngineMachine.dropLostSession`）同日补的是同一段，断言也是同一组。
+**第 2 条 Android 早就是对的**——`IMSignalConnection.request` 未连接时立刻回
+`NOT_LOGGED_IN`，iOS 与 Web 是漏的那两个。
+
+**新增用例 5 条**（`Tests/IMCallEngineTests/LostSessionTests.swift`）：会议两条收场路径、
+有 call 时不重复抛、idle 时不凭空抛、`resumed=true` 一个字不变。
+
+---
+
 **code review 的三条收场缺口 + 两条资源账（2026-09-08）**，`./scripts/test.sh` 十步全绿、181 条用例。
 分支 `fix/code-review-0908`（worktree `../wt-ios-review-fixes`）。**未真机复验。**
 

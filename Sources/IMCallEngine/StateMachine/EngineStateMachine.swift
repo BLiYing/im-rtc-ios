@@ -55,20 +55,55 @@ public enum IMEngineMachine {
     private static func handleHelloOK(_ ctx: IMEngineContext, _ data: [String: IMJSON],
                                       nowMS: Int64) -> IMMachineOutput<IMEngineContext> {
         let resumed = Wire.bool(data, "resumed")
-        var emit = [IMEmittedEvent("onConnected", [
+        let connected = IMEmittedEvent("onConnected", [
             "session_id": .string(Wire.string(data, "session_id")),
             "resumed": .bool(resumed),
-        ])]
+        ])
 
-        let room = IMRoomMachine.resume(ctx.room, resumed: resumed)
-        emit.append(contentsOf: room.emit)
+        guard resumed else {
+            let dropped = dropLostSession(ctx, nowMS: nowMS)
+            return IMMachineOutput(dropped.state,
+                                   send: dropped.send,
+                                   emit: [connected] + dropped.emit)
+        }
 
+        let room = IMRoomMachine.resume(ctx.room, resumed: true)
+        var next = ctx
+        next.room = room.state
+        return IMMachineOutput(next, send: room.send, emit: [connected] + room.emit)
+    }
+
+    /// dropLostSession 收拾「服务端那侧的会话已经没了」这一件事：房间与通话都要收场。
+    ///
+    /// 「重连上了但 `resumed == false`」与「断得太久 `session_unrecoverable`」是同一件事
+    /// 的两个到达时机，所以共用这一段。
+    ///
+    /// # 必须给宿主一个收场信号
+    ///
+    /// `IMRoomMachine.resume(_:resumed: false)` 只是把房间清成 idle，**一个事件都不抛**。
+    /// 有 call 的场合还有 `onCallEnd(network)` 兜着，可**会议是直接 joinRoom 的、
+    /// 压根没有 call**——于是房间机悄悄回了 idle，而界面还显示着「会议中」、计时器还在走，
+    /// 用户完全不知道自己已经掉出去了；更糟的是一个结束类回调都没抛，
+    /// `IMFrameLoop` 的 `leaveCallbacks` 不命中，`media.close()` 永远不调用，
+    /// **摄像头与麦克风一直开着**，上一轮的 PeerConnection 还会被带进下一次进房。
+    ///
+    /// 所以：有通话就抛 `onCallEnd`（唯一出口，不再补 `onRoomLeft`，否则宿主记两遍账），
+    /// 没通话但在房里就补一条 `onRoomLeft`——房间的收场信号就是它。
+    /// **三端同源**：Web 的 `engineMachine.dropLostSession`、Android 的
+    /// `IMEngineMachine.dropLostSession` 是同一段。
+    private static func dropLostSession(_ ctx: IMEngineContext,
+                                        nowMS: Int64) -> IMMachineOutput<IMEngineContext> {
+        let room = IMRoomMachine.resume(ctx.room, resumed: false)
+        var emit = room.emit
         var call = ctx.call
-        if !resumed && ctx.call.state != .idle {
+
+        if ctx.call.state != .idle {
             // 不变量 I8 的那个唯一例外：服务端的 call.ended 送不到，本地合成一条。
             let synthesized = IMCallMachine.synthesizeNetworkEnd(ctx.call, nowMS: nowMS)
             call = synthesized.state
             emit.append(contentsOf: synthesized.emit)
+        } else if ctx.room.state != .idle {
+            emit.append(IMEmittedEvent("onRoomLeft", ["room_id": .string(ctx.room.roomID)]))
         }
 
         var next = ctx
@@ -92,18 +127,7 @@ public enum IMEngineMachine {
          见 `IMSignalConnection` 的 `giveUpDelayMS`。
          */
         if name == "session_unrecoverable" {
-            let room = IMRoomMachine.resume(ctx.room, resumed: false)
-            var emit = room.emit
-            var call = ctx.call
-            if ctx.call.state != .idle {
-                let synthesized = IMCallMachine.synthesizeNetworkEnd(ctx.call, nowMS: nowMS)
-                call = synthesized.state
-                emit.append(contentsOf: synthesized.emit)
-            }
-            var next = ctx
-            next.room = room.state
-            next.call = call
-            return IMMachineOutput(next, send: room.send, emit: emit)
+            return dropLostSession(ctx, nowMS: nowMS)
         }
         if name == "ws_closed_4403" {
             // 被踢：什么都不留。重连没有意义——那等于跟另一台设备打架。
