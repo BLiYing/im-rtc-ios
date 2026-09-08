@@ -83,6 +83,10 @@ extension IMCallEngine {
             // 状态机只认「被踢了」这一件事；原因是给宿主做处置判断的，两者分开走
             // （IMFrameLoop 里刻意不外发状态机那份 onKickedOut）。
             await loop.dispatch(.internalEvent(name: "ws_closed_4403"))
+
+        case .sessionUnrecoverable:
+            // 与「重连上了但 resumed=false」同一件事，只是不必等重连成功。
+            await loop.dispatch(.internalEvent(name: "session_unrecoverable"))
         }
     }
 }

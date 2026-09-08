@@ -39,7 +39,19 @@ public enum IMRTCLog {
         level = newLevel
     }
 
-    /// setSink 换一个日志接收端；传 nil 回到 `os.Logger`。
+    /**
+     setSink 装一个日志接收端。传 nil 摘掉。
+
+     **它是并联，不是替换**：装了 sink 之后 `os.Logger` 那一路照样写。
+
+     原先是「装了就 return」，代价在 2026-09-08 那次排查上现了原形——Demo 登录后装的是
+     把日志回传服务端的 `RemoteLogSink`，于是 Xcode 控制台里再也没有 Engine 日志；
+     而那天要查的故障**本身就是网络断了**，唯一的出口跟着一起没了：
+     iOS 侧日志停在 11:45:16，之后整整两分钟的现场一个字都没留下。
+
+     现场排查时人手里有的就是控制台，不能因为多了个回传就把它关掉——
+     Android 的 `DemoLogSink` 一开始就是 fan-out，注释里写的就是这条，iOS 这边漏了。
+     */
     public static func setSink(_ newSink: IMRTCLogSink?) {
         lock.lock(); defer { lock.unlock() }
         sink = newSink
@@ -69,10 +81,9 @@ public enum IMRTCLog {
         lock.unlock()
 
         guard messageLevel >= threshold else { return }
-        if let target {
-            target.write(level: messageLevel, message: message, fields: fields)
-            return
-        }
+        // **两路各写各的**：sink 抛不出异常，但它可能阻塞或失败（回传那一路要走网络），
+        // 那不该连累控制台这一路——控制台恰恰是网络出问题时唯一还剩下的出口。
+        target?.write(level: messageLevel, message: message, fields: fields)
         let rendered = fields.isEmpty
             ? message
             : message + " " + fields.keys.sorted().map { "\($0)=\(fields[$0] ?? "")" }.joined(separator: " ")

@@ -42,7 +42,7 @@ public enum IMEngineMachine {
         case let .recv(type, data):
             return routeFrame(ctx, type: type, data: data)
         case let .internalEvent(name):
-            return handleInternal(ctx, name)
+            return handleInternal(ctx, name, nowMS: nowMS)
         case let .act(op, args):
             return routeAct(ctx, op: op, args: args)
         }
@@ -78,7 +78,33 @@ public enum IMEngineMachine {
     }
 
     private static func handleInternal(_ ctx: IMEngineContext,
-                                       _ name: String) -> IMMachineOutput<IMEngineContext> {
+                                       _ name: String,
+                                       nowMS: Int64) -> IMMachineOutput<IMEngineContext> {
+        /*
+         **服务端那一侧已经不可能再恢复这条会话了**（§1.4 的恢复窗口过了）。
+
+         语义与「重连上了但 `resumed == false`」完全一样，所以走同一段代码：房间归零、
+         通话本地合成一条 `ended{network}`。差别只在**不必等重连成功**——
+         网络一直不回来的话那一刻永远不会到，界面就永远停在「正在重连」、
+         连挂断都点不动（真机 2026-09-08 的 iOS carol）。
+
+         「什么时候算过了窗口」由连接层算（只有它知道心跳周期），
+         见 `IMSignalConnection` 的 `giveUpDelayMS`。
+         */
+        if name == "session_unrecoverable" {
+            let room = IMRoomMachine.resume(ctx.room, resumed: false)
+            var emit = room.emit
+            var call = ctx.call
+            if ctx.call.state != .idle {
+                let synthesized = IMCallMachine.synthesizeNetworkEnd(ctx.call, nowMS: nowMS)
+                call = synthesized.state
+                emit.append(contentsOf: synthesized.emit)
+            }
+            var next = ctx
+            next.room = room.state
+            next.call = call
+            return IMMachineOutput(next, send: room.send, emit: emit)
+        }
         if name == "ws_closed_4403" {
             // 被踢：什么都不留。重连没有意义——那等于跟另一台设备打架。
             var next = IMEngineContext()

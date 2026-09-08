@@ -59,6 +59,15 @@ public struct IMConnectionEvents {
     /// `reason` 决定宿主该做什么，两者处置相反——合并成一个「被踢」的话，
     /// 宿主只能都当登录失效处理，把本可静默恢复的场景也变成「请重新登录」。
     public var onKickedOut: ((IMKickedOutReason) -> Void)?
+    /**
+     断得太久了，**服务端那一侧的会话已经不可能再恢复**（§1.4 的恢复窗口过了）。
+
+     与「重连上了但 `resumed == false`」是同一件事，只是**不必等重连成功**——
+     网络一直不回来的话那一刻永远不会到。少了它，界面就永远停在「正在重连」、
+     连挂断都点不动（挂断只产出一帧发不出去的 `call.hangup`，本地状态一动不动，
+     这是 §4.2 铁律 1 的直接后果）。真机 2026-09-08 的 iOS carol 就是这一幕。
+     */
+    public var onSessionUnrecoverable: (() -> Void)?
     /// 票快到期了，宿主该去取新票并 `updateToken`。见 `TokenExpiryTimer`。
     public var onTokenWillExpire: ((Int64) -> Void)?
     /// 内部错误。
@@ -77,6 +86,14 @@ public struct IMConnectionOptions {
     public var requestTimeoutMS: Int = 10_000
     public var webSocketFactory: IMWebSocketFactory = imURLSessionWebSocketFactory
     public var random: () -> Double = { Double.random(in: 0..<1) }
+    /**
+     覆盖「断多久算服务端已经放弃这条会话」的时长（毫秒）。**只为测试可注入。**
+
+     真值是 `3×ping + 30s + 余量`（见 `IMSignalConnection.giveUpDelayMS`），
+     默认 80 秒——一条用例不可能真等 80 秒，而这条路**全是时序**，
+     不测就等于没写（CONVENTIONS §9 点名的那一类）。
+     */
+    public var resumeGiveUpDelayMSForTesting: Int?
 
     public init(url: URL, token: String, deviceID: String) {
         self.url = url
@@ -89,6 +106,12 @@ public final class IMSignalConnection {
     private let queue = DispatchQueue(label: "com.imrtc.engine.signaling")
     /// maxAuthFailures 是连续几次 4401 之后彻底放弃（协议 §1.5 关闭码表）。三端同一个数。
     static let maxAuthFailures = 3
+    /// 协议 §1.4 的恢复窗口：30 秒。**四端同一个值**，服务端的 `ResumeWindow` 也是它。
+    static let resumeWindowSec = 30
+    /// 服务端判一条连接死掉要连续几个心跳周期收不到东西（§1.3）。
+    static let serverDeathPings = 3
+    /// 余量：跨过服务端窗口到期那一刻再收场，别跟它抢同一秒。
+    static let giveUpGraceSec = 5
 
     private var options: IMConnectionOptions
     private var events: IMConnectionEvents
@@ -101,6 +124,10 @@ public final class IMSignalConnection {
     /// 还没有结果的那个 `connect()`。见 `takeConnectContinuation()`。
     private var connectContinuation: CheckedContinuation<IMHelloOK, Error>?
     private var reconnectTimer: DispatchSourceTimer?
+    /// 服务端最近一次告知的心跳周期。`giveUpDelayMS` 要用它推算服务端何时判死。
+    private var pingIntervalSec = 15
+    /// 「服务端已经彻底放弃这条会话」的定时器。见 `giveUpDelayMS`。
+    private var unrecoverableTimer: DispatchSourceTimer?
     /// 连续鉴权失败次数。握手一成功、或宿主换了票，就清零——只有**连续**失败才说明票是死的。
     private var authFailures = 0
     /// 票到期提醒。**排程走同一条信令队列**——所有状态变更都在这条线上，不引入第二个并发域。
@@ -194,6 +221,16 @@ public final class IMSignalConnection {
             self.tokenExpiry.disarm()
             self.reconnectTimer?.cancel()
             self.reconnectTimer = nil
+            /*
+             **只有 logout 撤这条倒计时。**
+
+             其余「不再重连」的路（鉴权连续失败、握手参数被拒）都让它继续走完——
+             那些情形下服务端那一侧的会话同样会过期，通话同样该收场；
+             撤掉的话界面又会停在「正在重连」上出不来。
+             logout 是宿主主动拆掉一切，那之后不该再有任何回调。
+            */
+            self.unrecoverableTimer?.cancel()
+            self.unrecoverableTimer = nil
             self.pending.rejectAll(IMRTCError(.invalidState, "连接已关闭"))
             // 正连着一半就 logout：同样不能把 connect() 的调用方丢在那儿。
             self.takeConnectContinuation()?.resume(throwing:
@@ -293,6 +330,10 @@ public final class IMSignalConnection {
                 self.state = .connected
                 self.reconnectAttempt = 0
                 self.authFailures = 0
+                self.pingIntervalSec = ok.pingIntervalSec
+                // 连上了就别再倒计时了——不管 resumed 是真是假，服务端都已经给出裁决。
+                self.unrecoverableTimer?.cancel()
+                self.unrecoverableTimer = nil
                 self.heartbeat.start(intervalSec: ok.pingIntervalSec)
                 self.tokenExpiry.arm(expiresAtMS: ok.tokenExpiresAtMS)
                 IMRTCLog.info("信令已连接", ["uid": ok.uid, "resumed": String(ok.resumed)])
@@ -467,7 +508,54 @@ public final class IMSignalConnection {
             return
         }
         state = .reconnecting
+        armUnrecoverableTimer()
         scheduleReconnect()
+    }
+
+    /*
+     断开多久之后可以断定「服务端那一侧的会话没了」。
+
+     # 为什么不是恢复窗口那 30 秒
+
+     服务端的 30 秒**不是从我们断开的那一刻算起的**，是从**它自己察觉**的那一刻算起。
+     而它靠读超时察觉：连续 3 个心跳周期收不到任何东西才判死（§1.3）。
+     我们断开时距离上一帧最多一个心跳周期，所以最晚的到期时刻是
+     `断开 + 3×ping + 30s`——按默认 15 秒心跳就是 45 + 30 = 75 秒，再加一点余量。
+
+     # 为什么必须取上界
+
+     取短了就会撒谎：真机 2026-09-08 那通，断开 14 秒后重连**成功恢复**，通话好端端地继续。
+     在那之前宣布「通话已结束」是把一通还能救回来的电话杀掉，而且服务端还认为我们在房里，
+     房间会挂着一个幽灵成员。**宁可让用户多看几十秒「正在重连」，也不能提前下结论。**
+     */
+    var giveUpDelayMS: Int {
+        if let override = options.resumeGiveUpDelayMSForTesting { return override }
+        return (Self.serverDeathPings * pingIntervalSec + Self.resumeWindowSec + Self.giveUpGraceSec) * 1000
+    }
+
+    /**
+     起「服务端已经彻底放弃」的倒计时。
+
+     **只在第一次断开时起**：每一次重连失败都会走到这里，每次都重排的话截止时刻
+     就一直往后挪、永远不会到——而那正是它要治的病。起点是第一次断开的那一刻，
+     与服务端算的是同一笔账。
+     */
+    private func armUnrecoverableTimer() {
+        guard unrecoverableTimer == nil else { return }
+        let delay = giveUpDelayMS
+        IMRTCLog.info("恢复窗口倒计时已起", ["delay_ms": String(delay)])
+        let timer = DispatchSource.makeTimerSource(queue: queue)
+        timer.schedule(deadline: .now() + .milliseconds(delay))
+        timer.setEventHandler { [weak self] in
+            guard let self else { return }
+            self.unrecoverableTimer = nil
+            // 服务端已经丢掉这个会话，再拿它去要 resume 只会白跑一趟。
+            self.sessionID = ""
+            IMRTCLog.warn("断开已超过恢复窗口，会话不可恢复")
+            self.events.onSessionUnrecoverable?()
+        }
+        unrecoverableTimer = timer
+        timer.resume()
     }
 
     private func scheduleReconnect() {

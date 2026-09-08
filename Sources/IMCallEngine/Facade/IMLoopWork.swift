@@ -24,4 +24,6 @@ enum IMLoopWork: Sendable {
     case disconnected
     /// 被踢。原因由连接层单独上报给宿主，状态机只认「被踢了」。
     case kickedOut
+    /// 断得太久，服务端那一侧的会话已经不可能再恢复（§1.4）。
+    case sessionUnrecoverable
 }

@@ -486,6 +486,9 @@ import Foundation
             inlet.yield(.kickedOut)
             self.dispatcher.emitKickedOut(reason)
         }
+        events.onSessionUnrecoverable = {
+            inlet.yield(.sessionUnrecoverable)
+        }
         events.onTokenWillExpire = { [weak self] expiresAtMS in
             self?.dispatcher.emitTokenWillExpire(expiresAtMS)
         }
