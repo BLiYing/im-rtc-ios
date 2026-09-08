@@ -350,7 +350,114 @@ final class SignalingTests: XCTestCase {
         XCTAssertNotNil(next, "1102 之后不该停止重连")
     }
 
+    /// 三类分流：**不可重试 ≠ 参数不对**，三者的处置完全不同。
+    ///
+    /// 合成一类就是给宿主一条错的建议：1101 明明换一枚票就能好，报成 configRejected
+    /// 会让宿主去翻配置；1104 是被顶下线，该回登录页而不是改参数。
+    func testHandshakeRejectionSplitsIntoThreeReasons() async throws {
+        for (code, wireName, want) in [
+            (1101, "token_invalid", IMKickedOutReason.authExpired),
+            (1104, "kicked_out", IMKickedOutReason.takenOver),
+            (1004, "bad_params", IMKickedOutReason.configRejected),
+        ] {
+            let reasons = ReasonBox()
+            var events = IMConnectionEvents()
+            events.onKickedOut = { reason in reasons.record(reason) }
+            let (connection, box) = makeConnection(events: events)
+            _ = try await reconnectThenFailHello(connection, box,
+                                                 code: code, name: wireName, retryable: false)
+
+            try await Task.sleep(nanoseconds: 200_000_000)
+            XCTAssertEqual(reasons.all, [want], "\(wireName) 分错类了")
+            XCTAssertEqual(connection.currentState, .closed)
+        }
+    }
+
+    /// 本端不认识的终局码，要信帧上自带的 `retryable`。
+    ///
+    /// 未知码在结算时会被折成 internalError（1501，而它 `retryable == true`），
+    /// 只看折算结果的话**服务端每加一个新的终局码，客户端就多一种无限重连**——
+    /// 1106 在本仓漏过一次，症状正是这个。
+    func testUnknownNonRetryableCodeStopsReconnecting() async throws {
+        let reasons = ReasonBox()
+        var events = IMConnectionEvents()
+        events.onKickedOut = { reason in reasons.record(reason) }
+        let (connection, box) = makeConnection(events: events)
+        let ws = try await reconnectThenFailHello(connection, box,
+                                                  code: 9999, name: "brand_new_final_code",
+                                                  retryable: false)
+
+        try await Task.sleep(nanoseconds: 200_000_000)
+        XCTAssertEqual(reasons.all, [.configRejected], "未知终局码该按帧上的 retryable 放弃")
+        XCTAssertEqual(connection.currentState, .closed)
+
+        // 真正要守的是这条：不许退回无限重连。
+        let madeBefore = box.count
+        try await Task.sleep(nanoseconds: 2_500_000_000)
+        XCTAssertEqual(box.count, madeBefore, "未知终局码之后还在重连")
+        _ = ws
+    }
+
+    /// 未知码而帧上说可重试：照常退避重连，别把服务端新加的临时故障当成终局。
+    func testUnknownRetryableCodeKeepsReconnecting() async throws {
+        let reasons = ReasonBox()
+        var events = IMConnectionEvents()
+        events.onKickedOut = { reason in reasons.record(reason) }
+        let (connection, box) = makeConnection(events: events)
+        let ws = try await reconnectThenFailHello(connection, box,
+                                                  code: 9999, name: "brand_new_transient_code",
+                                                  retryable: true)
+
+        try await Task.sleep(nanoseconds: 200_000_000)
+        XCTAssertEqual(reasons.all, [], "帧上说可重试就不该把宿主踢下线")
+        let next = try await waitForNewSocket(box, after: ws)
+        XCTAssertNotNil(next, "未知的可重试码之后不该停止重连")
+    }
+
+    /// 宿主自己 logout 不是「服务端拒了你的参数」。
+    ///
+    /// ``IMSignalConnection/close()`` 会拿 `2005 invalid_state`（它 `retryable == false`）
+    /// 把在飞的握手结掉。只看 `retryable` 的话，一次正常的 logout 会抛 configRejected；
+    /// 而静默续期正是先 logout 再换票——那就成了「续期把人踹回登录页」。
+    func testHostLogoutDuringHandshakeIsNotAServerRejection() async throws {
+        let reasons = ReasonBox()
+        var events = IMConnectionEvents()
+        events.onKickedOut = { reason in reasons.record(reason) }
+        let (connection, box) = makeConnection(events: events)
+        let first = try await handshake(connection, box)
+
+        first.closeFromServer(IMCloseCode.goingAway)
+        let ws = try await waitForNewSocket(box, after: first)
+        ws.open()
+        // 握手已经在飞，此刻宿主按下 logout。
+        _ = try await waitForFrame(ws, ofType: IMFrameType.hello)
+        connection.close()
+
+        try await Task.sleep(nanoseconds: 200_000_000)
+        XCTAssertEqual(reasons.all, [], "一次正常的 logout 被报成了服务端拒绝")
+    }
+
     // MARK: - 辅助
+    /// reconnectThenFailHello 走一遍「连上 → 服务端断开 → 重连那次的握手被错误回掉」。
+    ///
+    /// **必须走重连路径**：首次 `connect()` 失败只是把错误抛给宿主，重连器压根没参与，
+    /// 在那里数 socket 恒等于 1，测不出「会不会无限重连」。
+    /// 末尾那次 `closeFromServer` 不能省：真实服务端拒了握手就会关连接，不关的话
+    /// 没有任何东西会去排下一次重连，「不再重连」那条断言就成了永远为真的空断言。
+    private func reconnectThenFailHello(_ connection: IMSignalConnection,
+                                        _ box: SocketBox,
+                                        code: Int, name: String,
+                                        retryable: Bool) async throws -> FakeWebSocket {
+        let first = try await handshake(connection, box)
+        first.closeFromServer(IMCloseCode.goingAway)
+        let ws = try await waitForNewSocket(box, after: first)
+        ws.open()
+        let hello = try await waitForFrame(ws, ofType: IMFrameType.hello)
+        ws.receive(errorFrame(reqID: hello.reqID, code: code, name: name, retryable: retryable))
+        ws.closeFromServer(IMCloseCode.goingAway)
+        return ws
+    }
+
 
     /// errorFrame 造一个针对某个 req_id 的 sys.error 应答。
     private func errorFrame(reqID: String, code: Int, name: String, retryable: Bool) -> String {

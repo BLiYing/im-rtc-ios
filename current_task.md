@@ -11,6 +11,34 @@
 
 ## 当前焦点
 
+**握手被拒按「谁救得了」分流（2026-09-08）**，`./scripts/test.sh` 十步全绿。
+
+补齐 Android `629352a` 那条五端契约。原先 `abortIfHandshakeRejected` 是
+「不可重试 → 一律 `configRejected`」一个桶，**不可重试 ≠ 参数不对**，
+合成一类等于给宿主一条错的建议。同轮修掉两条边界，三个缺陷都在同一个函数里：
+
+| 缺陷 | 症状 | 改法 |
+|---|---|---|
+| 三类合成一桶 | 1101 明明换一枚票就能好，报成「去改配置」；1104 是被顶下线，该回登录页 | 1101 → `authExpired`、1104 → `takenOver`、其余 → `configRejected`。`IMKickedOutReason` 三个值本来就都在，只是没往那儿分 |
+| local 组没挡 | `close()` 拿 `2005 invalid_state`（`retryable == false`）结掉在飞的握手，那是**宿主自己按的 logout**。只看 `retryable` 的话一次正常 logout 就报成「服务端拒了你的参数」——而静默续期正是先 logout 再换票，等于**续期把人踹回登录页** | `giveUpReason` 先 `guard !error.code.isLocal` |
+| 未知码兜底反了 | 未知码在 `PendingRequests.settle` 里折成 `internalError`（1501，而它 `retryable == true`）→ **服务端每加一个新的终局码，客户端就多一种无限重连**。Android 漏 1106 那次就是这个形状 | 折算前把帧上的 `retryable` 留进 `IMRTCError.unknownCodeRetryable`（internal，不进公开 API），只在本端不认识那个码时才有值；判据变成 `unknownCodeRetryable ?? code.isRetryable` |
+
+判据仍然是错误码表里的 `retryable`（四端共用的 `error_codes.json`），**没有另立名单**。
+
+**合入时顺手拆了一刀**：rebase 到「本地收场」那一刀之上后，`SignalConnection.swift`
+被两边加起来顶到 617 > 600（单独哪条分支都不超）。判据独立成
+`Signaling/HandshakeGiveUp.swift` 的自由函数，文件回到 577——**与 Web 那边对称**
+（`signaling/handshakeGiveUp.ts` 也是同一个纯函数）。
+
+**新增 5 条用例，注入旧逻辑验过载重**：把 `giveUpReason` 换回「不可重试 → configRejected」，
+三条立刻红（分流、未知终局码、logout 误判），第四条是护栏用例、本就不该被这个注入影响。
+
+**没做**：本轮纯信令逻辑，**没上真机**；Web 侧同一条契约在 `im-rtc-web` 并行修。
+`CLIENT_PARITY.md` 第 180 行那格与第 124 行的历史说明目前仍不准（写着「只有 Android 有」），
+等 Web 也落地后一次改到位。
+
+---
+
 **上行协商闸门补上了（2026-09-08）**，`./scripts/test.sh` 十步全绿。**未真机复验。**
 
 真机日志里的这一串：
@@ -66,24 +94,6 @@ Demo 登录后装的是回传服务端的 `RemoteLogSink`，于是 Xcode 控制�
 **没做**：「离线时按挂断也立即收场」这一半**按拍板延期**。
 
 **SDK 层校验 device_id（2026-09-07）**。补齐 Android 那半个改动，和 Web 同一轮。
-
-**不拦的症状是「登录失败，没有下文」**：服务端回 1004，而它那句说得很清楚的
-「device_id 只允许 `[A-Za-z0-9_-]`」到不了宿主手里——宿主看到的只有一个 `bad_params`。
-安卓真机上踩过一次（`Build.MODEL` 是 `Pixel 2 XL`），查了一轮才定位到是机型名。
-
-| 决定 | 为什么 |
-|---|---|
-| 校验放在 `login()` 里，**不在 init** | `init(url:deviceID:media:)` 是 `@objc` 且不抛错，加 `throws` 会打断每一个宿主。`login` 本来就 `async throws`，而且校验发生在开 socket 之前，早到足以起作用 |
-| **只校验不改写** | `device_id` 要求跨重启稳定，SDK 悄悄改掉，宿主自己那套设备管理就跟服务端对不上账。清洗是宿主的事——而且别用「删掉非法字符」：`MI 8` 与 `MI8` 删完撞成同一个 id，两台设备会互相顶号 |
-| 抛 `IMRTCError(.badParams)` | 和服务端拒绝时**同一个 1004**，宿主不用为「本地拦的」和「服务端拒的」写两遍分支 |
-| `IMDeviceID.maxBytes` 公开 | 不给常量，宿主就把 64 抄进自己代码里，协议一改两边对不上 |
-
-**测试里踩到的坑**：校验一失灵，`login` 会去等一条永不 open 的假 socket，于是那条
-用例**不是变红而是挂死**——注入 bug 验证时 xctest 一声不吭地悬在那里。挂死是最糟的红：
-CI 上分不清是断言失败还是环境卡了。现在用 `expectation` + `timeout: 2.0` 限住。
-
-**并行**：ObjC 侧的 `NSError` 桥接（`IMRTCErrorDomain` / `IMRTCErrorNameKey` /
-`IMRTCErrorInfo`）由另一轮同时在做，`DeviceIDTests` 里那两条 ObjC 视角的用例来自那一轮。
 
 ## 下一步
 

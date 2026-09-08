@@ -210,9 +210,29 @@ public struct IMRTCError: Error, Equatable, Sendable {
     public let code: IMErrorCode
     public let detail: String
 
+    /// 本端不认识线路上那个码时，帧上自带的 `retryable`；认识就是 `nil`。
+    ///
+    /// 为什么要单独留这一手：结算 `sys.error` 时未知码会被折成
+    /// ``IMErrorCode/internalError``（1501，而它 `retryable == true`），
+    /// 于是**服务端新加的终局码在本端一律长成「可重试」**，握手被拒也会退回无限重连。
+    /// 本端这张表只是上次同步时的快照，服务端比我们新是常态——所以未知码
+    /// 一概以帧上带的那一位为准，不信折算后的码。Android 侧漏过 1106 一次，
+    /// 症状正是这个形状。
+    ///
+    /// 只在模块内可见：它是信令层判「要不要放弃重连」的内部线索，不进公开 API。
+    let unknownCodeRetryable: Bool?
+
     public init(_ code: IMErrorCode, _ detail: String = "") {
         self.code = code
         self.detail = detail
+        self.unknownCodeRetryable = nil
+    }
+
+    /// 结算 `sys.error` 应答专用。`unknownCodeRetryable` 只有本端不认识那个码时才该有值。
+    init(_ code: IMErrorCode, _ detail: String, unknownCodeRetryable: Bool?) {
+        self.code = code
+        self.detail = detail
+        self.unknownCodeRetryable = unknownCodeRetryable
     }
 }
 

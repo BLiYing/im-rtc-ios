@@ -62,8 +62,17 @@ final class PendingRequests {
 
         // sys.error 也是应答：**它带着 req_id 回来**，要结算成失败而不是当事件抛。
         if envelope.type == IMFrameType.error {
-            let code = IMErrorCode(rawValue: Int(Wire.int(envelope.data, "code"))) ?? .internalError
-            waiter.complete(.failure(IMRTCError(code, Wire.string(envelope.data, "msg"))))
+            let raw = Int(Wire.int(envelope.data, "code"))
+            let known = IMErrorCode(rawValue: raw)
+            // 本端不认识这个码时，把帧上自带的 retryable 一起带走：折成 internalError
+            // 之后那一位就永远是 true 了，而新加的终局码恰恰要靠它才停得下来
+            // （见 IMRTCError.unknownCodeRetryable）。认识的码不带，免得线路上的
+            // 一位盖掉一致性向量里的定义。
+            let unknownCodeRetryable = known == nil ? envelope.data["retryable"]?.boolValue : nil
+            waiter.complete(.failure(IMRTCError(
+                known ?? .internalError,
+                Wire.string(envelope.data, "msg"),
+                unknownCodeRetryable: unknownCodeRetryable)))
             return true
         }
         waiter.complete(.success(IMRequestResult(envelope: envelope, data: decode(envelope))))
