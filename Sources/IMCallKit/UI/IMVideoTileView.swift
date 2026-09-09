@@ -52,8 +52,6 @@ public final class IMVideoTileView: UIView {
         namePlate.layer.cornerRadius = 6
         namePlate.clipsToBounds = true
 
-        // 角标是纯图形，读屏软件念不出「静音」。
-
         netPlate.backgroundColor = theme.scrim
         netPlate.layer.cornerRadius = 12
         netPlate.isHidden = true
@@ -86,14 +84,6 @@ public final class IMVideoTileView: UIView {
 
             avatarDisc.centerXAnchor.constraint(equalTo: centerXAnchor),
             avatarDisc.centerYAnchor.constraint(equalTo: centerYAnchor),
-
-            // 静音角标放右上，与左下的名字牌分开：名字可能很长，挤在一起时角标会被顶出格子。
-            /*
-             静音角标跟着名字牌走，**在它右边**（v3.2 改）。
-
-             原先在右上角，而 1v1 的全屏画面是铺满整屏的——那个位置正好压在状态栏的
-             时间与电量上。挪下来之后两者一起排，也不会再和系统栏打架。
-            */
 
             netPlate.topAnchor.constraint(equalTo: topAnchor, constant: Self.plateInset),
             netPlate.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -Self.plateInset),

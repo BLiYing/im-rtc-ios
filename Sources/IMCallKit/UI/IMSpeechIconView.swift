@@ -32,6 +32,8 @@ final class IMSpeechIconView: UIView {
     private let micSlash = UIImageView()
     private var isAnimating = false
     private var quietWork: DispatchWorkItem?
+    /// 上一次写进条上的颜色，用来避开无谓的重写。见 `refreshTheme()`。
+    private var appliedBarColor: CGColor?
 
     static let iconSize = CGSize(width: 9, height: 10)
     private static let barWidth: CGFloat = 2
@@ -47,13 +49,11 @@ final class IMSpeechIconView: UIView {
         super.init(frame: frame)
         isUserInteractionEnabled = false
         for bar in bars {
-            bar.backgroundColor = IMKitTheme.current.speakingBorder.cgColor
             bar.cornerRadius = Self.barWidth / 2
             bar.isHidden = true
             layer.addSublayer(bar)
         }
         micSlash.image = IMKitIcon.micSlash.image(pointSize: 9)
-        micSlash.tintColor = IMKitTheme.current.mutedBadge
         micSlash.contentMode = .center
         micSlash.isHidden = true
         micSlash.frame = CGRect(origin: .zero, size: Self.iconSize)
@@ -81,6 +81,7 @@ final class IMSpeechIconView: UIView {
      - Parameter volume: 0~100，服务端给的音量，映射到峰值高度。
      */
     func apply(speaking: Bool, muted: Bool, volume: Int) {
+        refreshTheme()
         if muted {
             quietWork?.cancel(); quietWork = nil
             stopBars()
@@ -101,6 +102,29 @@ final class IMSpeechIconView: UIView {
         }
         quietWork = work
         DispatchQueue.main.asyncAfter(deadline: .now() + Self.holdSeconds, execute: work)
+    }
+
+    /**
+     取色**放在每次 apply 里，不放在 init**。
+
+     `IMKitTheme.current` 是个可写的全局，宿主随时能换一套配色；而 `CALayer.backgroundColor`
+     要的是 `CGColor`——一个已经定死的值，不像 `UIColor` 那样会自己跟着走。
+     在 init 里取一次的话，构造之后再改主题的宿主拿到的永远是旧的绿
+     （旧代码是在 `apply` 里读 `IMKitTheme.current` 的，换主题一直是生效的，别把它丢了）。
+
+     只在真的变了才写：这个方法 300ms 就会被调一次，而给 `CALayer` 赋色会触发一次
+     隐式动画，每次都写等于让三根条一直在做多余的颜色过渡。
+     */
+    private func refreshTheme() {
+        let theme = IMKitTheme.current
+        micSlash.tintColor = theme.mutedBadge
+        let color = theme.speakingBorder.cgColor
+        if let applied = appliedBarColor, applied == color { return }
+        appliedBarColor = color
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        for bar in bars { bar.backgroundColor = color }
+        CATransaction.commit()
     }
 
     private func startBars(volume: Int) {
