@@ -12,6 +12,21 @@
 
 ## 当前焦点
 
+**2026-09-09 晚：ICE 自愈补上放弃阈值，2006 从死码变成真出口（分支 `fix/parity-leave-failed-and-2006`）。**
+
+扫四端静默失败点扫出来的：`mediaNegotiationFailed`（2006）**本仓此前只出现在
+`IMErrorCode.swift` 里**，一个发射点都没有。`IMCallEngine.mediaEvents()` 里 pub 判 failed
+只重启不上报、sub 判 failed **什么都不做**——下行永久失败在界面上完全无感：
+格子在、画面黑、计时照走。
+
+按协议 §7.2 改成：pub 连续 `pubIceGiveUp`（3）次重启仍 failed 抛一次 2006，
+之后继续重试但不再重复抛；sub 立即抛；回 connected 清零。
+计数归 `stateQueue`（这两个是从 WebRTC 的信令线程改的），判定与记账在同一次 `sync` 里完成，
+否则两条线程能各自读到 2 再各自加到 3，宿主收到两条 2006。
+新增 `emitLocalError(_:)` 收口本地错误码的抛出。
+
+`./scripts/test.sh` 全绿（10 步，194 个用例），`FacadeTests.swift` 新增 4 条。
+
 **2026-09-09 一整天：说话指示器改版 + 语音判定重做 + 四个真机 bug。全部已合入 main 并推送。**
 
 > **没有一条经过真机验收**——除了下面单独标注的。真机清单见「下一步」。
