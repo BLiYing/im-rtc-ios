@@ -146,8 +146,21 @@ public final class IMCallController: NSObject {
 
     /// 前后摄像头翻转。**纯媒体动作，不改视图状态**——镜像由媒体层自己处理。
     public func switchCamera() {
-        Task { await engine.switchCamera() }
+        Task {
+            await engine.switchCamera()
+            /*
+             **翻完要重画一次。**
+
+             镜像与否取决于「现在是不是前置」，而那个状态不在 `IMCallViewState` 里
+             （它归媒体层），所以 `state` 一个字都没变、`didSet` 也就不会触发。
+             不补这一下，翻到后置之后画面还镜像着，直到下一次别的事件来重画。
+            */
+            await MainActor.run { self.broadcast() }
+        }
     }
+
+    /// 当前是不是前置摄像头。**本端预览要不要镜像看它**——后置绝不能镜像。
+    public var isUsingFrontCamera: Bool { engine.isUsingFrontCamera }
 
     public func toggleSpeaker() {
         let on = !state.selfState.speakerOn

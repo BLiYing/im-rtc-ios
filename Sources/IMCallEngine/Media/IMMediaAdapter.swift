@@ -155,6 +155,16 @@ public protocol IMMediaAdapter: AnyObject, Sendable {
     func switchCamera() async
 
     /**
+     当前用的是不是前置摄像头。**本端预览要不要镜像全看它。**
+
+     只有媒体层知道这件事（它才认识 `AVCaptureDevice.Position`），
+     而决定「画面要不要左右翻」的是界面层——所以要有这么一个出口。
+
+     给了默认实现，已有的适配器不受影响：绝大多数场景本来就只用前置。
+     */
+    var isUsingFrontCamera: Bool { get }
+
+    /**
      claimRemoteTracks 告诉媒体层「哪条 track_id 属于哪个 uid」（`[track_id: uid]`）。
 
      **这一步不能省。** 媒体层拿到下行轨道时只知道 track_id（msid 第二段），
@@ -176,4 +186,9 @@ public protocol IMMediaAdapter: AnyObject, Sendable {
 
     /// close 关掉两条 PC 并停掉所有本端轨道。
     func close()
+}
+
+public extension IMMediaAdapter {
+    /// 默认按前置算——纯信令形态与只用前置的实现都不必操心它。
+    var isUsingFrontCamera: Bool { true }
 }

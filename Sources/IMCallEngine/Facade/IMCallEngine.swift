@@ -396,6 +396,9 @@ import Foundation
      **不重新协商**：换的是同一条轨道的采集源，`track_id` / `cid` 都不变，
      服务端与对端不需要知道。没有媒体适配器、或只有一个摄像头时静默忽略。
     */
+    /// 当前用的是不是前置摄像头。**本端预览要不要镜像全看它**（后置绝不能镜像）。
+    @objc public var isUsingFrontCamera: Bool { media?.isUsingFrontCamera ?? true }
+
     @objc public func switchCamera() async {
         await media?.switchCamera()
     }
