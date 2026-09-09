@@ -116,6 +116,7 @@ public final class IMVideoTileView: UIView {
     /// - Parameter avatarSize: 头像盘直径，默认 44；1v1 全屏那一格给 96。
     /// - Parameter isMirrored: 本端预览水平镜像（人照镜子的习惯）；远端不镜像。
     public func apply(uid: String, label: String, hasVideo: Bool, hasAudio: Bool, isSpeaking: Bool, volume: Int = 0,
+                      showsSpeaking: Bool = true,
                       isRinging: Bool = false, settled: IMSettledOutcome = .none, networkLevel: Int = 0,
                       avatarSize: CGFloat = 44, isMirrored: Bool = false,
                       avatarImage: UIImage? = nil) {
@@ -136,13 +137,14 @@ public final class IMVideoTileView: UIView {
          **静音优先**：静音的人不可能在说话，两者互斥。
          绿描边与绿名牌一并删掉——留着就是三处同时表达同一件事。
         */
-        speechIcon.apply(speaking: isSpeaking, muted: !hasAudio, volume: volume)
+        speechIcon.apply(speaking: isSpeaking, muted: !hasAudio, volume: volume,
+                         showsSpeaking: showsSpeaking)
         // **必须自己声明成无障碍元素**：namePlate 是个普通 UIView，
         // 只设 accessibilityLabel 的话读屏软件根本不会念它，会掉进里头的 nameLabel
         // 只读出名字——静音与说话就此静默消失（原先的 mutedPlate 是有这一行的）。
         namePlate.isAccessibilityElement = true
         namePlate.accessibilityLabel = !hasAudio ? "\(label)，已静音"
-            : isSpeaking ? "\(label)，正在说话" : label
+            : (isSpeaking && showsSpeaking) ? "\(label)，正在说话" : "\(label)，麦克风已开启"
         // 邀请中的占位格：整格 55% 不透明 + 顶部一行终局（规范 §06）。
         alpha = isRinging ? 0.55 : 1
         ringingLabel.isHidden = !isRinging
