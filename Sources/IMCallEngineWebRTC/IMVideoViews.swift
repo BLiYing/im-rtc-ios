@@ -74,7 +74,7 @@ func imLocalViewKey(_ cid: String) -> String { ":local:\(cid)" }
  */
 final class IMVideoRegistry {
     /// owner（uid 或 `:local:cid`）→ 渲染视图。
-    private var views: [String: RTCMTLVideoView] = [:]
+    private var views: [String: IMAspectVideoView] = [:]
     /// owner → 轨道。
     private var tracks: [String: RTCVideoTrack] = [:]
     /// track_id → 还不知道归属的轨道。
@@ -187,39 +187,75 @@ final class IMVideoRegistry {
     }
 
     /// detachRenderer 把 owner 的视图从它的轨道上摘下来。**重复调用安全。**
-    private func detachRenderer(owner: String, view: RTCMTLVideoView) {
+    private func detachRenderer(owner: String, view: IMAspectVideoView) {
         guard rendered.remove(owner) != nil else { return }
         tracks[owner]?.remove(view)
     }
 
-    private func makeRenderView() -> RTCMTLVideoView {
-        let view = RTCMTLVideoView(frame: .zero)
-        /*
-         **按源的实际宽高比渲染，放不满的地方留黑边。**
-
-         这一条**推翻了草图 §03 的「COVER」**（原注释写的是「留黑边比裁掉一点更难看」）。
-         规则与完整理由见 `im-rtc-server/docs/mechanism/VIDEO_RENDERING.md`（五仓统一）。
-
-         推翻它的依据是真机实测（2026-09-10）：手机推竖屏 720×1280、浏览器推横屏
-         1280×720，**两种源混在一个房间里是常态**，而格子形状只有一种。
-         方向不一致时 `scaleAspectFill` 会按长边匹配、把源放大两倍以上再裁掉溢出——
-         代价不是「裁掉一点」，是**画面糊 + 人脸被裁掉上下两段**。
-
-         排除带宽的证据很硬：同一通电话里下发上界是 h、丢包 0.7%，
-         收到的就是最高层、链路也好，糊纯粹是渲染放大出来的。
-         判别也很干净：同样网络下 Android ↔ iOS（都竖屏）清楚，
-         只有 Android ↔ Web（方向不一致）两个方向都糊。
-
-         本端预览一并用 FIT，不开特例：它与屏幕方向天然一致，看起来没区别。
-        */
-        view.videoContentMode = .scaleAspectFit
-        return view
-    }
+    private func makeRenderView() -> IMAspectVideoView { IMAspectVideoView(frame: .zero) }
 
     /// onMain 保证在主线程执行。**用 async 不用 sync**（CONVENTIONS §5 禁止 main.sync）；
     /// 已经在主线程时直接跑，免得挂载比调用方晚一个 runloop。
     private func onMain(_ body: @escaping () -> Void) {
         if Thread.isMainThread { body() } else { DispatchQueue.main.async(execute: body) }
+    }
+}
+
+/**
+ 会自己决定「裁切填满还是留黑边」的渲染视图。
+
+ 判据是 `imShouldFillVideo`（纯算术，在 Engine 里，有单测）：
+ 裁切后画面还剩 ≥ 56.25% 可见就填满，否则留边。
+ 规则与真机依据见 `im-rtc-server/docs/mechanism/VIDEO_RENDERING.md`（五仓统一）。
+
+ # 为什么要自己算，不让界面层传
+
+ `IMCallKit` 只依赖 `IMCallEngine`、够不到这个类，传不了「此刻是九宫格还是全屏」。
+ 而判据只要两个尺寸就够——**九宫格里竖屏源正好落在阈值上、仍然满格无黑边**
+ （这是第一版「一律 FIT」被推翻的原因：那样九宫格白留两条宽黑边）；
+ **竖屏全屏里横屏源只剩 28% 可见，才留黑边**（填满会是 3 倍放大 + 砍掉七成）。
+
+ # 两个触发点都要接
+
+ · 视频尺寸变了（对端转屏、换摄像头）→ `RTCVideoViewDelegate`；
+ · 自己的 bounds 变了（进出全屏、九宫格行列变化、设备转屏）→ `layoutSubviews`。
+   少接任何一个，都会在那种变化之后停在上一次算出来的模式上。
+
+ 自己当自己的 delegate：这个视图没有别的观察者，多一层转发只会多一处能漂的地方。
+ */
+final class IMAspectVideoView: RTCMTLVideoView, RTCVideoViewDelegate {
+
+    /// 最近一次拿到的视频尺寸。**已经旋转过**——iOS 的 delegate 给的就是显示尺寸
+    /// （与 Android 不同，那边给的是未旋转缓冲区 + 旋转角）。
+    private var videoSize: CGSize = .zero
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        delegate = self
+        applyContentMode()
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { fatalError("不从 storyboard 构造") }
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        applyContentMode()
+    }
+
+    func videoView(_ videoView: RTCVideoRenderer, didChangeVideoSize size: CGSize) {
+        videoSize = size
+        applyContentMode()
+    }
+
+    private func applyContentMode() {
+        let fill = imShouldFillVideo(
+            videoWidth: Double(videoSize.width), videoHeight: Double(videoSize.height),
+            viewWidth: Double(bounds.width), viewHeight: Double(bounds.height))
+        let wanted: UIView.ContentMode = fill ? .scaleAspectFill : .scaleAspectFit
+        // 判重：`videoContentMode` 的 setter 会触发重绘，而 layoutSubviews 调得很勤。
+        guard videoContentMode != wanted else { return }
+        videoContentMode = wanted
     }
 }
 #endif
