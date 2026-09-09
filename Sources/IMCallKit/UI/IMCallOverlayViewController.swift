@@ -68,9 +68,24 @@ public final class IMCallOverlayViewController: UIViewController {
 
     /// 计时器。**持有方释放时必须 cancel**（CONVENTIONS §5）。
     private var tickTimer: DispatchSourceTimer?
-    private var autoHideTimer: DispatchSourceTimer?
     private var networkBannerTimer: DispatchSourceTimer?
-    private var chromeVisible = true
+    /**
+     控制条的「3s 后淡出、任意触摸恢复」。判据与 Android 对齐，细节全在 `IMChromeGate`。
+
+     `lazy` 是因为它要捕获 `self`（判据里要读 `currentLayout` 与 `controller.state`），
+     而那些在属性初始化那一刻还不能用。
+    */
+    private lazy var chrome = IMChromeGate(
+        views: [header, controlsStack],
+        layers: [controlsScrim],
+        canAutoHide: { [weak self] in
+            guard let self else { return false }
+            return self.currentLayout == .video && self.controller.state.phase == .active
+        },
+        onChanged: { [weak self] visible in
+            guard let self else { return }
+            self.pip.liftsForControls = visible && self.currentLayout == .video
+        })
     private var poorNetworkShown = false
 
     public init(controller: IMCallController) {
@@ -83,7 +98,7 @@ public final class IMCallOverlayViewController: UIViewController {
 
     deinit {
         tickTimer?.cancel()
-        autoHideTimer?.cancel()
+        chrome.cancel()
         networkBannerTimer?.cancel()
     }
 
@@ -230,7 +245,7 @@ public final class IMCallOverlayViewController: UIViewController {
 
     @objc private func onStageTap() {
         guard currentLayout == .video else { return }
-        setChrome(visible: !chromeVisible)
+        chrome.set(visible: !chrome.visible)
     }
 
     // MARK: - 渲染
@@ -282,7 +297,7 @@ public final class IMCallOverlayViewController: UIViewController {
         case .grid: renderGrid(state)
         }
         // 视频版式外 chrome 永远可见；进视频版式时重新计时。
-        if layout != .video { setChrome(visible: true, arm: false) } else if chromeVisible { armAutoHide() }
+        if layout != .video { chrome.set(visible: true, arm: false) } else if chrome.visible { chrome.armAutoHide() }
     }
 
     private func renderHeader(_ state: IMCallViewState) {
@@ -401,7 +416,7 @@ public final class IMCallOverlayViewController: UIViewController {
         pinFull(full)
         pip.setContent(small)
         pip.isHidden = false
-        pip.liftsForControls = chromeVisible
+        pip.liftsForControls = chrome.visible
         pip.accessibilityLabel = state.isSwapped ? "对方画面" : "本端画面"
         controller.attachLocalPreview(to: selfTile.renderView)
         report(peer.uid, layer: state.isSwapped ? "l" : "h", hasVideo: peer.hasVideo)
@@ -518,33 +533,6 @@ public final class IMCallOverlayViewController: UIViewController {
         guard reportedLayers[uid] != layer else { return }
         reportedLayers[uid] = layer
         controller.reportLayer(uid, layer)
-    }
-
-    // MARK: 控制条自动隐藏（规范 §07：3s 后淡出，任意触摸恢复）
-
-    private func setChrome(visible: Bool, arm: Bool = true) {
-        chromeVisible = visible
-        UIView.animate(withDuration: IMKitTheme.current.fadeDuration) {
-            self.header.alpha = visible ? 1 : 0
-            self.controlsStack.alpha = visible ? 1 : 0
-            self.controlsScrim.opacity = visible ? 1 : 0
-        }
-        controlsStack.isUserInteractionEnabled = visible
-        header.isUserInteractionEnabled = visible
-        pip.liftsForControls = visible && currentLayout == .video
-        if visible, arm { armAutoHide() } else { autoHideTimer?.cancel() }
-    }
-
-    private func armAutoHide() {
-        autoHideTimer?.cancel()
-        let timer = DispatchSource.makeTimerSource(queue: .main)
-        timer.schedule(deadline: .now() + IMKitTheme.current.autoHideDelay)
-        timer.setEventHandler { [weak self] in
-            guard let self, self.currentLayout == .video, self.controller.state.phase == .active else { return }
-            self.setChrome(visible: false)
-        }
-        autoHideTimer = timer
-        timer.resume()
     }
 
     // MARK: 文案
