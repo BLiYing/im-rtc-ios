@@ -324,9 +324,28 @@ public final class IMCallController: NSObject {
          connecting 可能一帧都不停留（callBegin 与 roomJoined 几乎同时到达）。
          */
         let isLive = state.phase == .connecting || state.phase == .active
-        guard isLive, !state.roomID.isEmpty, publishedRoomID != state.roomID else { return }
+        // 还不在通话里、或还没拿到房号：正常，不值得记。
+        guard isLive, !state.roomID.isEmpty else { return }
+        /*
+         **跳过发布要留一条。**
+
+         这段每次状态变化都会跑，绝大多数时候「跳过」是正常的（同一个房间已经发过了）。
+         但它也是一整类 bug 的藏身处：web 端同一道闸就因为房号没被清零，
+         在「挂断后重进同一房间」时一声不响地吃掉整个发布——界面正常、日志空白、
+         对端只看到首字母头像，三个观测面同时是瞎的（真机 2026-09-09 14:43）。
+
+         所以只在**「已经在通话里、房号也有了，却仍然不发布」**这种真正可疑的情形下记一条。
+         正常复发时一通电话只出现一次，噪声可以忽略；出问题时它是唯一的线索。
+        */
+        guard publishedRoomID != state.roomID else {
+            IMRTCLog.debug("[Kit] 跳过发布：这个房间已经发过了", ["room_id": state.roomID])
+            return
+        }
         publishedRoomID = state.roomID
-        guard !state.isMeeting else { return } // 会议由 joinMeeting 自己推流
+        guard !state.isMeeting else {
+            IMRTCLog.debug("[Kit] 跳过发布：会议由 joinMeeting 自己推流", ["room_id": state.roomID])
+            return
+        }
         let mediaType = state.mediaType
         engine.setSpeakerOn(state.selfState.speakerOn)
         Task { await publishFor(mediaType: mediaType) }
