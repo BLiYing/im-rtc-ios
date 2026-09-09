@@ -116,11 +116,18 @@ final class IMSpeechIconView: UIView {
             isAnimating = true
             return
         }
-        // 已经在动了：只更新峰值，**别重启动画**——重启会让三根条每 300ms 归零一次。
-        if isAnimating {
-            for (index, bar) in bars.enumerated() { retarget(bar, index: index, peak: peak) }
-            return
-        }
+        /*
+         **已经在动了就什么都不做。**
+
+         `room.active_speakers` 是 300ms 一次（协议 §3.5），而 `retarget` 会
+         `removeAllAnimations()` 再重新 add——那等于每秒把三根条从固定相位强行归零三次，
+         看上去是「一顿一顿地抖」，正是这个分支要避免的。
+
+         峰值变化只影响振幅，不值得为它打断动画：条高本来就在跳，
+         幅度差个几个百分点没人看得出来，而每 300ms 卡一下所有人都看得出来。
+         下一次真正的起停（`stopBars` 之后再 `startBars`）会带上新的峰值。
+        */
+        guard !isAnimating else { return }
         for (index, bar) in bars.enumerated() { retarget(bar, index: index, peak: peak) }
         isAnimating = true
     }

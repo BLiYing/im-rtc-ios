@@ -43,9 +43,6 @@ public final class IMVideoTileView: UIView {
         backgroundColor = theme.tileBackground
         layer.cornerRadius = theme.tileCornerRadius
         clipsToBounds = true
-        // 发言描边是**内描边**（规范 §06：2.5 内缩，不撑大格子）。
-        layer.borderWidth = theme.speakingOutline
-        layer.borderColor = UIColor.clear.cgColor
 
         renderView.backgroundColor = .clear
 
@@ -132,7 +129,6 @@ public final class IMVideoTileView: UIView {
                       isRinging: Bool = false, settled: IMSettledOutcome = .none, networkLevel: Int = 0,
                       avatarSize: CGFloat = 44, isMirrored: Bool = false,
                       avatarImage: UIImage? = nil) {
-        let theme = IMKitTheme.current
         self.uid = uid
         nameLabel.text = label
         // key 用 uid、name 用已解析的显示名：底色跟 uid 走才能五端稳定，
@@ -151,6 +147,10 @@ public final class IMVideoTileView: UIView {
          绿描边与绿名牌一并删掉——留着就是三处同时表达同一件事。
         */
         speechIcon.apply(speaking: isSpeaking, muted: !hasAudio, volume: volume)
+        // **必须自己声明成无障碍元素**：namePlate 是个普通 UIView，
+        // 只设 accessibilityLabel 的话读屏软件根本不会念它，会掉进里头的 nameLabel
+        // 只读出名字——静音与说话就此静默消失（原先的 mutedPlate 是有这一行的）。
+        namePlate.isAccessibilityElement = true
         namePlate.accessibilityLabel = !hasAudio ? "\(label)，已静音"
             : isSpeaking ? "\(label)，正在说话" : label
         // 邀请中的占位格：整格 55% 不透明 + 顶部一行终局（规范 §06）。
