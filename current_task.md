@@ -29,9 +29,12 @@
 `RTC_CONFORMANCE_DIR=… ./scripts/test.sh` 全绿（10 步，194 用例）。
 **worktree 里必须带那个环境变量**，否则 `../im-rtc-server` 相对路径解析不到。
 
-**本轮没动、但查清楚了的**：本仓 simulcast 根本没生效，而且「顺手修一下层顺序」
-是纯回归——详见「已知坑」第一条。那是 iOS/Web 看 Android 画面糊的反方向，
-对症的两刀在 `im-rtc-android`（上行预算播种）与 `im-rtc-server`（BWE 死锁）。
+**本轮没动，但换包方案已完整验证、决定暂缓**（用户拍板 2026-09-09）：
+本仓 simulcast 根本没生效，换 `webrtc-sdk/Specs 150.7871.01` 可以零改名解决，
+两个候选包都下载核对过。**结论、checksum、逐类兼容性核对、以及「哪一行只能一起改」
+全写在「已知坑」第一条，做决定时直接看那里，不用重查。**
+暂缓的理由是现阶段三端画面都看得见；「Android 在 iOS 上偏糊」由另外两刀缓解
+（`im-rtc-android` 上行预算播种 + `im-rtc-server` BWE 死锁修复）。
 
 ## 下一步
 
@@ -75,24 +78,85 @@
 
 ## 已知坑 / 限制
 
-- **本仓的 simulcast 其实没生效，而且「顺手修一下层顺序」会当场引入回归。** 两件事一起记（2026-09-09）：
-  - `stasel/WebRTC` exact `152.0.0` **没打进 `RTCVideoEncoderFactorySimulcast`**——
-    头文件与符号都不存在（`nm -g WebRTC | grep -i simulcast` 为空，94 个头文件里没有）。
-    `acquireCamera(simulcast:)` 造的三个 `RTCRtpEncodingParameters` 进得了 SDP
-    （服务端看到的是 `rid=h` 而不是空串），但只有一个编码器在跑。
-    **证据**：服务端全量日志里 H264 视频轨道 101 条**全是 1 层**，从没出现过 2 层或 3 层。
-  - 后果是**降层只砸别人**：iOS 发的流没有低层可掉，SFU 的 `bw_cap=l` 对它无效
-    （`selectLayer` 兜底到「发布端最低的那层」= h）。同一份日志里 iOS 的下行 21 条
-    即使 17 条 `bw_cap=l` 也照发 h；VP8 那边 32 条有 20 条真降到了 `l`。
-    所以「为什么只有 Android 糊」的答案在这里，不在 Android 的编码参数上。
-  - **`IMVideoProfile.simulcastLayers` 的顺序是 h, m, l，按 libwebrtc 的要求是反的**
-    （要按 `scaleResolutionDownBy` 从大到小，见 Android 的 `IMVideoProfile.kt` 注释）。
-    **但现在不能单独改**：simulcast 没生效时真正跑起来的是第一个 encoding，
-    现在第一个是 h（满分辨率）；改成 l 在前，iOS 会当场开始发 1/4 分辨率。
-    **要改就和补 simulcast factory 一起改**，单独动这一行是纯回归。
-  - 补 factory = 换 WebRTC 发行版（例如 LiveKit 的 `webrtc-xcframework`），
-    而 `Package.swift` 自己写着「升级是一次有意的动作，配一次真机回归」。单独一刀。
+- **本仓的 simulcast 其实没生效；换包方案已验证完毕，但 2026-09-09 决定暂缓。**
 
+  **决定**：暂时不换（用户拍板 2026-09-09）。理由是现阶段三端画面都看得见，
+  「Android 在 iOS 上偏糊」已由另外两刀缓解（`im-rtc-android` 的上行预算播种 +
+  `im-rtc-server` 的 BWE 死锁修复），清晰度问题可以靠后。**下面这份验证结果是留着做决定用的，
+  不要重新查一遍。**
+
+  ### 现状：为什么没生效
+
+  `stasel/WebRTC` exact `152.0.0` **没打进 `RTCVideoEncoderFactorySimulcast`**——
+  94 个头文件里没有，`nm -g WebRTC | grep -i simulcast` 也是空。
+  `acquireCamera(simulcast:)` 造的三个 `RTCRtpEncodingParameters` 进得了 SDP
+  （服务端看到的是 `rid=h` 而不是空串），但只有一个编码器在跑。
+  **证据**：服务端全量日志里 H264 视频轨道 101 条**全是 1 层**，从没出现过 2 层或 3 层。
+
+  后果是**降层只砸别人**：iOS 发的流没有低层可掉，SFU 的 `bw_cap=l` 对它无效
+  （`selectLayer` 兜底到「发布端最低的那层」= h）。同一份日志里 iOS 的下行 21 条
+  即使 17 条 `bw_cap=l` 也照发 h；VP8 那边 32 条有 20 条真降到了 `l`。
+  **「为什么只有 Android 糊」的答案在这里**，不在 Android 的编码参数上。
+
+  ### 候选包：两个都下载验过（校验过官方 checksum）
+
+  | | **webrtc-sdk/Specs** ← 选它 | LiveKit/webrtc-xcframework | 现在的 stasel/WebRTC |
+  |---|---|---|---|
+  | 版本 | `150.7871.01` | `150.7871.01` | `152.0.0` |
+  | `RTCVideoEncoderFactorySimulcast` | 头文件 + 符号都在 | 在，但叫 `LKRTC*` | **不存在** |
+  | 类名前缀 | **原样 `RTC*`** | 全部 `LKRTC*` | `RTC*` |
+  | SwiftPM product 名 | **`WebRTC`**（与现在同名） | `LiveKitWebRTC` | `WebRTC` |
+  | 改名工作量 | **0 处** | ~110 处 / 5 个文件 | — |
+
+  `webrtc-sdk/Specs` 的 SwiftPM 声明（`Package.swift` 里换成 `binaryTarget`）：
+
+  ```
+  url:      https://github.com/webrtc-sdk/Specs/releases/download/150.7871.01/WebRTC.xcframework.zip
+  checksum: 03815cdf2f6a0ed328c94d74cce8fd1b8d2b6e95e2b37eab66795012fcecfdfa
+  ```
+
+  **兼容性做过逐类核对**：本仓用到的 30 个 `RTC*` 类型在新包里**一个都不缺**。
+  类数 stasel152=70 / webrtc-sdk150=88，是真超集（多出 `RTCFrameCryptor` 等 19 个），
+  只少一个 `RTCDtlsFingerprint`（本仓没用）。
+
+  ### 换包时要一起做的三件事
+
+  1. `Package.swift` 换依赖声明（`binaryTarget` + 上面那个 checksum）。
+  2. `IMPeerConnections.sharedFactory` 套上 adapter：
+     `RTCVideoEncoderFactorySimulcast(primary:fallback:)`（头文件里就这一个初始化方法）。
+  3. **`IMVideoProfile.simulcastLayers` 的顺序改成 l, m, h** —— 见下面那条坑，
+     它**只能和第 2 步一起改**。
+
+  ### 换包时才能改的那一行（单独动 = 纯回归）
+
+  `simulcastLayers` 现在是 h, m, l（`scaleResolutionDownBy` 1, 2, 4），按 libwebrtc
+  的要求是反的（要从大到小，见 Android `IMVideoProfile.kt` 的注释）。
+  **但 simulcast 没生效时真正跑起来的是第一个 encoding**，现在第一个是 h（满分辨率）；
+  改成 l 在前，iOS 会当场开始发 1/4 分辨率。**看着像一行就能修的 bug，其实是回归。**
+
+  ### 决定前要先想清的两件事
+
+  - **里程碑是往回走的**：M152 → M150。`webrtc-sdk` 那条线没有比 M150 更高的
+    （`144.7559.15` 日期虽新但那是维护中的 M144 老线）。所以「既要 simulcast、
+    又要 ≥M152」这个组合不存在。M150 发布于 2026-08-31、仍在维护，
+    不是当初否掉 `bengreenier/webrtc` 那种冻在 M115 的死包。
+  - **codec 选 H.264 还是 VP8 得实测**：新包里 `RTCDefaultVideoEncoderFactory`
+    有 `preferredCodec` 属性，可以显式钉住、不必听凭默认注册顺序。但两条路都有代价——
+    钉 H.264 保住硬件编码（省电省热），却和 §11 #4 定的「**VP8 做基线**」相左，
+    而且 H.264 跨端要跑 `CLIENT_PARITY.md` 那份三条实测清单；走 VP8 与 Android/Web 一致，
+    代价是 iPhone 上**三路 libvpx 软编**的 CPU 与发热。只有真机测得出来。
+
+  ### 兜底
+
+  `144.7559.15` 在 **iOS 与 Android 两条线上都有**（webrtc-sdk 两个平台版本号同步发布），
+  Android 的 `libs.versions.toml` 本来就写着兜底这一版。所以万一 M150 真机出问题，
+  两端能一起退到 M144，退路是对称的。
+
+  ### 真要换的时候还要动的
+
+  `../im-rtc-server/docs/CLIENT_PARITY.md` §3 那张里程碑表（那是跨仓真相源，
+  版本状态**只写在那里**）。§4 写了什么时候该改那张表。
+  **现在不用改**——表上写的 iOS = stasel 152.0.0 / M152 仍然是事实。
 
 - **2006 的阈值「3」没经过真机校准，而且它现在抛出来也没人接。** 两件事一起记（2026-09-09）：
   - **阈值待校准**：libwebrtc 判 `failed` 约 30 秒一轮，连续 3 次就是**一分半以后**宿主才知道，
