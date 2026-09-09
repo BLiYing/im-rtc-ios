@@ -352,6 +352,12 @@ public final class IMWebRTCAdapter: NSObject, IMMediaAdapter, @unchecked Sendabl
         }
     }
 
+    /// 见协议里的说明。**读也要进锁**：翻转发生在界面那条线程，这里被状态机线程读。
+    public var isUsingFrontCamera: Bool {
+        lock.lock(); defer { lock.unlock() }
+        return usingFrontCamera
+    }
+
     public func attachRemoteView(_ uid: String, _ view: AnyObject?) {
         // 线程由登记表自己管（它整张表只在主线程上动）。
         registry.attach(owner: uid, to: view as? UIView)

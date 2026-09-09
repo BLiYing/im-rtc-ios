@@ -443,7 +443,15 @@ public final class IMCallOverlayViewController: UIViewController {
         selfTile.apply(uid: "", label: "我", hasVideo: state.selfState.cameraOn && controller.hasLocalCamera,
                        hasAudio: state.selfState.micOn,
                        isSpeaking: false, volume: 0, showsSpeaking: false,
-                       avatarSize: avatarSize, isMirrored: true)
+                       avatarSize: avatarSize,
+                       /*
+                        **只有前置才镜像。**
+
+                        原先写死 true，后置摄像头也跟着左右翻——举着手机拍白板，
+                        自己看到的字是反的。镜像是「照镜子」那个习惯，只对着自己的脸才成立。
+                        （Android 一直是 `renderer.setMirror(frontCamera)`，这次向它对齐。）
+                       */
+                       isMirrored: controller.isUsingFrontCamera)
     }
 
     private func pinFull(_ tile: IMVideoTileView) {
