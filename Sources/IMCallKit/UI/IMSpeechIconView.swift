@@ -63,11 +63,25 @@ final class IMSpeechIconView: UIView {
             bar.isHidden = true
             layer.addSublayer(bar)
         }
-        micSlash.image = IMKitIcon.micSlash.image(pointSize: 9)
-        micSlash.contentMode = .center
-        micSlash.isHidden = true
-        micSlash.frame = CGRect(origin: .zero, size: Self.iconSize)
-        addSubview(micSlash)
+        /*
+         两枚图标**走同一条装配路径**，不各写一遍。
+
+         上一版就是各写一遍，而 `micOn` 那一份只写了一半——声明了、布局了、
+         也在 apply 里 show/hide 了，唯独漏掉 `image` 与 `addSubview`。
+         编译过、测试过（Kit 的 UIKit 用例在 macOS 上根本不执行），
+         真机上就是「用户名右边一片留白」。写成一个循环之后，漏一半这件事做不到了。
+        */
+        for (view, icon, alpha) in [
+            (micSlash, IMKitIcon.micSlash, CGFloat(1)),
+            (micOn, IMKitIcon.mic, Self.micOnAlpha),
+        ] {
+            view.image = icon.image(pointSize: 9)
+            view.contentMode = .center
+            view.alpha = alpha
+            view.isHidden = true
+            view.frame = CGRect(origin: .zero, size: Self.iconSize)
+            addSubview(view)
+        }
     }
 
     @available(*, unavailable)
