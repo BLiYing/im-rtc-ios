@@ -194,8 +194,25 @@ final class IMVideoRegistry {
 
     private func makeRenderView() -> RTCMTLVideoView {
         let view = RTCMTLVideoView(frame: .zero)
-        // **等比裁切铺满**（草图 §03 的「COVER」）：留黑边比裁掉一点更难看。
-        view.videoContentMode = .scaleAspectFill
+        /*
+         **按源的实际宽高比渲染，放不满的地方留黑边。**
+
+         这一条**推翻了草图 §03 的「COVER」**（原注释写的是「留黑边比裁掉一点更难看」）。
+         规则与完整理由见 `im-rtc-server/docs/mechanism/VIDEO_RENDERING.md`（五仓统一）。
+
+         推翻它的依据是真机实测（2026-09-10）：手机推竖屏 720×1280、浏览器推横屏
+         1280×720，**两种源混在一个房间里是常态**，而格子形状只有一种。
+         方向不一致时 `scaleAspectFill` 会按长边匹配、把源放大两倍以上再裁掉溢出——
+         代价不是「裁掉一点」，是**画面糊 + 人脸被裁掉上下两段**。
+
+         排除带宽的证据很硬：同一通电话里下发上界是 h、丢包 0.7%，
+         收到的就是最高层、链路也好，糊纯粹是渲染放大出来的。
+         判别也很干净：同样网络下 Android ↔ iOS（都竖屏）清楚，
+         只有 Android ↔ Web（方向不一致）两个方向都糊。
+
+         本端预览一并用 FIT，不开特例：它与屏幕方向天然一致，看起来没区别。
+        */
+        view.videoContentMode = .scaleAspectFit
         return view
     }
 
