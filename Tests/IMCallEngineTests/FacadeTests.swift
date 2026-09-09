@@ -216,6 +216,79 @@ final class FacadeTests: XCTestCase {
                      "恢复失败时房间已归零，不该再发协商帧")
     }
 
+    /*
+     **重试节奏不能没有尽头**（协议 §7.2）。
+
+     一律自愈、永不上报的话，宿主从头到尾收不到任何信号：上行永久失败，
+     对端格子已经黑了、计时器还在走，而界面上一切正常。
+     连续 3 次重启后仍 failed 抛一次 2006；之后继续重试但不再重复抛。
+    */
+    func testPubIceGivesUpAndReportsAfterThreeRestarts() async throws {
+        let h = makeEngine()
+        let ws = try await login(h)
+        try await joinRoom(h, ws)
+
+        for _ in 0..<3 { h.media.events.onConnectionStateChange?(.pub, "failed") }
+        try await settle()
+
+        XCTAssertEqual(h.events.count(.error), 1, "第 3 次才放弃，且只抛一次")
+        XCTAssertEqual(h.events.first(.error)?.payload["code"] as? NSNumber,
+                       NSNumber(value: IMErrorCode.mediaNegotiationFailed.rawValue))
+
+        // 放弃是「告诉宿主」，不是「不救了」——后面照样重启，但不再重复抛。
+        h.media.events.onConnectionStateChange?(.pub, "failed")
+        try await settle()
+        XCTAssertEqual(h.events.count(.error), 1, "同一轮只抛一次")
+        XCTAssertEqual(h.media.calls().filter { $0 == "restartPubICE" }.count, 4,
+                       "上报之后仍在继续自愈")
+    }
+
+    /// 前两次不抛——那多半只是切网 / 锁屏的一次抖动，报了等于误报「通话废了」。
+    func testPubIceDoesNotReportOnTransientFailures() async throws {
+        let h = makeEngine()
+        let ws = try await login(h)
+        try await joinRoom(h, ws)
+
+        h.media.events.onConnectionStateChange?(.pub, "failed")
+        h.media.events.onConnectionStateChange?(.pub, "failed")
+        try await settle()
+
+        XCTAssertEqual(h.events.count(.error), 0, "抖动不该惊动宿主")
+    }
+
+    /// 救回来过就是新一轮，不该拿旧账凑够 3 次。
+    func testPubIceCounterResetsAfterRecovery() async throws {
+        let h = makeEngine()
+        let ws = try await login(h)
+        try await joinRoom(h, ws)
+
+        h.media.events.onConnectionStateChange?(.pub, "failed")
+        h.media.events.onConnectionStateChange?(.pub, "failed")
+        h.media.events.onConnectionStateChange?(.pub, "connected")
+        h.media.events.onConnectionStateChange?(.pub, "failed")
+        h.media.events.onConnectionStateChange?(.pub, "failed")
+        try await settle()
+
+        XCTAssertEqual(h.events.count(.error), 0, "connected 之后要重新计数")
+    }
+
+    /// sub 那条我们救不了（offerer 是服务端，§3.3），所以不重启，但必须立刻上报。
+    func testSubIceFailureReportsImmediately() async throws {
+        let h = makeEngine()
+        let ws = try await login(h)
+        try await joinRoom(h, ws)
+        let restartsBefore = h.media.calls().filter { $0 == "restartPubICE" }.count
+
+        h.media.events.onConnectionStateChange?(.sub, "failed")
+        try await settle()
+
+        XCTAssertEqual(h.events.count(.error), 1, "sub 救不了就得立即上报")
+        XCTAssertEqual(h.events.first(.error)?.payload["code"] as? NSNumber,
+                       NSNumber(value: IMErrorCode.mediaNegotiationFailed.rawValue))
+        XCTAssertEqual(h.media.calls().filter { $0 == "restartPubICE" }.count, restartsBefore,
+                       "不该替服务端重启——插手只会 glare")
+    }
+
     /// 断线只抛一条 disconnected，**且带得上关闭码**。
     ///
     /// 状态机也有一份 onDisconnected，但它是空载荷的（关闭码不是状态机的事）。

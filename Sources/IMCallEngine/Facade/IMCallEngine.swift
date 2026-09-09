@@ -38,11 +38,48 @@ import Foundation
     private var connection: IMSignalConnection?
     /// 握手拿到的自己的 uid。用来挡「呼叫自己」，也供宿主读。
     private var myUID = ""
+
+    /// 连续这么多次 ICE restart 之后仍判 failed，就认为救不回来了（协议 §7.2）。
+    private static let pubIceGiveUp = 3
+    /// pub 侧 ICE 自愈的放弃计数。**归 `stateQueue`**——这两个是从 WebRTC 的信令线程改的。
+    private var pubIceRestarts = 0
+    private var pubIceGaveUp = false
     /// internal 而不是 private：帧泵拆到了 IMCallEngine+FramePump.swift。
     let stateQueue = DispatchQueue(label: "com.imrtc.engine.facade")
 
     private var currentConnection: IMSignalConnection? {
         stateQueue.sync { connection }
+    }
+
+    /**
+     notePubIceFailure 记一次 pub 侧 ICE 失败，返回「这一次该不该上报 2006」。
+
+     判定与记账在同一次 `sync` 里完成，否则两条信令线程能各自读到 2 再各自加到 3，
+     宿主收到两条 2006。
+     */
+    private func notePubIceFailure() -> Bool {
+        stateQueue.sync {
+            pubIceRestarts += 1
+            guard pubIceRestarts >= Self.pubIceGiveUp, !pubIceGaveUp else { return false }
+            pubIceGaveUp = true
+            return true
+        }
+    }
+
+    /// resetPubIceGiveUp 在 pub 通了之后清零——那是新一轮，不该拿旧账凑数。
+    private func resetPubIceGiveUp() {
+        stateQueue.sync {
+            pubIceRestarts = 0
+            pubIceGaveUp = false
+        }
+    }
+
+    /// emitLocalError 抛一条**本地**错误码（协议 §7.2，永不出现在线路上）。
+    private func emitLocalError(_ code: IMErrorCode) {
+        dispatcher.emit(IMEmittedEvent("onError", [
+            "code": .int(Int64(code.rawValue)),
+            "name": .string(code.name),
+        ]))
     }
 
     /**
@@ -521,11 +558,28 @@ import Foundation
              对端格子从此是一块黑，而界面上一切正常、谁也不挂断。
              真机上抓到过两条 PC 从某一刻起五分钟一轮地失败，再没回到 connected。
              重启失败还会再进 failed，于是天然形成一个重试节奏。
+
+             **但重试节奏不能没有尽头**（协议 §7.2）：一律自愈、永不上报的话，宿主从头到尾
+             收不到任何信号——上面那段现象会一直挂着，而界面上什么都不会变。
+             连续 pubIceGiveUp 次重启后仍判 failed，抛一次 2006；之后继续重试但不再重复抛。
             */
+            if pc == .pub, state == "connected" {
+                self.resetPubIceGiveUp()
+            }
             if pc == .pub, state == "failed" {
                 IMRTCLog.info("上行通路失败，重启 ICE", [:])
+                if self.notePubIceFailure() {
+                    IMRTCLog.warn("上行通路连续重启仍失败，上报宿主", [:])
+                    self.emitLocalError(.mediaNegotiationFailed)
+                }
                 self.media?.restartPubICE()
                 Task { await self.loop.dispatch(.act(op: "restart_pub_ice")) }
+                return
+            }
+            if pc == .sub, state == "failed" {
+                // sub 那条我们救不了（offerer 是服务端，§3.3），只能立即报给宿主。
+                IMRTCLog.warn("下行通路失败，等服务端重启", [:])
+                self.emitLocalError(.mediaNegotiationFailed)
                 return
             }
             guard pc == .sub, state == "connected" else { return }
