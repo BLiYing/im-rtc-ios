@@ -372,7 +372,7 @@ public final class IMCallOverlayViewController: UIViewController {
         unpinFull()
         // 拨出视频时右上角叠本端预览（草图 §03-E：拨出时看得见自己）。
         let showPreview = state.mediaType == "video" && state.selfState.cameraOn && controller.hasLocalCamera
-        applySelfTile(state, avatarSize: 44)
+        applySelfTile(state, avatarSize: 44, showsSpeaking: false)
         pip.setContent(showPreview ? selfTile : nil)
         pip.isHidden = !showPreview
         pip.liftsForControls = false
@@ -397,7 +397,10 @@ public final class IMCallOverlayViewController: UIViewController {
                      isSpeaking: false, networkLevel: peer.networkLevel,
                      avatarSize: state.isSwapped ? 44 : IMKitTheme.current.avatarLarge,
                      avatarImage: imResolvedAvatar(controller.profileResolver, uid: peer.uid))
-        applySelfTile(state, avatarSize: state.isSwapped ? IMKitTheme.current.avatarLarge : 44)
+        // **1v1 不显示说话指示器**（2026-09-09 拍板）：远端那格传的就是 false，
+        // 本端这格也必须一致，否则会变成「小窗在跳、全屏的对方一直是暗的」。
+        applySelfTile(state, avatarSize: state.isSwapped ? IMKitTheme.current.avatarLarge : 44,
+                      showsSpeaking: false)
         pinFull(full)
         pip.setContent(small)
         pip.isHidden = false
@@ -414,14 +417,15 @@ public final class IMCallOverlayViewController: UIViewController {
         let visible = imVisibleTiles(state.participants)
         retireTiles(keeping: Set(visible.map(\.uid)))
         var ordered: [UIView] = []
-        applySelfTile(state, avatarSize: 44)
+        // 九宫格是唯一显示说话指示器的版式，本端那格也在内（2026-09-09 拍板）。
+        applySelfTile(state, avatarSize: 44, showsSpeaking: true)
         controller.attachLocalPreview(to: state.mediaType == "video" ? selfTile.renderView : nil)
         ordered.append(selfTile)
         for p in visible {
             let tile = tiles[p.uid] ?? makeTile(for: p.uid)
             tile.apply(uid: p.uid,
                        label: imResolvedName(controller.profileResolver, uid: p.uid, fallback: p.uid),
-                       hasVideo: p.hasVideo, hasAudio: p.hasAudio, isSpeaking: p.isSpeaking,
+                       hasVideo: p.hasVideo, hasAudio: p.hasAudio, isSpeaking: p.isSpeaking, volume: p.volume,
                        isRinging: !p.hasAccepted, settled: p.settled, networkLevel: p.networkLevel,
                        avatarImage: imResolvedAvatar(controller.profileResolver, uid: p.uid))
             ordered.append(tile)
@@ -437,9 +441,14 @@ public final class IMCallOverlayViewController: UIViewController {
         for p in visible { report(p.uid, layer: layer, hasVideo: p.hasVideo) }
     }
 
-    private func applySelfTile(_ state: IMCallViewState, avatarSize: CGFloat) {
+    /// - Parameter showsSpeaking: 只有九宫格传 true。**这个参数不能省**——
+    ///   三种版式共用这一个方法，写死的话 1v1 也会跟着亮（拍板：1v1 不改）。
+    private func applySelfTile(_ state: IMCallViewState, avatarSize: CGFloat, showsSpeaking: Bool) {
         selfTile.apply(uid: "", label: "我", hasVideo: state.selfState.cameraOn && controller.hasLocalCamera,
-                       hasAudio: state.selfState.micOn, isSpeaking: false, avatarSize: avatarSize, isMirrored: true)
+                       hasAudio: state.selfState.micOn,
+                       isSpeaking: showsSpeaking && state.selfSpeaking,
+                       volume: showsSpeaking ? state.selfVolume : 0,
+                       avatarSize: avatarSize, isMirrored: true)
     }
 
     private func pinFull(_ tile: IMVideoTileView) {
