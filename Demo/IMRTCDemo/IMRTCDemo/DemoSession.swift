@@ -17,6 +17,23 @@ final class DemoSession {
 
     static let shared = DemoSession()
 
+    /**
+     Demo 的联系人名单。**这是宿主的东西**（Kit 不内置联系人系统）。
+
+     **选人页与通话中的「添加成员」必须用同一份**——两处各写一份的话，
+     选人页里有的人在加人页里找不到，联调时会以为是服务端把人弄丢了。
+     （2026-09-09 之前这里确实抄了两份，已收口到这一个常量。）
+
+     **名单 16 个人。** 原先是 9 个，剔掉自己剩 8 个、**恰好等于上限**，
+     于是「选到第 9 个该被挡住」这条根本走不到，上限逻辑一直没被验过。
+     16 个可选 15 个，能真的撞上限；九宫格该有的 9 个人依然凑得出。
+     （与 Web `demo-react/src/contacts.ts`、Android `ContactPicker.ALL` 是同一份。）
+     */
+    static let demoContacts = [
+        "alice", "bob", "carol", "dave", "erin", "frank", "grace", "heidi", "ivan",
+        "judy", "mallory", "niaj", "olivia", "peggy", "rupert", "sybil",
+    ]
+
     /// 一条通话记录。UserDefaults 存 JSON——**别引 Keychain**（未签名装机不可用）。
     struct Record: Codable, Identifiable {
         var id: String { callID + String(endedAtMS) }
@@ -167,8 +184,7 @@ final class DemoSession {
                                                          syntheticVideo: syntheticVideo,
                                                          label: username))
         // 「添加成员」的候选名单是宿主给的：Demo 用与选人页同一份写死的联系人。
-        kitConfig.inviteCandidates = ["alice", "bob", "carol", "dave", "erin", "frank", "grace", "heidi", "ivan"]
-            .map { IMInviteCandidate(uid: $0) }
+        kitConfig.inviteCandidates = DemoSession.demoContacts.map { IMInviteCandidate(uid: $0) }
         let kit = IMCallKit(engine: engine, config: kitConfig)
         kit.start()
         self.engine = engine

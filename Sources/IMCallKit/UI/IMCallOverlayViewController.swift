@@ -181,7 +181,15 @@ public final class IMCallOverlayViewController: UIViewController {
             header.topAnchor.constraint(equalTo: guide.topAnchor, constant: 8),
             header.leadingAnchor.constraint(equalTo: guide.leadingAnchor),
             header.trailingAnchor.constraint(equalTo: guide.trailingAnchor),
-            banner.topAnchor.constraint(equalTo: guide.topAnchor, constant: 8),
+            /*
+             **橙条挂在标题栏下方，不与它抢同一条。**
+
+             原先它和 `header` 钉的是同一个锚点（`guide.top + 8`），于是「正在重连…」
+             直接盖在标题与通话时长上——两条信息都在，但叠着谁也读不清。
+             （Android 上同一处的表现更糟：那边橙条不在受 inset 影响的容器里，
+             全面屏上直接钻进状态栏。两端 2026-09-09 一起挪的。）
+            */
+            banner.topAnchor.constraint(equalTo: header.bottomAnchor, constant: 8),
             banner.centerXAnchor.constraint(equalTo: guide.centerXAnchor),
 
             stage.topAnchor.constraint(equalTo: header.bottomAnchor),
