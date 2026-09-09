@@ -30,6 +30,14 @@ final class IMSpeechIconView: UIView {
     /// 三根条各自的图层。**用图层不用子视图**：只做 scale 动画，走不到布局那一层。
     private let bars: [CALayer] = (0..<3).map { _ in CALayer() }
     private let micSlash = UIImageView()
+    /**
+     「麦克风开着、没在说话」——**常态，所以要退到背景里**。
+
+     它挂在每一个格子上、绝大多数时候都在，画得太显眼就成了新的干扰源，
+     而这次改版的出发点正是减少干扰。所以用低对比度的白（`micOnAlpha`），
+     只有说话那枚是亮绿色。
+     */
+    private let micOn = UIImageView()
     private var isAnimating = false
     private var quietWork: DispatchWorkItem?
     /// 上一次写进条上的颜色，用来避开无谓的重写。见 `refreshTheme()`。
@@ -42,6 +50,8 @@ final class IMSpeechIconView: UIView {
     /// 音量 0 时的峰值高度。安静时也别缩成一条线。
     private static let peakFloor: CGFloat = 0.5
     private static let holdSeconds: TimeInterval = 0.4
+    /// 常态那枚麦克风的不透明度。见 `micOn`：它得退到背景里。
+    private static let micOnAlpha: CGFloat = 0.45
     /// 三根条的相位错开，不然是一起上下的一整块。
     private static let phases: [CFTimeInterval] = [0, 0.45, 0.22]
 
@@ -68,6 +78,7 @@ final class IMSpeechIconView: UIView {
     override func layoutSubviews() {
         super.layoutSubviews()
         micSlash.frame = bounds
+        micOn.frame = bounds
         let gap = (bounds.width - Self.barWidth * CGFloat(bars.count)) / CGFloat(bars.count - 1)
         for (index, bar) in bars.enumerated() {
             bar.frame = CGRect(x: CGFloat(index) * (Self.barWidth + gap), y: 0,
@@ -79,26 +90,34 @@ final class IMSpeechIconView: UIView {
      设置状态。`speaking` 与 `muted` **互斥**——静音的人不可能在说话，静音优先。
 
      - Parameter volume: 0~100，服务端给的音量，映射到峰值高度。
+     - Parameter showsSpeaking: 这一格要不要区分「在说话」。**本端那格传 false**——
+       自己在不在说话自己知道，只需要表达麦克风开关（2026-09-09 拍板）。
      */
-    func apply(speaking: Bool, muted: Bool, volume: Int) {
+    func apply(speaking: Bool, muted: Bool, volume: Int, showsSpeaking: Bool = true) {
         refreshTheme()
         if muted {
             quietWork?.cancel(); quietWork = nil
             stopBars()
+            micOn.isHidden = true
             micSlash.isHidden = false
             return
         }
         micSlash.isHidden = true
-        if speaking {
+        if speaking && showsSpeaking {
             quietWork?.cancel(); quietWork = nil
+            micOn.isHidden = true
             startBars(volume: volume)
             return
         }
-        // 从「说话」退出来才拖一拍；本来就没在说话就什么都不用做。
-        guard isAnimating, quietWork == nil else { return }
+        // 从「说话」退出来才拖一拍；本来就没在说话就直接显示常态那枚。
+        guard isAnimating, quietWork == nil else {
+            micOn.isHidden = false
+            return
+        }
         let work = DispatchWorkItem { [weak self] in
             self?.quietWork = nil
             self?.stopBars()
+            self?.micOn.isHidden = false // 拖拍到点，换回常态那枚
         }
         quietWork = work
         DispatchQueue.main.asyncAfter(deadline: .now() + Self.holdSeconds, execute: work)
@@ -118,6 +137,7 @@ final class IMSpeechIconView: UIView {
     private func refreshTheme() {
         let theme = IMKitTheme.current
         micSlash.tintColor = theme.mutedBadge
+        micOn.tintColor = theme.primaryText
         let color = theme.speakingBorder.cgColor
         if let applied = appliedBarColor, applied == color { return }
         appliedBarColor = color
