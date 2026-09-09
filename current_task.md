@@ -9,78 +9,59 @@
 > v3.1 推翻了 v3 的六条（小窗入口、视频版式退化、小窗挂断、呼叫页标题、Android 画中画与全屏），
 > 冲突时以 v3.1 为准。
 
+
 ## 当前焦点
 
-**会话没了却不给收场信号 + 没连接时帧被静默丢弃（2026-09-08）**，`./scripts/test.sh`
-十步全绿、186 条用例。分支 `fix/parity-room-left`（worktree `../wt-ios-parity`，
-**叠在 `fix/code-review-0908` 之上**）。**未真机复验。**
+**2026-09-09 一整天：说话指示器改版 + 语音判定重做 + 四个真机 bug。全部已合入 main 并推送。**
 
-这两条是 **Web 那轮 `/code-review high` 的跨端对账**查出来的，不是 iOS 自审出来的。
+> **没有一条经过真机验收**——除了下面单独标注的。真机清单见「下一步」。
 
-| # | 缺口 | 症状 | 改法 |
-|---|---|---|---|
-| 1 | `IMRoomMachine.resume(_:resumed: false)` 只清房间、**一个事件都不抛** | 有 call 的场合有 `onCallEnd(network)` 兜着，**会议压根没有 call**：房间悄悄回 idle，而界面还显示「会议中」、计时器还在走；更要命的是一个结束类回调都没抛 → `leaveCallbacks` 不命中 → `media.close()` 永不调用，**摄像头麦克风一直开着**，上一轮 PC 还被带进下一次进房 | `IMEngineMachine` 抽出 `dropLostSession`：有 call 抛 `onCallEnd`（唯一出口，不重复补），没 call 但在房里补一条 `onRoomLeft` |
-| 2 | `IMFrameLoop.sendFrame` 的 `guard let connection else { return }` | 状态机已经迁移、帧却没发出去，既不回滚也不报错。`login()` 之前调一次 `call()` → 通话机永久停在 `.inviting`，`hangup()` 拒 2005、`cancel()` 的帧同样被丢，**再也回不到 idle**，下一通真电话也被 2005 挡住 | 改成一次失败：抛 `2007 not_logged_in` 并走 `rollback(frame.type)`（顺手把 catch 里那三段回滚抽成同一个 `rollback`，与 Android 的 `onRequestFailed` 逐条对齐） |
+### 这一轮做了什么
 
-**第 1 条三端同源**：Web（`engineMachine.dropLostSession`）与 Android
-（`IMEngineMachine.dropLostSession`）同日补的是同一段，断言也是同一组。
-**第 2 条 Android 早就是对的**——`IMSignalConnection.request` 未连接时立刻回
-`NOT_LOGGED_IN`，iOS 与 Web 是漏的那两个。
+| # | 改动 | 提交 |
+|---|---|---|
+| 1 | **说话指示器改版**：整格绿描边 + 绿名牌撤销，换成名牌里一枚 9×10 图标。自己那格两态（麦克风开/关），别人的格子三态（关/开着没说话/正在说话） | `149b3c0` |
+| 2 | **那枚「麦克风开着」的图标根本没画出来**——`micOn` 声明了、布局了、show/hide 了，唯独 `image` 没设、`addSubview` 没调。真机上名字右边一片留白 | `9ae6b5c` |
+| 3 | **后置摄像头也被镜像了**。原先 `isMirrored: true` 写死，拍白板时自己看到的字是反的。改成只有前置才镜像（向 Android 对齐），`switchCamera` 后补一次 broadcast | `47820a5` |
+| 4 | 跳过发布时留一条 debug 日志 | `7eefff1` |
 
-**新增用例 5 条**（`Tests/IMCallEngineTests/LostSessionTests.swift`）：会议两条收场路径、
-有 call 时不重复抛、idle 时不凭空抛、`resumed=true` 一个字不变。
+### 一个反复踩的坑（**下次改这个文件先看这条**）
 
----
+`IMSpeechIconView.swift` 上**同一种错栽了两次**：用脚本批量替换时不加断言，
+`replace` 没匹配上就静默失败，而 Kit 的 UIKit 代码在 macOS 上
+`canImport(UIKit)` 为假、那几条用例根本不执行，门禁全绿也照样漏。
 
-**code review 的三条收场缺口 + 两条资源账（2026-09-08）**，`./scripts/test.sh` 十步全绿、181 条用例。
-分支 `fix/code-review-0908`（worktree `../wt-ios-review-fixes`）。**未真机复验。**
+两条对策：**批量改必须带 `assert`**；能用「一个循环装配」代替「各写一遍」的就这么写
+（两枚图标现在走同一条路径，漏一半做不到了）。
 
-前三条是同一个形状：**某一帧被服务端拒了，而本端没有任何一条路把状态收回来**——
-状态机停在中间态，界面收不起来，红按钮在那个状态下算出的动作又被本地拒成 2005。
-日志里只剩一串一模一样的 2005，真正的原因淹在上一条 error 里。
-**三条 Android 早就有，是 iOS 漏的**（`IMCallEngine.onRequestFailed` 是那边的对照）。
-
-| # | 缺口 | 症状 | 改法 |
-|---|---|---|---|
-| 1 | `room.leave` 被拒（1203）无人接 | 房间永久停在 `leaving`：`leaveCallbacks` 一条不抛 → `media.close()` 永不调用（**摄像头麦克风一直开着**），再 leave 拒 2005、再 join 也拒——除非 logout 永远进不了房 | `IMFrameLoop` 补 `roomLeave → leave_failed`；`IMRoomMachine` 补 `leave_failed` 分支（归零 + `onRoomLeft`，与 `leave.ok` 同一个收场）；`IMEngineMachine` 把它路由到房间机 |
-| 2 | 只有 `call.invite` 映射 `call_failed` | `call.accept` 被拒（主叫刚取消 → 1401/1405）时通话机永停 `accepting`：来电页收不起来，而红按钮那时算出的是 reject，`reduceAct("reject")` 要求 `ringing`——只换回又一个 2005，**除了杀进程出不去** | 抽出 `callFailFrames = {invite, accept, join}`，三帧一起接 |
-| 3 | `resume` 无条件把 `reconnecting` 推成 `joined` | `disconnected` 会把 `joining` 也推进 `reconnecting`，而那次 `room.join` 还在飞、服务端从没受理过。恢复后本端以为在房里 → 每帧换回 1201/1203，重新 join 又因「不在 idle」拒 2005 | 房间上下文加 `didJoin`（只由 `room.join.ok` 置位），`resume` 据它分辨来路：真进过房才回 `joined`，否则**重发一次 `room.join`**（房号房票都还在手上，攒下的意图照旧留着） |
-
-**第 3 条为什么不能靠 `join_failed` 兜住**：`rejectAll` 唤醒的是隔着两跳 actor 的
-`IMFrameSender`，而 `disconnected` 走帧泵、`IMFrameLoop` 又是可重入 actor——
-`disconnected` 完全可能先到，随后的 `join_failed` 因为 `guard state == .joining` 变成空操作。
-**所以改成认账不认时序**，三端同一份（Android 同轮一起改）。
-
-另外两条是资源账，症状是「越用越卡 / 越用越占」而不是任何一条报错：
-
-- `IMVideoRegistry.attach` 对 `addSubview` 判重，却无条件 `track.add(view)`，`bind` 里还再加一次——
-  而 `RTCVideoTrack.add` **不去重**。`render` 每次状态变化都无条件 `attachLocalPreview`，
-  `onActiveSpeakers` 每 300ms 就让状态变一次：一通视频打几分钟，同一个 `RTCMTLVideoView`
-  上挂了几百个重复 sink，每帧渲染几百遍；卸载只 `remove` 一次，多的**永远回收不掉**。
-  → 加 `rendered` 集合，一对最多接一次；换轨道与卸载都划掉。
-- `IMURLSessionWebSocket.finish()`（服务端关闭 / 连接失败走它）**从不 invalidate URLSession**，
-  只有主动 `close()` 才做。而 URLSession 强引用 delegate 直到 invalidate——
-  每次失败的重连尝试都漏一条 session + socket + 整条回调链，退避封顶 30 秒，
-  锁屏一小时上百份，重连成功或 logout 都收不回来。→ 这条路也 `finishTasksAndInvalidate()`。
-
-**向量没动**：`join_failed` / `leave_failed` 本来就不在 `room_fsm.json` 里（是本端的收场事件，
-不是协议帧）；两条 reconnect 向量的初始态都是 `room: joined`，`didJoin` 不影响它们。
-向量跑法里补了一句种子（初始就在房里的把 `didJoin` 一起置上）——**是种子不完整，不是实现变了**。
-
-**新增 7 条用例**（`RequestFailureRecoveryTests.swift`）：leave_failed 的四条（回 idle、清账、
-非 leaving 时是空操作、engine 层路由）、call_failed 的三条（accepting 收场、join_call 收场、
-顺带清房间）。
 
 ## 下一步
 
-- **真机验收本轮的每一条**（清单见交互稿 **v3.1 §09 的 22 条**）：权限说明卡与被拒降级、
-  小窗互换 / 长按拖动 / 吸角、标题栏加人与选人半屏、占位格终局、控制条自动隐藏、切后台恢复、
-  悬浮球视频缩略；**本轮新增的 6 条**（通话中来电只出提示、群里发起人挂断只是退出、
-  退出后可被重新邀请、离线成员的格子不再一直转、两端关摄像头小窗仍在、小窗上的红键能直接结束）。
-- 悬浮球拖到底部 = 挂断（交互稿 M2）**没做**，留给下一刀。
-- 「只引 Engine 自画 UI」的 iOS Demo 示范仍未做。
-- `IMCallOverlayViewController` 512 行已过预警线（600 上限）：下次动它先拆版式（audio / video / grid 各一个协作对象）。
-- Swift 6 语言模式下的 Sendable 警告（`IMSignalConnection` 的 `Task {}` 捕获）仍是欠账。
+### 真机验收（**这一整批一条都没验**）
+
+按风险排序，前两条不过其余不用看：
+
+1. **语音判定**（server）：`SPEECH_DEBUG=1 ./scripts/dev.sh` → 不说话时是不是真的不亮了；
+   说话时亮不亮、条高随音量变不变；把 `margin` 的实测值发回来核门槛。
+2. **说话指示器三态**：别人的格子「关 / 开着没说话 / 正在说话」，自己那格只有前两态；
+   1v1 不显示说话但显示麦克风开关；多人同时说话每格各亮各的。
+3. **Android 呼叫中按静音**：**接通前**按静音 → 对方接 → 确认对方听不见，
+   且日志里有 `补做发布前攒下的静音`。（上次验成了「接通后按」，没走到修复那条路。）
+4. **iOS 镜像**：翻到后置摄像头，自己看到的字不该是反的。
+5. **web 挂断后重进**：bob 进群通话 → 挂断 → 再邀请回来 → 这次该看得到他的画面。
+6. **通话时长**：群通话里中途加入的人退出后，记录里的时长是他自己那段，不是整通。
+7. 之前那七条 code-review 修复也都没验（故障注入手册 `docs/ops/FAULT_INJECTION.md`）。
+
+### 待办
+
+- **下一个任务（已和用户对齐）**：四端扫一遍**静默失败点**——早退分支、被吞掉的异常、
+  静默空实现。今天两个 bug 全是这一类（一句不吭的 `return`，界面/日志/报错三个观测面
+  同时是瞎的）。只给真正可疑的加日志，判据卡死到「正常时一通电话最多出现一次」。
+- **desktop 端说话指示器没做**：它 `MediaAdapter` 唯一实现是 `tests/FakeMediaAdapter.h`，
+  libwebrtc 还没接进来，九宫格本身就是 ⬜。要等媒体面落地。
+- **`CLIENT_PARITY.md` 没更新**：真机验完再改；验之前 iOS/Android 停在 🟡，不写 ✅。
+- **web 端 `getUserMedia` 那类失败仍可能静默**：日志回传够不到浏览器 console。
+
 
 ## 已知坑 / 限制
 
