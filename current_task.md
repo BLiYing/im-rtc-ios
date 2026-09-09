@@ -12,43 +12,26 @@
 
 ## 当前焦点
 
-**2026-09-09 晚：ICE 自愈补上放弃阈值，2006 从死码变成真出口（分支 `fix/parity-leave-failed-and-2006`）。**
+**2026-09-09 夜：控制条自动隐藏与 Android 对齐（分支 `worktree-fix-autohide-arm-gate`，待真机验收后合 main）。**
 
-扫四端静默失败点扫出来的：`mediaNegotiationFailed`（2006）**本仓此前只出现在
-`IMErrorCode.swift` 里**，一个发射点都没有。`IMCallEngine.mediaEvents()` 里 pub 判 failed
-只重启不上报、sub 判 failed **什么都不做**——下行永久失败在界面上完全无感：
-格子在、画面黑、计时照走。
+两端把这块逻辑逐条对了一遍，查出三处不一致，本仓占一处：
 
-按协议 §7.2 改成：pub 连续 `pubIceGiveUp`（3）次重启仍 failed 抛一次 2006，
-之后继续重试但不再重复抛；sub 立即抛；回 connected 清零。
-计数归 `stateQueue`（这两个是从 WebRTC 的信令线程改的），判定与记账在同一次 `sync` 里完成，
-否则两条线程能各自读到 2 再各自加到 3，宿主收到两条 2006。
-新增 `emitLocalError(_:)` 收口本地错误码的抛出。
+`armAutoHide` 原先无条件排定定时器、只在触发时查判据。而 1v1 视频在 `connecting`
+阶段版式**已经是 `.video`**（`imPickLayout` 只对 outgoing / incoming 退回 audio），
+于是那时就 arm 了一次，3 秒后触发时 phase 刚变 `.active`——控制条在**接通后不到 3 秒**
+就消失，而规范 §07 说的是接通后 3s。Android 在排定时就查 CONNECTED，是对的，对齐过来。
+触发时那道守卫保留（它挡的是「结束画面上把标题栏一起淡掉」，Android 那边原先缺这道）。
 
-`./scripts/test.sh` 全绿（10 步，194 个用例），`FacadeTests.swift` 新增 4 条。
+控制条那块抽成 `IMChromeGate`，**与 Android 同名同形**——这块逻辑已经漂过一次，
+同名同形是为了下次一眼看得出哪边没跟上。顺带解决体量：加注释后
+`IMCallOverlayViewController.swift` 是 601 行 > 600 硬闸，抽完 568 行（原先 581）。
 
-**2026-09-09 一整天：说话指示器改版 + 语音判定重做 + 四个真机 bug。全部已合入 main 并推送。**
+`RTC_CONFORMANCE_DIR=… ./scripts/test.sh` 全绿（10 步，194 用例）。
+**worktree 里必须带那个环境变量**，否则 `../im-rtc-server` 相对路径解析不到。
 
-> **没有一条经过真机验收**——除了下面单独标注的。真机清单见「下一步」。
-
-### 这一轮做了什么
-
-| # | 改动 | 提交 |
-|---|---|---|
-| 1 | **说话指示器改版**：整格绿描边 + 绿名牌撤销，换成名牌里一枚 9×10 图标。自己那格两态（麦克风开/关），别人的格子三态（关/开着没说话/正在说话） | `149b3c0` |
-| 2 | **那枚「麦克风开着」的图标根本没画出来**——`micOn` 声明了、布局了、show/hide 了，唯独 `image` 没设、`addSubview` 没调。真机上名字右边一片留白 | `9ae6b5c` |
-| 3 | **后置摄像头也被镜像了**。原先 `isMirrored: true` 写死，拍白板时自己看到的字是反的。改成只有前置才镜像（向 Android 对齐），`switchCamera` 后补一次 broadcast | `47820a5` |
-| 4 | 跳过发布时留一条 debug 日志 | `7eefff1` |
-
-### 一个反复踩的坑（**下次改这个文件先看这条**）
-
-`IMSpeechIconView.swift` 上**同一种错栽了两次**：用脚本批量替换时不加断言，
-`replace` 没匹配上就静默失败，而 Kit 的 UIKit 代码在 macOS 上
-`canImport(UIKit)` 为假、那几条用例根本不执行，门禁全绿也照样漏。
-
-两条对策：**批量改必须带 `assert`**；能用「一个循环装配」代替「各写一遍」的就这么写
-（两枚图标现在走同一条路径，漏一半做不到了）。
-
+**本轮没动、但查清楚了的**：本仓 simulcast 根本没生效，而且「顺手修一下层顺序」
+是纯回归——详见「已知坑」第一条。那是 iOS/Web 看 Android 画面糊的反方向，
+对症的两刀在 `im-rtc-android`（上行预算播种）与 `im-rtc-server`（BWE 死锁）。
 
 ## 下一步
 
@@ -56,6 +39,13 @@
   `../im-rtc-server/docs/ops/silent-failure/ios.md`，跨端结论与修复顺序见同目录的
   `SILENT_FAILURE_AUDIT.md`。**逐条状态只在那里维护，别抄回本文件。**
   未修的头两条：麦克风推流失败被 `try?` 吞掉（接通了但一个字都没发出去）、权限卡 continuation 可永久挂起。
+
+### 真机验收
+
+**本轮这两条优先**（iOS 真机，1v1 视频）：
+
+1. **接通后控制条该完整停 3 秒**再淡出，不是接通瞬间就没了。
+2. **挂断后的结束画面**标题栏不该被淡掉（这条改之前就是对的，确认没被抽取改坏）。
 
 ### 真机验收（**这一整批一条都没验**）
 
@@ -84,6 +74,25 @@
 
 
 ## 已知坑 / 限制
+
+- **本仓的 simulcast 其实没生效，而且「顺手修一下层顺序」会当场引入回归。** 两件事一起记（2026-09-09）：
+  - `stasel/WebRTC` exact `152.0.0` **没打进 `RTCVideoEncoderFactorySimulcast`**——
+    头文件与符号都不存在（`nm -g WebRTC | grep -i simulcast` 为空，94 个头文件里没有）。
+    `acquireCamera(simulcast:)` 造的三个 `RTCRtpEncodingParameters` 进得了 SDP
+    （服务端看到的是 `rid=h` 而不是空串），但只有一个编码器在跑。
+    **证据**：服务端全量日志里 H264 视频轨道 101 条**全是 1 层**，从没出现过 2 层或 3 层。
+  - 后果是**降层只砸别人**：iOS 发的流没有低层可掉，SFU 的 `bw_cap=l` 对它无效
+    （`selectLayer` 兜底到「发布端最低的那层」= h）。同一份日志里 iOS 的下行 21 条
+    即使 17 条 `bw_cap=l` 也照发 h；VP8 那边 32 条有 20 条真降到了 `l`。
+    所以「为什么只有 Android 糊」的答案在这里，不在 Android 的编码参数上。
+  - **`IMVideoProfile.simulcastLayers` 的顺序是 h, m, l，按 libwebrtc 的要求是反的**
+    （要按 `scaleResolutionDownBy` 从大到小，见 Android 的 `IMVideoProfile.kt` 注释）。
+    **但现在不能单独改**：simulcast 没生效时真正跑起来的是第一个 encoding，
+    现在第一个是 h（满分辨率）；改成 l 在前，iOS 会当场开始发 1/4 分辨率。
+    **要改就和补 simulcast factory 一起改**，单独动这一行是纯回归。
+  - 补 factory = 换 WebRTC 发行版（例如 LiveKit 的 `webrtc-xcframework`），
+    而 `Package.swift` 自己写着「升级是一次有意的动作，配一次真机回归」。单独一刀。
+
 
 - **2006 的阈值「3」没经过真机校准，而且它现在抛出来也没人接。** 两件事一起记（2026-09-09）：
   - **阈值待校准**：libwebrtc 判 `failed` 约 30 秒一轮，连续 3 次就是**一分半以后**宿主才知道，
