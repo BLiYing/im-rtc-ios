@@ -222,7 +222,10 @@ public final class IMWebRTCAdapter: NSObject, IMMediaAdapter, @unchecked Sendabl
             lock.unlock()
         }
         remember(cid: cid, track: track)
-        let info = IMLocalTrackInfo(cid: cid, kind: "video", source: syntheticVideo ? "synthetic" : "camera")
+        // 合成画面是摄像头的**替身**，对外必须报 camera：协议的 source 只认
+        // microphone | camera | screen | screen_audio，报 "synthetic" 会被服务端 1004 拒掉
+        // room.publish，于是模拟器联调时对端永远只看到头像（2026-09-10 实测）。
+        let info = IMLocalTrackInfo(cid: cid, kind: "video", source: "camera")
         lock.lock()
         previewTrack = info
         lock.unlock()
