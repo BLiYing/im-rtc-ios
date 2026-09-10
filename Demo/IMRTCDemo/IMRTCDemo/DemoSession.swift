@@ -288,6 +288,31 @@ final class DemoSession {
         notify()
     }
 
+    /**
+     票过期后的静默重登：不回登录页，直接用记住的账号再换一枚票（对齐 Android 的 `relogin()`）。
+
+     先把旧 engine / kit / 日志回传收干净（`rollbackFailedLogin` 正好做这件事，且**不动**「下次自动重登」），
+     再走一遍正常的 `login`。换票也失败才真正退出，并把原因留在身份卡上——
+     否则「票过期 → 换票也失败」最后落在一个什么都不说的登录页上。
+     */
+    private func relogin() async {
+        let server = self.server
+        let user = self.username
+        guard !server.isEmpty, !user.isEmpty else {
+            await logout()
+            return
+        }
+        await rollbackFailedLogin()
+        do {
+            try await login(server: server, username: user)
+        } catch {
+            IMRTCLog.info("静默重登失败", ["err": String(describing: error)])
+            await logout()
+            connectionText = "登录态过期，重登也失败了"
+            notify()
+        }
+    }
+
     // MARK: - 事件 → 记录
 
     private func handle(_ event: IMCallEvent) {
@@ -298,10 +323,30 @@ final class DemoSession {
             let will = (event.payload["will_reconnect"] as? NSNumber)?.boolValue ?? false
             connectionText = will ? "重连中…" : "已断开"
         case .kickedOut:
-            connectionText = "登录态失效，请重新登录"
-            // 被踢之后别再自动重登，否则重启就撞回同一个死胡同。
-            UserDefaults.standard.set(false, forKey: Self.autoKey)
-            Task { await self.logout() }
+            /*
+             **三种原因，三种处置**（与 Android DemoSession.onKickedOut 同一个分岔，真实宿主照这个写）。
+
+             原先一律退出登录。于是**服务端一重启**（旧票全部作废 → 1101 token_invalid → authExpired），
+             Android 那端 1 秒内静默重登回来，iOS 这端却停在「未登录」、自动重登也被关掉——
+             2026-09-10 模拟器联调时 carol 就这样掉线，拨号按钮全灰。
+            */
+            let raw = (event.payload["reason"] as? NSNumber)?.intValue ?? -1
+            switch IMKickedOutReason(rawValue: raw) {
+            case .authExpired:
+                // 票不好使：取一枚新票重登即可，不必打扰用户。
+                connectionText = "登录态过期，正在重新获取…"
+                Task { await self.relogin() }
+            case .takenOver:
+                // 账号在别处登录或被宿主吊销，换票救不了。别再自动重登，否则重启就撞回同一个死胡同。
+                connectionText = "账号在其它设备登录"
+                UserDefaults.standard.set(false, forKey: Self.autoKey)
+                Task { await self.logout() }
+            default:
+                // 接入参数被拒：换票和重试都没用，等人去改配置。
+                connectionText = "登录态失效，请重新登录"
+                UserDefaults.standard.set(false, forKey: Self.autoKey)
+                Task { await self.logout() }
+            }
         case .callReceived:
             current = (peer: event.payload["caller"] as? String ?? "",
                        mediaType: event.payload["media_type"] as? String ?? "audio",
