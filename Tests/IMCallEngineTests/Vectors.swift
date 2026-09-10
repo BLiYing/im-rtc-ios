@@ -17,11 +17,29 @@ enum Vectors {
         if let override = ProcessInfo.processInfo.environment["RTC_CONFORMANCE_DIR"] {
             return URL(fileURLWithPath: override, isDirectory: true)
         }
-        // 相对包根目录找同级仓库。`swift test` 的工作目录就是包根。
+        /*
+         从包根**往上逐级**找「同级的 im-rtc-server」。（`swift test` 的工作目录就是包根。）
+
+         原先只往上一级，前提是「包根与 im-rtc-server 同级」——**这个前提在 git worktree
+         里不成立**：worktree 的根在 `.claude/worktrees/<分支>/`，兄弟仓要再往上两级
+         才看得见。逐级往上找就同时接住了两种布局，也不用去问 git。
+        */
         let packageRoot = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
-        return packageRoot
+        let fallback = packageRoot
             .deletingLastPathComponent()
             .appendingPathComponent("im-rtc-server/docs/conformance", isDirectory: true)
+        var dir = packageRoot
+        while true {
+            let candidate = dir
+                .deletingLastPathComponent()
+                .appendingPathComponent("im-rtc-server/docs/conformance", isDirectory: true)
+            if FileManager.default.fileExists(atPath: candidate.path) { return candidate }
+            let up = dir.deletingLastPathComponent()
+            if up.path == dir.path { break }  // 到根了
+            dir = up
+        }
+        // 一路都没找到：把默认布局那个路径交回去，让 load 去报那条带路径的错。
+        return fallback
     }
 
     /// load 读一个向量文件。

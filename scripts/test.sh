@@ -23,6 +23,24 @@ set -u
 
 cd "$(dirname "$0")/.." || { echo "无法定位仓库根目录"; exit 2; }
 
+# sibling_root 打印**兄弟仓所在的那一级目录**（本仓与 im-rtc-server 同级）。
+#
+# **不能直接用 `..`。** 从 worktree（`.claude/worktrees/<分支>/`）里跑时，
+# `..` 是 worktrees 目录，兄弟仓根本不在那儿——症状是「缺 call_fsm.json」，
+# 而人会以为是没克隆 im-rtc-server。
+#
+# `git rev-parse --git-common-dir` 无论在主检出还是 worktree 里，都指向**共享的那个 .git**；
+# 它的上一级就是主检出，再往上才是同级目录。**两种返回形态都要接住**：
+# 在主检出里它给相对路径 `.git`，在 worktree 里给绝对路径。
+# 不是 git 仓（打包分发的源码）时退回 `..`，与从前的行为一致。
+sibling_root() {
+  common=$(git rev-parse --git-common-dir 2>/dev/null) || { echo ".."; return; }
+  case "${common}" in
+    /*) echo "$(dirname "${common}")/.." ;;
+    *)  echo "$(cd "$(dirname "${common}")" && pwd)/.." ;;
+  esac
+}
+
 failed=()
 step_no=0
 
@@ -44,7 +62,10 @@ run_step() {
 # 一致性向量在 im-rtc-server 仓里，**本仓只读引用，不拷贝**。
 # 找不到时明确报错而不是跳过——被静默跳过的一致性测试比没有测试更糟。
 check_conformance_available() {
-  local dir="${RTC_CONFORMANCE_DIR:-../im-rtc-server/docs/conformance}"
+  local dir="${RTC_CONFORMANCE_DIR:-$(sibling_root)/im-rtc-server/docs/conformance}"
+  # 把解析结果**传下去**：`swift test` 自己也要读向量，让它和这一步用同一个答案，
+  # 免得「闸门说找得到、测试说找不到」。（Android 交给 gradle、web 交给 vitest，同一做法。）
+  [ -d "${dir}" ] && export RTC_CONFORMANCE_DIR="$(cd "${dir}" && pwd)"
   if [ -d "$dir" ]; then
     echo "  向量目录：$dir"
     return 0
