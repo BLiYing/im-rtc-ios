@@ -111,7 +111,39 @@ Engine 内部：`CallEngine（门面）→ StateMachine / Signaling / Media / De
 
 - 提交信息格式：`类型(模块): 描述`，例如 `feat(kit): 群通话九宫格发言高亮`。
   类型取 `feat / fix / perf / refactor / docs / test / chore`。
-- **直接在 main 提交**（本项目约定，不先开分支）。
+- **一律先在 worktree 上改，改完再合回 main。不许直接在 main 的工作区改代码。**
+  （2026-09-10 起。此前的约定是「直接在 main 提交、不先开分支」，那是单会话时代的规矩。）
+
+  **为什么**：现在同时有好几个会话在并行开发同一个仓。两个会话同时往 main 的工作区
+  写文件会互相覆盖，而且**谁也看不见对方改了什么**——`git status` 里混着两个人的改动，
+  提交时只能靠猜哪些是自己的。worktree 各有各的工作区，这类事从根上不会发生。
+
+  ```bash
+  git worktree add .claude/worktrees/<名字> -b <分支名>   # 开
+  # ……在那个目录里改、跑 ./scripts/test.sh、提交……
+  git merge --no-ff <分支名>                              # 回到 main 合
+  git worktree remove .claude/worktrees/<名字>            # 收
+  ```
+
+  **合之前先 `git fetch` 并看一眼 main 动没动过**：并行开发里 main 随时可能已经前进。
+  **合完要在 main 上再跑一次 `./scripts/test.sh`**——两个各自都绿的分支合到一起可以是红的，
+  git 只保证文本不冲突，不保证语义。（真踩过：同一个文件被两边各加了几十行，
+  各自都在 600 行体量红线内，合完就超了。）
+
+  worktree 里跑 `./scripts/test.sh` **不需要再设 `RTC_CONFORMANCE_DIR`**
+  （2026-09-10 修好了）。以前要设，是因为找一致性向量用的是 `../im-rtc-server`，
+  而 worktree 的根在 `.claude/worktrees/<分支>/`，`..` 指向的是 worktrees 目录。
+
+  > **顺带记一条教训**：「兄弟仓在哪」这种事，一个仓里往往有**两个地方**各自算了一遍——
+  > `scripts/test.sh` 一处，测试代码里再一处（web 的 `test/vectors.ts`、
+  > iOS 的 `Vectors.swift`）。**只修脚本那处更糟**：原先脚本先失败、报错还算清楚；
+  > 修好之后测试才跑到，报出来的信息反而更难懂。
+  > 现在统一成 Android 一直用的形状——**脚本算一次，`export` 给测试运行器**，
+  > 测试代码那份改成「从自己往上逐级找同级的 im-rtc-server」，
+  > 于是不走脚本直接 `npx vitest` / `swift test` 也能工作。
+
+  **例外**：纯文档的小改（typo、补一句说明）可以直接在 main 上做，
+  但只要动到代码或跨仓契约，就走 worktree。
 - 提交前 pre-commit 跑体量门禁；被拦了就拆分，别 `--no-verify`。
 
 ## 11. 不做什么（刻意的边界）
