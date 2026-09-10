@@ -34,6 +34,8 @@ cd "$(dirname "$0")/.." || { echo "无法定位仓库根目录"; exit 2; }
 # 在主检出里它给相对路径 `.git`，在 worktree 里给绝对路径。
 # 不是 git 仓（打包分发的源码）时退回 `..`，与从前的行为一致。
 sibling_root() {
+  # local 单独一行：写成 `local common=$(…)` 时 `||` 看到的是 local 的返回码（恒 0），兜底永远不走。
+  local common
   common=$(git rev-parse --git-common-dir 2>/dev/null) || { echo ".."; return; }
   case "${common}" in
     /*) echo "$(dirname "${common}")/.." ;;

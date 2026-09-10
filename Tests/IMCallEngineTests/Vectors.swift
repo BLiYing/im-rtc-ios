@@ -33,8 +33,11 @@ enum Vectors {
             let candidate = dir
                 .deletingLastPathComponent()
                 .appendingPathComponent("im-rtc-server/docs/conformance", isDirectory: true)
-            if FileManager.default.fileExists(atPath: candidate.path) { return candidate }
-            let up = dir.deletingLastPathComponent()
+            var isDir: ObjCBool = false
+            if FileManager.default.fileExists(atPath: candidate.path, isDirectory: &isDir),
+               isDir.boolValue { return candidate }
+            // 根的上一级是 "/.."（不是 "/"），不 standardized 这条永远不等、循环不停：找不到时挂死而不是报错。
+            let up = dir.deletingLastPathComponent().standardizedFileURL
             if up.path == dir.path { break }  // 到根了
             dir = up
         }
