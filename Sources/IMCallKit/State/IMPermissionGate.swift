@@ -52,6 +52,20 @@ public func imPermissionDevices(mediaType: String, withCamera: Bool) -> [IMDevic
     mediaType == "video" && withCamera ? [.microphone, .camera] : [.microphone]
 }
 
+/**
+ **发起一通电话**时该申请哪些设备（交互稿 §01 的表，2026-09-09 改）。
+
+ 群通话默认关摄像头（`imDefaultCameraOn`），所以发起时申请摄像头是在为一件还没发生的事
+ 要权限——**只申请麦克风**，等用户点「开摄像头」时再问（`IMCallController.toggleCamera`
+ 那条路上 `publishCamera()` 抛出来的权限错误会落成 `cameraBlocked`）。
+ 于是**没有摄像头权限也能发起和参加群通话**，1v1 视频不变。
+
+ 与 Android 的 `IMPermissionGate.devicesForPlacing` 是同一条判据。
+ */
+public func imPermissionDevicesForPlacing(mediaType: String, isGroup: Bool) -> [IMDeviceKind] {
+    imPermissionDevices(mediaType: mediaType, withCamera: !isGroup)
+}
+
 /// imNeedsPermissionExplanation：只有「首次」才出我们自己的说明卡。
 public func imNeedsPermissionExplanation(_ status: IMPermissionStatus) -> Bool {
     status == .notDetermined

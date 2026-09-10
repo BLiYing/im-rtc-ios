@@ -507,4 +507,76 @@ final class SpeakingIndicatorTests: XCTestCase {
         XCTAssertFalse(state.selfSpeaking)
         XCTAssertTrue(state.participants.allSatisfy { !$0.isSpeaking })
     }
+
+}
+
+/// 摄像头默认态与「发起时申请哪些设备」——两条判据是一件事的两半，放一起。
+final class CameraDefaultTests: XCTestCase {
+
+    func testGroupCallStartsWithCameraOff() {
+        /*
+         这一条守的是「没有摄像头权限也能发起群通话」这个产品承诺的**前半截**：
+         默认关摄像头 → 发起时就不必申请摄像头权限（后半截是
+         `imPermissionDevicesForPlacing`，在下面那条用例里）。
+
+         起因是 2026-09-09 的 Android 真机：摄像头设成「每次询问」后发起视频呼叫，
+         进了呼叫界面却挂不掉。群通话这一路绕开摄像头权限门之后就不再经过那一段。
+        */
+        XCTAssertTrue(imDefaultCameraOn(mediaType: "video", isGroup: false),
+                      "1v1 视频要看见对方，进来一片头像盘是错的")
+        XCTAssertFalse(imDefaultCameraOn(mediaType: "video", isGroup: true),
+                       "群视频进去时没人在出镜")
+        XCTAssertFalse(imDefaultCameraOn(mediaType: "audio", isGroup: false))
+        XCTAssertFalse(imDefaultCameraOn(mediaType: "audio", isGroup: true))
+
+        // 拨出与来电两条路都要走同一个判据——只改一条的话，
+        // 群视频**来电横幅**上那颗按钮会显示成已开启，而实际不该开。
+        let groupOut = reduceCallView(IMCallViewState(),
+                                      .callPlaced(calleeIDs: ["bob", "carol"],
+                                                  mediaType: "video", isGroup: true))
+        XCTAssertFalse(groupOut.selfState.cameraOn)
+
+        let soloOut = reduceCallView(IMCallViewState(),
+                                     .callPlaced(calleeIDs: ["bob"],
+                                                 mediaType: "video", isGroup: false))
+        XCTAssertTrue(soloOut.selfState.cameraOn)
+
+        let groupIn = reduceCallView(IMCallViewState(),
+                                     .callReceived(callID: "c-1", caller: "alice",
+                                                   calleeIDs: ["bob"],
+                                                   mediaType: "video", isGroup: true))
+        XCTAssertFalse(groupIn.selfState.cameraOn)
+        XCTAssertTrue(imShowsCameraButton(for: groupIn),
+                      "群视频里那颗按钮还在，只是默认关着")
+
+        let soloIn = reduceCallView(IMCallViewState(),
+                                    .callReceived(callID: "c-1", caller: "alice",
+                                                  calleeIDs: [],
+                                                  mediaType: "video", isGroup: false))
+        XCTAssertTrue(soloIn.selfState.cameraOn)
+
+        // **会议房本轮不改**：它刚按「默认开」在真机上验过，改它要重验。
+        let meeting = reduceCallView(IMCallViewState(), .meetingJoined(roomID: "r-1", now: 0))
+        XCTAssertTrue(meeting.selfState.cameraOn, "会议房仍是默认开摄像头")
+    }
+
+    func testGroupCallOnlyAsksForMicrophone() {
+        // 「没有摄像头权限也能发起群通话」这个承诺就落在这一行上。
+        XCTAssertEqual(imPermissionDevicesForPlacing(mediaType: "video", isGroup: true),
+                       [.microphone], "群通话发起时只申请麦克风")
+        XCTAssertEqual(imPermissionDevicesForPlacing(mediaType: "video", isGroup: false),
+                       [.microphone, .camera])
+        XCTAssertEqual(imPermissionDevicesForPlacing(mediaType: "audio", isGroup: false),
+                       [.microphone])
+    }
+
+    /// 本地收场写的原因要跟红键实际发的动作一致：写 "network" 的话，
+    /// 用户在网络好好的情况下按取消，屏幕上会写「网络中断」并多停 1.5 秒。
+    func testWatchdogReasonFollowsTheEndAction() {
+        XCTAssertEqual(imEndWatchdogReason(for: .cancel), "cancel")
+        XCTAssertEqual(imEndWatchdogReason(for: .reject), "reject")
+        XCTAssertEqual(imEndWatchdogReason(for: .hangup), "hangup")
+        XCTAssertEqual(imEndWatchdogReason(for: .leaveRoom), "hangup")
+        XCTAssertEqual(imEndedHoldSeconds(imEndWatchdogReason(for: .cancel)), 1.5)
+    }
 }

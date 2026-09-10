@@ -208,8 +208,11 @@ public func reduceCallView(_ state: IMCallViewState,
         */
         next.participants = [IMParticipant(uid: caller, hasAccepted: true)]
             + calleeIDs.filter { $0 != caller }.map { IMParticipant(uid: $0, hasAccepted: false) }
+        // 摄像头默认态见 `imDefaultCameraOn`（群通话默认关）；
         // **默认不外放**（拍板 2026-09-06）：视频通话一样从听筒出声，要外放由用户自己点。
-        next.selfState = IMSelfState(micOn: true, cameraOn: mediaType == "video", speakerOn: false)
+        next.selfState = IMSelfState(micOn: true,
+                                     cameraOn: imDefaultCameraOn(mediaType: mediaType, isGroup: isGroup),
+                                     speakerOn: false)
 
     case let .callPlaced(calleeIDs, mediaType, isGroup):
         next = IMCallViewState()
@@ -221,8 +224,11 @@ public func reduceCallView(_ state: IMCallViewState,
         next.peerUID = isGroup ? "" : (calleeIDs.first ?? "")
         // 呼出时对方还没接——**先摆上去且标成未接听**，界面才有「正在响铃」的格子。
         next.participants = calleeIDs.map { IMParticipant(uid: $0, hasAccepted: false) }
+        // 摄像头默认态见 `imDefaultCameraOn`（群通话默认关）；
         // **默认不外放**（拍板 2026-09-06）：视频通话一样从听筒出声，要外放由用户自己点。
-        next.selfState = IMSelfState(micOn: true, cameraOn: mediaType == "video", speakerOn: false)
+        next.selfState = IMSelfState(micOn: true,
+                                     cameraOn: imDefaultCameraOn(mediaType: mediaType, isGroup: isGroup),
+                                     speakerOn: false)
 
     case let .callBegin(callID, roomID, mediaType, isGroup, role, now):
         // callBegin 只说「通话建立」，媒体不一定通了，所以先进 connecting——除非媒体已经先一步就绪。

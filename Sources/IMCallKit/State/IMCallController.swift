@@ -73,6 +73,9 @@ public final class IMCallController: NSObject {
     /// 结束画面停留多久再自动收起。0 = 不自动收。
     public var endedHoldSeconds: TimeInterval = 1.5
     private var dismissTimer: DispatchSourceTimer?
+
+    /// 红键按下之后盯着这一屏走没走的那只表。见 `armEndWatchdog`。
+    private var endWatchdog: DispatchSourceTimer?
     /// 提示自动撤掉的计时器。**提示是一次性的**：不撤的话它在 `statusLine` 里永久顶掉时长。
     private var hintTimer: DispatchSourceTimer?
     /// 邀请中的占位格拿到终局后停 2s 再收的计时器，按 uid 记。
@@ -94,6 +97,7 @@ public final class IMCallController: NSObject {
     deinit {
         // 计时器持有方释放时必须 cancel（CONVENTIONS §5：Timer 的 runloop 语义容易泄漏）。
         dismissTimer?.cancel()
+        endWatchdog?.cancel()
         hintTimer?.cancel()
         settleTimers.values.forEach { $0.cancel() }
     }
@@ -108,8 +112,18 @@ public final class IMCallController: NSObject {
         apply(.callPlaced(calleeIDs: calleeIDs, mediaType: mediaType, isGroup: isGroup))
         Task {
             let outcome = await permissionGate.ensure(
-                imPermissionDevices(mediaType: mediaType, withCamera: true))
+                imPermissionDevicesForPlacing(mediaType: mediaType, isGroup: isGroup))
             guard await settle(outcome, onBlocked: { self.apply(.dismiss) }) else { return }
+            /*
+             **过完权限门要再看一眼这一屏还在不在。** 权限门可能停在系统框 / 说明卡上好几秒，
+             这期间用户完全可能按了红键（甚至已经被 `armEndWatchdog` 本地收场）。
+             不看的话：屏幕早就收了，invite 却在用户授权的那一刻才发出去——
+             对方响起铃来，主叫这边一个界面都没有。
+            */
+            guard await MainActor.run(body: { self.state.phase == .outgoing }) else {
+                IMRTCLog.warn("[Kit] 过完权限门时这一屏已经不在了，invite 不发")
+                return
+            }
             await engine.call(calleeIDs, mediaType: mediaType, isGroup: isGroup)
         }
     }
@@ -138,6 +152,11 @@ public final class IMCallController: NSObject {
         Task {
             let outcome = await permissionGate.ensure(devices)
             guard await settle(outcome, onBlocked: { Task { await self.engine.reject() } }) else { return }
+            // 同 `placeCall`：权限门期间对方可能已经取消、用户也可能已经按了拒接。
+            guard await MainActor.run(body: { self.state.phase == .incoming }) else {
+                IMRTCLog.warn("[Kit] 过完权限门时这通来电已经不在了，accept 不发")
+                return
+            }
             await engine.accept()
         }
     }
@@ -168,9 +187,15 @@ public final class IMCallController: NSObject {
         engine.setSpeakerOn(on)
     }
 
-    /// 结束当前这一场。红按钮在**四种场合是四个不同的动作**，分辨这件事是 Kit 的责任（`imEndAction`）。
+    /**
+     结束当前这一场。红按钮在**四种场合是四个不同的动作**，分辨这件事是 Kit 的责任（`imEndAction`）。
+
+     发出去之后还要**盯着这一屏到底走没走**（`armEndWatchdog`）：认得出该发哪一帧，
+     不等于那一帧真的发得出去。
+     */
     public func end() {
         let action = imEndAction(for: state)
+        armEndWatchdog(reason: imEndWatchdogReason(for: action))
         Task {
             switch action {
             case .leaveRoom: await engine.leaveRoom()
@@ -179,6 +204,35 @@ public final class IMCallController: NSObject {
             case .hangup:    await engine.hangup()
             }
         }
+    }
+
+    /**
+     红键的看门狗：按下 `IMEndWatchdogSeconds` 之后这一屏还在原地，就**本地收场**。
+
+     为什么需要它：2026-09-09 在 Android 上复现——摄像头权限设成「每次询问」时权限门在
+     拨出中途没落定，`call.invite` **一帧没发**，而界面早已切成 outgoing。红键映射到
+     `cancel`，引擎的通话状态机却还在 Idle，于是**本地拒成 2005、一帧不发、
+     也没有任何结束事件回来**，界面永远停在「正在呼叫…」。
+
+     iOS 这一侧同形：`placeCall` 也是先 `apply(.callPlaced)` 再过权限门，而
+     `imEndAction` 连 Android 那条 `Action.none` 兜底都没有（`default` 直接给 `hangup`）。
+     判据因此只能是**「按下之后这一屏到底走没走」**——用户按红键时的意图没有歧义：
+     把我弄出去；这条路必须在本地就能走完，不许依赖服务端应答。
+     */
+    private func armEndWatchdog(reason: String) {
+        endWatchdog?.cancel()
+        let timer = DispatchSource.makeTimerSource(queue: .main)
+        timer.schedule(deadline: .now() + IMEndWatchdogSeconds)
+        timer.setEventHandler { [weak self] in
+            guard let self else { return }
+            self.endWatchdog = nil
+            guard self.state.phase != .idle, self.state.phase != .ended else { return }
+            IMRTCLog.warn("[Kit] 红按钮本地收场：没等到结束事件",
+                          ["phase": String(describing: self.state.phase)])
+            self.apply(.callEnd(reason: reason, durationSec: 0))
+        }
+        endWatchdog = timer
+        timer.resume()
     }
 
     public func toggleMic() {
@@ -302,6 +356,14 @@ public final class IMCallController: NSObject {
     private func onStateChanged(from before: IMCallViewState) {
         dismissTimer?.cancel()
         dismissTimer = nil
+        /*
+         收到终态就不必再盯着。**挂在这里而不是各个回调里**：onStateChanged 是状态变更的
+         唯一出口，漏挂一条回调就会多出一次莫名其妙的「本地收场」。
+        */
+        if state.phase == .idle || state.phase == .ended {
+            endWatchdog?.cancel()
+            endWatchdog = nil
+        }
         if state.phase == .ended, endedHoldSeconds > 0 {
             let timer = DispatchSource.makeTimerSource(queue: .main)
             timer.schedule(deadline: .now() + imEndedHoldSeconds(state.endReason))
@@ -310,6 +372,13 @@ public final class IMCallController: NSObject {
             timer.resume()
         }
         if state.phase == .idle {
+            /*
+             **这一屏没了，权限卡不能还杵在上面。** 卡是 `promptCard`，不在 state 里，
+             所以阶段回到 idle 它一个字都不会变。更要紧的是那张卡背后挂着一个
+             continuation：不替用户答一声，`placeCall` / `accept` 的那个 Task 会一直悬着。
+             答 false = 「取消」，权限门回 `.cancelled`，调用方按取消收场。
+            */
+            promptCard?.answer(false)
             micCID = ""
             cameraCID = ""
             publishedRoomID = ""

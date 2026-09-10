@@ -24,6 +24,43 @@ public func imEndAction(for state: IMCallViewState) -> IMEndAction {
 }
 
 /**
+ 进这一通电话时摄像头开不开。
+
+ **1v1 视频默认开**：那一屏的产品意图就是看见对方，进来一片头像盘是错的。
+ **群通话默认关**（2026-09-09）：群里进去时没人在出镜，摄像头这件事该由用户自己点开。
+ 真正要紧的是它的连带后果——摄像头权限从「发起群通话的前置条件」降级成
+ 「按下那颗按钮时才要的东西」，于是**没有摄像头权限也能发起和参加群通话**
+ （见 `imPermissionDevicesForPlacing`）。人多的时候还顺带省掉一路上行。
+
+ **会议房不走这里**（`meetingJoined` 里仍是默认开）：同样的道理适用，但会议房刚按
+ 「默认开」在真机上验过，改它要重验，留到下一轮定。
+
+ 规范见《界面规范》§04 末尾与《交互流程》§01。与 Android 的
+ `IMCallViewReducer.defaultCameraOn` 是同一条判据。
+ */
+public func imDefaultCameraOn(mediaType: String, isGroup: Bool) -> Bool {
+    mediaType == "video" && !isGroup
+}
+
+/// 红键按下后，等服务端把这一屏收掉的最长时间；到点还在原地就本地收场（`IMCallController.end`）。
+///
+/// 3 秒是「慢网也该回来了」与「用户还没开始怀疑手机坏了」之间的那个数：
+/// 正常路径上 `call.hangup.ok` 与 `call.ended` 都在百毫秒级。与 Android 的
+/// `IMRedButtonWatchdog.DEFAULT_TIMEOUT_MS` 是同一个数。
+public let IMEndWatchdogSeconds: TimeInterval = 3
+
+/// 本地收场时写哪个结束原因。**照红键实际发出去的那个动作写**，不写 "network"：
+/// 复现出来的那一次网络是好的（是权限门没落定、帧压根没发），
+/// 屏幕上写「网络中断」是在冤枉网络，还会按 `imEndedHoldSeconds` 多停 1.5 秒。
+public func imEndWatchdogReason(for action: IMEndAction) -> String {
+    switch action {
+    case .cancel: return "cancel"
+    case .reject: return "reject"
+    case .hangup, .leaveRoom: return "hangup"
+    }
+}
+
+/**
  通话中该不该显示「摄像头」按钮。**只看 media_type，不看本端摄像头开没开。**
  语音通话里不给：协议上没有「转视频」这回事（拍板 §11-10）。视频通话里关了摄像头按钮仍要有。
  */
