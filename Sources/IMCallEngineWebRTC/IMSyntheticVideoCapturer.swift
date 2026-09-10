@@ -123,6 +123,11 @@ public final class IMSyntheticVideoCapturer: RTCVideoCapturer {
         ctx.addLine(to: CGPoint(x: w / 2 + cos(now) * radius, y: h / 2 + sin(now) * radius))
         ctx.strokePath()
 
+        // **先把坐标翻成 UIKit 的左上角原点再画字。** 裸 CGContext 的原点在左下角，
+        // 而 `NSString.draw(at:)` 假定的是翻转过的上下文——不翻的话字是倒着的、
+        // 用户名也跑到了左下角（2026-09-10 联调时 Android 看 carol 像是被镜像了，其实是字画倒了）。
+        ctx.translateBy(x: 0, y: h)
+        ctx.scaleBy(x: 1, y: -1)
         UIGraphicsPushContext(ctx)
         defer { UIGraphicsPopContext() }
         let font = UIFont.systemFont(ofSize: max(12, h * 0.08), weight: .semibold)
