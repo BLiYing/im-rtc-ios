@@ -53,17 +53,22 @@ public func imPermissionDevices(mediaType: String, withCamera: Bool) -> [IMDevic
 }
 
 /**
- **发起一通电话**时该申请哪些设备（交互稿 §01 的表，2026-09-09 改）。
+ **发起一通电话**时该申请哪些设备。**只看 `media_type`，不看界面上摄像头开没开。**
 
- 群通话默认关摄像头（`imDefaultCameraOn`），所以发起时申请摄像头是在为一件还没发生的事
- 要权限——**只申请麦克风**，等用户点「开摄像头」时再问（`IMCallController.toggleCamera`
- 那条路上 `publishCamera()` 抛出来的权限错误会落成 `cameraBlocked`）。
- 于是**没有摄像头权限也能发起和参加群通话**，1v1 视频不变。
+ 2026-09-09 曾经改成「群通话默认关摄像头，所以只申请麦克风」，**次日退回**。
+ 退回的理由在 Android 那一侧：`IMCallEngine.publishDefaults` **按 `media_type` 眼推视频**，
+ 进房那一刻摄像头就真的被打开了。权限清单一旦和它分叉，`ensureCapture()` 会把一个
+ 采集失败的 source 缓存下来且永不重来——此后点「开摄像头」按钮亮着却一帧画面都没有，
+ 而且一条日志都不打。
+
+ iOS 这一侧本来不会这样（`publishFor` 是「本端摄像头关着就不推」，`toggleCamera` 惰性发布），
+ **但两端的权限规则必须是同一条**——这个项目被两端不同形咬过太多次。
+ 摄像头被拒不挡通话（`.cameraBlocked` 降级为语音继续），代价只是多问一次。
 
  与 Android 的 `IMPermissionGate.devicesForPlacing` 是同一条判据。
  */
 public func imPermissionDevicesForPlacing(mediaType: String, isGroup: Bool) -> [IMDeviceKind] {
-    imPermissionDevices(mediaType: mediaType, withCamera: !isGroup)
+    imPermissionDevices(mediaType: mediaType, withCamera: true)
 }
 
 /// imNeedsPermissionExplanation：只有「首次」才出我们自己的说明卡。

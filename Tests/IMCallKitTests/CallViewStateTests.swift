@@ -560,14 +560,23 @@ final class CameraDefaultTests: XCTestCase {
         XCTAssertTrue(meeting.selfState.cameraOn, "会议房仍是默认开摄像头")
     }
 
-    func testGroupCallOnlyAsksForMicrophone() {
-        // 「没有摄像头权限也能发起群通话」这个承诺就落在这一行上。
+    func testPlacingPermissionsFollowMediaTypeOnly() {
+        /*
+         **发起时申请哪些设备只看 `media_type`，不看群不群、也不看摄像头默认开没开。**
+
+         2026-09-09 曾经改成「群通话只申请麦克风」，次日退回：Android 的引擎
+         `publishDefaults` 按 `media_type` 眼推视频，权限清单和它一分叉，
+         `ensureCapture()` 就会把一个采集失败的 source 缓存下来且永不重来——
+         此后点「开摄像头」按钮亮着却一帧画面都没有，而且一条日志都不打。
+
+         iOS 这一侧本来不会这样，但**两端的权限规则必须是同一条**。
+        */
         XCTAssertEqual(imPermissionDevicesForPlacing(mediaType: "video", isGroup: true),
-                       [.microphone], "群通话发起时只申请麦克风")
+                       [.microphone, .camera], "群视频照样要摄像头——引擎会推视频")
         XCTAssertEqual(imPermissionDevicesForPlacing(mediaType: "video", isGroup: false),
                        [.microphone, .camera])
-        XCTAssertEqual(imPermissionDevicesForPlacing(mediaType: "audio", isGroup: false),
-                       [.microphone])
+        XCTAssertEqual(imPermissionDevicesForPlacing(mediaType: "audio", isGroup: true),
+                       [.microphone], "语音通话不要摄像头")
     }
 
     /// 本地收场写的原因要跟红键实际发的动作一致：写 "network" 的话，
