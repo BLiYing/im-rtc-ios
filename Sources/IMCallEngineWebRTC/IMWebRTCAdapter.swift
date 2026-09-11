@@ -371,6 +371,12 @@ public final class IMWebRTCAdapter: NSObject, IMMediaAdapter, @unchecked Sendabl
      已发布的摄像头关掉时**连采集一起停**（状态栏绿点灭）；打开时同一个采集器原地再起，
      轨道、transceiver、cid 一个都不变，不重新协商。libwebrtc 把 start / stop 排在
      同一条采集队列上，按调用顺序执行，所以快速开关不会乱序。
+
+     重新打开前先 `resetForReopen`：轨道对象没变，登记表不会走「换轨道先摘旧帧」
+     那条路（见 `IMVideoRegistry.bind(owner:track:)`），关闭前的最后一帧会一直
+     留在渲染视图里——摄像头图标一亮，Kit 那边 `hasVideo` 立刻变 true 把视图
+     显出来，露的是这张旧帧，新采集的第一帧到了才覆盖上去，看着就是「先闪一下
+     旧画面、再跳到新画面」。见 `IMVideoRegistry.resetForReopen(owner:)` 的注释。
      */
     public func setMuted(_ cid: String, _ muted: Bool) {
         lock.lock()
@@ -387,6 +393,7 @@ public final class IMWebRTCAdapter: NSObject, IMMediaAdapter, @unchecked Sendabl
             Self.halt(camera, synthetic)
             return
         }
+        registry.resetForReopen(owner: imLocalViewKey(cid))
         synthetic?.startCapture(width: profile.width, height: profile.height, fps: profile.frameRate)
         guard let camera else { return }
         do {
@@ -458,12 +465,17 @@ public final class IMWebRTCAdapter: NSObject, IMMediaAdapter, @unchecked Sendabl
     }
 
     /**
-     attachLocalView 把本端某条轨道挂到视图上做预览；传 nil 卸载。
+     attachLocalView 把本端某条轨道挂到视图上做预览；传 nil 只从容器上摘下来，
+     视图本身与它的 sink **不销毁**（整通电话复用，见 `IMVideoRegistry.attach(owner:to:)`）。
 
      **走的是同一张登记表**（键加 `:local:` 前缀），不是另起一套。
      原先这里每调一次就 `addSubview` 一个新的 `RTCMTLVideoView`，
      而 Kit 每次界面状态变化都会重挂一遍——格子里叠了一摞渲染视图，
      且传 nil 时什么都不做，卸载不掉。
+
+     关摄像头再开摄像头走的就是这条路（`view` 非 nil 再传一次），
+     不是 `stopLocalPreview`——真正的释放只发生在挂断 / 进房前的
+     `stopLocalPreview()`（那两处调用 `registry.remove`/`removeAll`）。
     */
     public func attachLocalView(_ cid: String, _ view: AnyObject?) {
         let key = imLocalViewKey(cid)

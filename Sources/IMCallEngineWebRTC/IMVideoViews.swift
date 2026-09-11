@@ -109,19 +109,35 @@ final class IMVideoRegistry {
         }
     }
 
-    /// attach 把某个 owner 的画面挂到宿主给的视图上；传 nil 卸载。
+    /// attach 把某个 owner 的画面挂到宿主给的视图上；传 nil 只从容器上摘下来。
     ///
     /// **重复调用是幂等的**。原先每调一次就 `addSubview` 一个新的
     /// `RTCMTLVideoView`——而 Kit 每次状态变化都会重挂一遍，于是格子里
     /// 叠了一摞渲染视图，只有最下面那张接着轨道。
+    ///
+    /// # 传 nil 不再拆视图、不再拆 sink
+    ///
+    /// 本端摄像头关闭时 Kit 会用 `attach(owner:to: nil)` 把预览从容器上收回。
+    /// 视图和它接在轨道上的 sink 都**留在表里**——只是暂时没有 superview，
+    /// 轨道那边（`RTCCameraVideoCapturer`）也已经停采集，不会再送帧过来。
+    /// 重新开摄像头时同一个 `owner` 命中缓存，`attachRenderer` 判重之后
+    /// 直接收到新采集的第一帧，不会先经历一次「新建视图 → 挂 sink → 等首帧」。
+    /// 整通电话只彻底释放一次，在 `remove`/`removeAll`（挂断、进房前的
+    /// `stopLocalPreview`）——见那两个方法的注释。
+    /// 与 Android `IMCallKit.localPreviewView` 同一个思路：Kit 层的预览视图
+    /// 整通电话只创建一次、反复复用（参见 `im-rtc-android` 的
+    /// `IMCallKit.kt` `localPreviewView(context)`）。
+    ///
+    /// 这个函数本端、远端共用（`owner` 是 uid 或 `imLocalViewKey` 生成的
+    /// `:local:<cid>`），所以这条「nil 不拆」的改动对远端 tile 摘视图
+    /// （参与者离场）同样生效——效果是好的：对端短暂断线重连时不会因为
+    /// 中间那一下 `attach(nil)` 而把已经渲染好的最后一帧连视图一起丢掉，
+    /// 与 Android 「九宫格 tile 不传 null 以避免 Surface 销毁闪烁」是同一个方向。
     func attach(owner: String, to container: UIView?) {
         onMain { [self] in
             guard let container else {
-                if let view = views[owner] {
-                    detachRenderer(owner: owner, view: view)
-                    view.removeFromSuperview()
-                }
-                views[owner] = nil
+                // 只从容器上摘视图，视图与 sink 都留在表里——挂断/通话结束才真释放（见 remove/removeAll）。
+                views[owner]?.removeFromSuperview()
                 return
             }
             let view = views[owner] ?? makeRenderView()
@@ -161,6 +177,48 @@ final class IMVideoRegistry {
             orphans = [:]
             owners = [:]
             rendered = []
+        }
+    }
+
+    /**
+     resetForReopen 让某个 owner 的渲染视图「翻篇」：摄像头重新打开前调用，
+     保证接下来的第一帧画在一块全新的画布上，不会先闪一下关闭前留下的最后一帧。
+
+     只换视图、不改挂载状态：换下来的旧视图从容器上摘掉，新视图立刻补到
+     同一个容器的同一个位置；没被 `attach` 过（当前没有缓存视图）就什么都不做。
+
+     # 为什么是「换一块新画布」而不是「清空这块画布」
+
+     `RTCMTLVideoView` 没有公开的清帧接口——`renderFrame(nil)` 会不会清空当前
+     显示的内容，libwebrtc 没有文档承诺，直接依赖等于在赌私有实现细节。换一个
+     全新的 `IMAspectVideoView` 实例就不用赌：新视图从没渲染过东西，
+     `CAMetalLayer` 天然是空的，不可能带着上一次开机时的旧帧。
+     与 Android `IMWebRTCAdapter.kt` 的 `attachLocalPreview` 每次 `release()` +
+     重新 `init()` 同一个 `SurfaceViewRenderer` 是同一个目的：复用的是宿主看到的
+     那个视图**位置**，不是画布里已经画上去的像素。
+
+     # 为什么只对本端调用
+
+     调用点在 `IMWebRTCAdapter.setMuted(_:_:)` 摄像头重新打开那一支——本端的
+     采集停了又重启，轨道对象不变，登记表也就不会走 `bind` 那条「换轨道先摘
+     旧帧」的路（见 `bind(owner:track:)` 的注释），旧帧才会一直留在渲染视图里
+     等着被「重新亮起」的一刻曝出来。远端画面走的是另一条路——对端摄像头关
+     闭时这条本端方法根本不会被调用，所以这个改动不影响远端渲染。
+     */
+    func resetForReopen(owner: String) {
+        onMain { [self] in
+            guard let old = views[owner] else { return }
+            let container = old.superview
+            detachRenderer(owner: owner, view: old)
+            old.removeFromSuperview()
+            let fresh = makeRenderView()
+            if let container {
+                fresh.frame = container.bounds
+                fresh.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+                container.addSubview(fresh)
+            }
+            views[owner] = fresh
+            attachRenderer(owner: owner)
         }
     }
 

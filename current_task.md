@@ -12,20 +12,23 @@
 
 ## 当前焦点
 
-**2026-09-11 晚：「来电页 + 进房前关摄像头停采集」第 5、6 步 + 延后项①（本仓），直接在 main 改，已提交，用户真机验过。**
-六步总表在 `../im-rtc-server/current_task.md` 的「另一条线」。
+**2026-09-11 深夜：真机报的「通话中关摄像头再打开，画面先出来又闪一下（前后同一张图）」（本仓），直接在 main 改，未提交。** Android 没这个问题。
+
+上一刀（09-11 晚「来电页 + 进房前关摄像头停采集」）已提交、用户真机验过，细节看 `git log`。
 
 | 现象 | 根因 | 改了什么 |
 |---|---|---|
-| 来电页预览还没起来就点接听，摄像头开两次 | `startLocalPreview` 与 `acquireCamera` 各开各的 capturer | adapter 单飞 `opening`：在起的那次大家一起等；`close()` / `stopLocalPreview()` 递增 `captureGeneration`，起到一半被作废的当场 `halt` 并抛 `invalidState`；`publishedCameraCID` 防 `addTransceiver` 两次 |
-| 来电页 / 拨出中开过摄像头又关掉，灯要等挂断才灭 | 只熄按钮 | 新公开 API `stopLocalPreview()`（§7.5，`@objc`，**同步**转给媒体层保先后）；adapter 已发布的不停。Kit `toggleCamera` 没发布就停，`previewEpoch` 作废在途的 `startPreviewIfWanted`；`publishFor` 收尾时没推成的也停 |
-| 通话中关摄像头只是静音，灯仍亮 | `setMuted` 只改 `isEnabled` | 已发布摄像头的 `setMuted` 同时停 / 重起 capturer；Track、transceiver、cid 不动，不重协商。关着时 `switchCamera` 不动 |
+| 通话中把摄像头关了再打开，画面先曝出来一下、紧接着又闪一次，闪前闪后是同一张画面 | `setMuted(_:_:)` 重开摄像头时**复用同一个 `RTCVideoTrack`**（只停/重启 capturer，没换轨道、没重协商），`IMVideoRegistry` 挂载表也就不会走「新轨道→清旧 sink」那条分支，于是上次渲染的最后一帧被冻在同一个 `RTCMTLVideoView` 的 Metal 层里没人清。Kit 的格子揭示是被 `cameraOn` 状态**直接**驱动的（`IMVideoTileView.apply(hasVideo:)`），不是等真正的首帧到达才揭示——所以重开的瞬间先曝出**关闭前的旧帧**，新首帧几帧之后才覆盖上去，看着像同一张画面闪了一下 | `IMVideoRegistry` 新增 `resetForReopen(owner:)`：把渲染视图换成一块全新画布（`RTCMTLVideoView` 没有公开的"清帧"API，只能换实例，位置/父容器不变），在 `IMWebRTCAdapter.setMuted(_:_:)` 重新打开摄像头那一支、`camera.startCapture` 之前调用。同时把 `attach(owner:to:)` 传 `nil` 容器时的语义从"销毁视图 + sink"改成"只从容器摘下来、视图与 sink 都留在表里"，真释放只留给 `remove`/`removeAll`（挂断、进房前 `stopLocalPreview`）——呼应「整通复用同一个预览视图」的要求 |
 
-adapter 拆出 `IMWebRTCAdapter+Support.swift`（权限、选格式、`halt`、音频会话、simulcast 编码），主文件 564 行。
-`./scripts/test.sh` 全绿（10 步，声明 211 = 执行 210 + 跳过 1），新增 `FacadeTests.testStopLocalPreviewReachesMediaSynchronously`。
-adapter 那部分没单测（依赖 libwebrtc），靠 `../im-rtc-android/temp_verify.py` 静态断言 + 真机。
+**已排查但没照抄的一点**：任务原描述怀疑的根因是"通话中 `attach(nil)` 被调用、把视图拆了"——顺着 `imPickLayout(for:)` 和 `IMCallOverlayViewController` 的 `renderVideo`/`renderGrid` 走了一遍调用点，1v1 视频与九宫格在整通连接期间容器**始终非 nil**，这条路径在当前代码里并不会触发。仍按要求把 `attach(nil)` 改成非破坏性的（防御性、也顺带保住九宫格切换时的同一逻辑），但真正的闪烁是上面这条"复用同一 Metal 视图冻结旧帧"链路，用 `resetForReopen` 单独修。
 
-上一刀（09-11 下午五个真机问题）细节看 `git log`。
+**Android 实际行为**（`IMCallKit.localPreviewView` / `IMWebRTCAdapter.kt`）：本地预览用的是**整通复用的同一个 Kit 级 View**，但每次重新附着本地预览时，`attachLocalPreview(view, token)` 会对**同一个** `SurfaceViewRenderer` 先 `release()` 再重新 `init()`——真正防"曝旧帧"的是这个 release+init 循环，不是"从不摘视图"本身。iOS 这边 `RTCMTLVideoView` 没有等价的公开 reset API，改用"换一个全新视图实例"达到同样效果，这是 `resetForReopen` 设计的直接依据。
+
+**改动范围**：只有 `Sources/IMCallEngineWebRTC/IMVideoViews.swift` 与 `Sources/IMCallEngineWebRTC/IMWebRTCAdapter.swift` 两个文件（`git diff --stat`：2 files changed, 77 insertions(+), 7 deletions(-)）。远端视图渲染逻辑没有单独改动——只是 `attach(owner:to:)` 是本地/远端共用的同一份代码，语义变化连带影响远端 tile 被摘下容器时的行为（同理由：避免九宫格换格子时曝出多余的销毁/重建）。
+
+**单测**：试过新增 `IMCallEngineWebRTCTests` 测试目标覆盖 `IMVideoRegistry` 的纯挂载逻辑，写完发现该目标依赖的源码整体包在 `#if canImport(UIKit) && canImport(WebRTC)` 里，`swift test` 在这台机器上跑的 `Target Platform` 是 macOS，条件编译整段被跳过、0 个用例被执行——`scripts/test.sh` 自己的注释（`swift_test_with_census` 那段）早就点名这类"声明数对不上、面板却全绿"的假绿，还提到 `ProfileResolverTests` 踩过同一个坑。已放弃这条路，撤掉了 `Package.swift` 里那个 test target 和新文件，改动范围收回到上面两个 adapter 源码文件。验证手段仍是：`swift build` 编译通过 + 走读 `resetForReopen`/`setMuted`/`attach` 的调用链 + `./scripts/test.sh` 第 10 步的 iOS Demo 编译 + **真机验证（未做，只能等用户在真机上确认是否还闪）**。
+
+`./scripts/test.sh` 全绿情况见本次改动后的完整输出（贴在对话记录里，10 步、声明 211 = 执行 210 + 跳过 1，Demo iOS 编译成功）。
 
 **simulcast 换包方案已验证完、暂缓**（2026-09-09 拍板），结论与 checksum 全在「已知坑」第一条，不用重查。
 
