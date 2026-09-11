@@ -12,25 +12,20 @@
 
 ## 当前焦点
 
-**2026-09-11 下午：群通话真机报的五个问题逐个修，直接在 main 上改（未提交）。本仓三处：**
+**2026-09-11 晚：「来电页 + 进房前关摄像头停采集」第 5、6 步 + 延后项①（本仓），直接在 main 改，已提交，用户真机验过。**
+六步总表在 `../im-rtc-server/current_task.md` 的「另一条线」。
 
-1. **九宫格竖屏源左右黑边 / 等人久了变成竖直画面（3a / 3c）**。9:16 源放进正方形格子，可见比例**恰好**等于阈值 0.5625；
-   本仓格子边长是小数，`UIStackView` 取整后宽高差 1px（175.67×175.33 → 0.5614）就判成 FIT；
-   发送端把源缩放到不再是精确 9:16 时同理（alice 那格从填满变成竖条就是这条）。
-   Android 格子边长是整数像素，同一路流正好等于阈值，所以一直填满。
-   改：`IMCallGridView` 用 `imSquareTileSide` 把边长取整到物理像素；`imShouldFillVideo` 带 `imFillTolerance = 0.01`
-   （Android 同值；`../im-rtc-server/docs/mechanism/VIDEO_RENDERING.md` 已补一段）。
-2. **视频来电横幅的接听键是摄像头图标（4a）**：与来电页、UI_SPEC「phone · 来电页、来电横幅」不符。恒为 `.phone`。
-3. **来电页上点开摄像头看不见自己（4b）**：原先只有拨出中才起预览。现在来电页每次渲染调
-   `startRingingPreviewIfAllowed()`：视频 + 摄像头开着 + **系统权限早就给过**才起（`imShouldPreviewWhileRinging`；
-   响铃时不申请，§01）。只在全屏来电页起，横幅上不起。`previewStarting` 防重入。
-   顺带堵一个同源的坑：`cameraCID` 原先既表示「预览在跑」又表示「已发布」——来电页开过又关掉再接听，
-   通话中再打开只会解除静音、**对端永远看不到**。新增 `cameraPublished` 区分。
+| 现象 | 根因 | 改了什么 |
+|---|---|---|
+| 来电页预览还没起来就点接听，摄像头开两次 | `startLocalPreview` 与 `acquireCamera` 各开各的 capturer | adapter 单飞 `opening`：在起的那次大家一起等；`close()` / `stopLocalPreview()` 递增 `captureGeneration`，起到一半被作废的当场 `halt` 并抛 `invalidState`；`publishedCameraCID` 防 `addTransceiver` 两次 |
+| 来电页 / 拨出中开过摄像头又关掉，灯要等挂断才灭 | 只熄按钮 | 新公开 API `stopLocalPreview()`（§7.5，`@objc`，**同步**转给媒体层保先后）；adapter 已发布的不停。Kit `toggleCamera` 没发布就停，`previewEpoch` 作废在途的 `startPreviewIfWanted`；`publishFor` 收尾时没推成的也停 |
+| 通话中关摄像头只是静音，灯仍亮 | `setMuted` 只改 `isEnabled` | 已发布摄像头的 `setMuted` 同时停 / 重起 capturer；Track、transceiver、cid 不动，不重协商。关着时 `switchCamera` 不动 |
 
-`./scripts/test.sh` 全绿（10 步，209 用例 + 1 跳过），新增 `VideoFitTests` 2 条、`GridTests` 1 条、`KitRulesTests` 1 条。
-**没上真机**。Web 那个（3b）与 Android 那两个（前台服务崩溃、横幅接听键）在各自仓的 current_task。
+adapter 拆出 `IMWebRTCAdapter+Support.swift`（权限、选格式、`halt`、音频会话、simulcast 编码），主文件 564 行。
+`./scripts/test.sh` 全绿（10 步，声明 211 = 执行 210 + 跳过 1），新增 `FacadeTests.testStopLocalPreviewReachesMediaSynchronously`。
+adapter 那部分没单测（依赖 libwebrtc），靠 `../im-rtc-android/temp_verify.py` 静态断言 + 真机。
 
-上一刀（群视频接听补问摄像头、过权限门不替用户开摄像头）已合 main，细节看 `git log`。
+上一刀（09-11 下午五个真机问题）细节看 `git log`。
 
 **simulcast 换包方案已验证完、暂缓**（2026-09-09 拍板），结论与 checksum 全在「已知坑」第一条，不用重查。
 
@@ -45,11 +40,8 @@
 
 **本轮优先**：
 
-1. **九宫格**（carol=iOS、alice=Android、bob=Web）：自己那格、alice 那格都是正方形填满，没有左右黑边；
-   carol 呼 bob+alice、bob 长久不接，alice 那格一直填满。
-2. **群视频来电页**（相机早就授权过）：点开摄像头 → 立刻看得见自己；关掉再接听 → 通话中点开，**对端看得到**。
-3. 视频来电横幅的接听键是听筒，与点开来电页那颗一致。
-4. 上一刀没验的：群视频接听弹麦克风 + 摄像头；1v1 视频来电页关摄像头再接只弹麦克风。
+1. 本批（预览没出来就接听只开一次摄像头、进房前 / 通话中关摄像头灯灭）用户 2026-09-11 真机验过。
+2. 上一刀没验的：九宫格正方形填满、横幅接听键是听筒、群视频来电页点开摄像头看得见自己。
 
 **上一轮挂着的**（分支 `worktree-fix-autohide-arm-gate`，1v1 视频）：接通后控制条完整停 3 秒再淡出；挂断后结束画面标题栏不淡掉。
 
@@ -191,6 +183,9 @@
 - **`UIStackView` 没有固有尺寸**，三段式要把两头钉死高度（64 / 96），中间那段才被完全确定。为此错过三轮。
 - **公开 API 必须 ObjC 友好**；`IMMediaAdapter` 刻意不是 `@objc` 协议。加了公开 API 就往 `IMObjCAPICheck.m` 补一行。
 - **MVP 不覆盖锁屏来电**（PushKit + CallKit 属后续期）；每次交付都要明说。
+- **通话中关摄像头停的是采集、不是轨道**（2026-09-11）：重开失败（设备被占 / 选不到格式）**只记日志**，按钮是开的、画面黑。
+  Kit 每点一次开一个 `Task` 调 `setMuted`，没严格排队——快速连点时落地顺序理论上可能和点击顺序不一致（没复现过）。
+  **`stopCapture()` 在 async 上下文里会解析到 async 重载**，要同步停就走 `IMWebRTCAdapter.halt`。
 - **iOS 切后台视频会被系统暂停**：现在由 controller 自动 mute 摄像头轨道，对端看到头像而不是黑屏；回前台不替用户打开他本来关着的摄像头。
 - **`RTCPeerConnectionFactory` 全进程一份、永不销毁**，否则挂断即闪退；挂载登记表只在主线程上动；远端轨道要「认领」（`claimRemoteTracks`）。
 - **图标一律 SF Symbols**（`IMKitIcon`）：emoji 在设备上会变成方框问号。

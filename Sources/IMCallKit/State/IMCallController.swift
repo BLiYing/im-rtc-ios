@@ -74,6 +74,8 @@ public final class IMCallController: NSObject {
     var cameraPublished = false
     /// 预览正在起，防来电页每次重画都再起一路。
     var previewStarting = false
+    /// 预览代际。关掉预览时 +1，还在路上的那次起预览回来认得出自己作废了（见 `stopLocalPreview`）。
+    var previewEpoch = 0
     /// 已经为哪个房间发布过。防止同一个房间推两次流。
     private var publishedRoomID = ""
     /// 结束画面停留多久再自动收起。0 = 不自动收。
@@ -261,8 +263,14 @@ public final class IMCallController: NSObject {
         }
         let on = !state.selfState.cameraOn
         apply(.setCamera(on))
+        // 摄像头还没推上房间就关掉（来电页 / 拨出中 / 进了房还没发出去）：**真停采集**，灯立刻灭（设计 v3.7）。
+        if !on, !cameraPublished {
+            stopLocalPreview()
+            return
+        }
         guard !state.roomID.isEmpty else {
             // 群通话拨出中打开摄像头：权限拨出前问过了，这时起预览好让人看见自己。
+            // 来电页不在这里起：状态一变界面就重画，重画时 `startRingingPreviewIfAllowed` 会起。
             if on, state.phase == .outgoing { Task { await self.startPreviewIfWanted() } }
             return
         }
@@ -274,8 +282,13 @@ public final class IMCallController: NSObject {
                 return
             }
             do {
-                cameraCID = try await engine.publishCamera() // 有预览轨道时引擎直接复用它
+                let cid = try await engine.publishCamera() // 有预览轨道时引擎直接复用它
+                cameraCID = cid
                 cameraPublished = true
+                // 发布的这几百毫秒里用户又把摄像头关了：已经推上去的只能停采集，不补这一下灯就一直亮着。
+                if await MainActor.run(body: { !self.state.selfState.cameraOn }) {
+                    await engine.setMuted(cid, muted: true)
+                }
                 await MainActor.run { self.broadcast() }
             } catch {
                 /*
@@ -400,6 +413,7 @@ public final class IMCallController: NSObject {
             cameraCID = ""
             cameraPublished = false
             previewStarting = false
+            previewEpoch += 1
             publishedRoomID = ""
             cameraPausedByBackground = false
             settleTimers.values.forEach { $0.cancel() }
@@ -492,7 +506,14 @@ public final class IMCallController: NSObject {
         // 发布是异步的，**这期间用户完全可能已经点过静音或关摄像头**——补一遍，否则界面显示「已静音」而对方照样听得见。
         let wanted = await MainActor.run { self.state.selfState }
         if !micCID.isEmpty, !wanted.micOn { await engine.setMuted(micCID, muted: true) }
-        if !cameraCID.isEmpty, !wanted.cameraOn { await engine.setMuted(cameraCID, muted: true) }
+        if !wanted.cameraOn {
+            // 推上去了就停采集、留轨道；还只是预览（没推成）就整个停掉——只关轨道的话灯不灭。
+            if cameraPublished {
+                await engine.setMuted(cameraCID, muted: true)
+            } else if !cameraCID.isEmpty {
+                await MainActor.run { self.stopLocalPreview() }
+            }
+        }
         await MainActor.run { self.broadcast() }
     }
 

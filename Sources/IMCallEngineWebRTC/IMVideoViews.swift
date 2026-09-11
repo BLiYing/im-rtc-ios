@@ -136,6 +136,19 @@ final class IMVideoRegistry {
         }
     }
 
+    /// remove 摘掉某个 owner 的视图并忘掉它的轨道（进房前关掉的本端预览）。
+    /// 只 `attach(owner:to: nil)` 的话轨道还被表攥着，要等通话结束才放。
+    func remove(owner: String) {
+        onMain { [self] in
+            if let view = views[owner] {
+                detachRenderer(owner: owner, view: view)
+                view.removeFromSuperview()
+            }
+            views[owner] = nil
+            tracks[owner] = nil
+        }
+    }
+
     /// removeAll 清空全部登记（通话结束 / logout）。
     func removeAll() {
         onMain { [self] in

@@ -9,6 +9,7 @@ import IMCallEngine
  `IMMediaAdapter` 的 libwebrtc 实现。**Engine 里唯一碰 WebRTC 的地方。**
 
  换媒体实现（或做 P2P 隐私模式）时只动这个 target，状态机与信令一行不用改。
+ 不碰可变状态的辅助（权限、挑格式、音频会话、编码参数）在 IMWebRTCAdapter+Support.swift。
  */
 public final class IMWebRTCAdapter: NSObject, IMMediaAdapter, @unchecked Sendable {
 
@@ -32,6 +33,15 @@ public final class IMWebRTCAdapter: NSObject, IMMediaAdapter, @unchecked Sendabl
     private var videoSource: RTCVideoSource?
     /// 已经在预览的那条摄像头轨道。发布时复用它，不重开设备。
     private var previewTrack: IMLocalTrackInfo?
+    /// 已经挂上 pub 的摄像头 cid。**挂过就不再挂**（两条 m-line 发同一条轨道），也不许被 `stopLocalPreview` 停掉。
+    private var publishedCameraCID: String?
+    /// 通话中关了摄像头：采集停着，轨道与 transceiver 留着（见 `setMuted`）。
+    private var capturePaused = false
+    /**
+     正在起的那一路预览，和起它时的代际。**同一代只起一路**（设计 v3.7 第 5 步）：
+     来电页预览还没起来就点接听，`acquireCamera` 紧跟着再要一次——原先两边各开一个采集器抢同一个设备。
+     */
+    private var opening: (task: Task<IMLocalTrackInfo, Error>, generation: Int)?
     /**
      `lock` 护住**上面所有可变字段**，不只是 `localTracks` 与 `peers`。
 
@@ -43,19 +53,19 @@ public final class IMWebRTCAdapter: NSObject, IMMediaAdapter, @unchecked Sendabl
     private let lock = NSLock()
 
     /**
-     关闭代际。`close()` 每次 +1。
+     采集代际。`close()` 与进房前的 `stopLocalPreview()` 每次 +1。
 
      光加锁**治不好跨 await 的那一半**：`startLocalPreview()` 会在系统权限弹窗上
-     停好几秒，这期间对端挂断就会走 `close()`。等它醒过来接着往下跑，
-     `ensurePeers()` 会现造一对全新的 PC，再把摄像头挂上去——通话早就结束了，
-     摄像头却还亮着（iOS 状态栏那个绿点），而轨道挂在一对没人协商的 PC 上；
+     停好几秒，这期间对端挂断就会走 `close()`（或用户在来电页上关掉了摄像头）。
+     等它醒过来接着往下跑，`ensurePeers()` 会现造一对全新的 PC，再把摄像头挂上去——
+     通话早就结束了，摄像头却还亮着（iOS 状态栏那个绿点），而轨道挂在一对没人协商的 PC 上；
      下一通电话的 `acquireCamera` 又会因为 `previewTrack` 还在、`localTracks` 已清空
      而抛 `device_not_found`。
 
      所以每一段跨 await 的采集流程都在开头记下代际，醒来先对一次：
      对不上就说明「我启动的这一轮已经作废」，就地收摊。
      */
-    private var closeGeneration = 0
+    private var captureGeneration = 0
 
     /// 采集画质档位。见 `IMVideoProfile`：**策略归宿主**，不是服务端下发的。
     private let profile: IMVideoProfile
@@ -148,12 +158,6 @@ public final class IMWebRTCAdapter: NSObject, IMMediaAdapter, @unchecked Sendabl
     }
 
     /**
-     acquireCamera 拿摄像头轨道挂到 pub 上。
-
-     `simulcast` 为真时**推三层**（rid = h/m/l，协议 §3.5）。三层的
-     `scaleResolutionDownBy` 是 1/2/4，服务端按订阅侧报的层上界与带宽估计选一层转发。
-     */
-    /**
      probeMicrophone 只问系统要麦克风权限，不开采集。
 
      系统框由 `AVCaptureDevice.requestAccess` 弹；已授权时它立刻回 true、不弹框。
@@ -163,35 +167,47 @@ public final class IMWebRTCAdapter: NSObject, IMMediaAdapter, @unchecked Sendabl
         try await Self.ensureAccess(.audio, what: "麦克风")
     }
 
-    /// ensureAccess 把系统权限状态收敛成结构化错误：拒绝 → 2001。
-    private static func ensureAccess(_ media: AVMediaType, what: String) async throws {
-        switch AVCaptureDevice.authorizationStatus(for: media) {
-        case .authorized:
-            return
-        case .notDetermined:
-            // 这一步会弹系统框，只弹一次；之后系统记住选择。
-            guard await AVCaptureDevice.requestAccess(for: media) else {
-                throw IMRTCError(.devicePermissionDenied, "\(what)权限被拒")
+    /**
+     startLocalPreview 只起采集，不挂 transceiver。**同一时刻只开一路摄像头。**
+
+     正在起的那一路还有效就等它；已经作废（挂断 / 进房前关了摄像头）就先等它把设备放掉，
+     再重新开——不然新旧两个采集器会抢同一个设备。
+     */
+    public func startLocalPreview() async throws -> IMLocalTrackInfo {
+        while true {
+            lock.lock()
+            if let previewTrack {
+                lock.unlock()
+                return previewTrack
             }
-        default:
-            throw IMRTCError(.devicePermissionDenied, "\(what)权限被拒")
+            if let opening {
+                let live = opening.generation == captureGeneration
+                lock.unlock()
+                if live { return try await opening.task.value }
+                _ = try? await opening.task.value
+                continue
+            }
+            let generation = captureGeneration
+            let task = Task { try await self.openCamera(generation) }
+            opening = (task, generation)
+            lock.unlock()
+            return try await task.value
         }
     }
 
-    /// startLocalPreview 只起采集，不挂 transceiver。
-    public func startLocalPreview() async throws -> IMLocalTrackInfo {
-        lock.lock()
-        let generation = closeGeneration
-        let existing = previewTrack
-        lock.unlock()
-        if let existing { return existing }
-
+    /// openCamera 真的开一次摄像头。只由 `startLocalPreview` 调，它保证同一代只有这一路。
+    private func openCamera(_ generation: Int) async throws -> IMLocalTrackInfo {
+        defer {
+            lock.lock()
+            if opening?.generation == generation { opening = nil }
+            lock.unlock()
+        }
         // **合成画面不碰摄像头，所以也不该问摄像头权限**：模拟器上那个框弹出来毫无意义，
         // 而真机上问了又不用，等于白要一次敏感权限。
         if !syntheticVideo {
             // 先问权限再开设备：没这一步的话 libwebrtc 的采集器在被拒时只是静默地不出画面。
             try await Self.ensureAccess(.video, what: "摄像头")
-            // 弹窗可能停留好几秒，这期间对端挂断就会走 close()。见 closeGeneration。
+            // 弹窗可能停留好几秒，这期间对端挂断就会走 close()。见 captureGeneration。
             try assertLive(generation)
         }
         let cid = "cam-\(UUID().uuidString.prefix(8))"
@@ -199,49 +215,94 @@ public final class IMWebRTCAdapter: NSObject, IMMediaAdapter, @unchecked Sendabl
         let source = peers.factory.videoSource()
         let track = peers.factory.videoTrack(with: source, trackId: cid)
 
+        var camera: RTCCameraVideoCapturer?
+        var synthetic: IMSyntheticVideoCapturer?
         if syntheticVideo {
-            let capturer = IMSyntheticVideoCapturer(delegate: source, label: syntheticLabel)
-            capturer.startCapture(width: profile.width, height: profile.height, fps: profile.frameRate)
-            try assertLive(generation) { capturer.stopCapture() }
-            lock.lock()
-            videoSource = source
-            syntheticCapturer = capturer
-            lock.unlock()
+            let fake = IMSyntheticVideoCapturer(delegate: source, label: syntheticLabel)
+            fake.startCapture(width: profile.width, height: profile.height, fps: profile.frameRate)
+            synthetic = fake
             IMRTCLog.info("合成画面已开", [
                 "profile": profile.name, "width": String(profile.width),
                 "height": String(profile.height), "label": syntheticLabel,
             ])
         } else {
-            let capturer = RTCCameraVideoCapturer(delegate: source)
-            try await startCapture(capturer)
-            // 采集**已经起来了**才作废的那一种：不停掉的话摄像头就这么一直亮着。
-            try assertLive(generation) { capturer.stopCapture() }
-            lock.lock()
-            videoSource = source
-            self.capturer = capturer
-            lock.unlock()
+            let real = RTCCameraVideoCapturer(delegate: source)
+            try await startCapture(real)
+            camera = real
         }
-        remember(cid: cid, track: track)
         // 合成画面是摄像头的**替身**，对外必须报 camera：协议的 source 只认
         // microphone | camera | screen | screen_audio，报 "synthetic" 会被服务端 1004 拒掉
         // room.publish，于是模拟器联调时对端永远只看到头像（2026-09-10 实测）。
         let info = IMLocalTrackInfo(cid: cid, kind: "video", source: "camera")
+
+        // **判代际与记账必须在同一次锁里**：分两步的话，`stopLocalPreview` 夹在中间时看到的是
+        // 「还没有采集器」、什么都不停，随后这里再把一个亮着的采集器记进来——灯就灭不掉了。
         lock.lock()
+        guard generation == captureGeneration else {
+            lock.unlock()
+            // 采集**已经起来了**才作废的那一种：不停掉的话摄像头就这么一直亮着。
+            Self.halt(camera, synthetic)
+            throw IMRTCError(.invalidState, "采集还没起来就作废了（通话结束，或关了摄像头）")
+        }
+        videoSource = source
+        capturer = camera
+        syntheticCapturer = synthetic
+        localTracks[cid] = track
         previewTrack = info
         lock.unlock()
         return info
     }
 
+    /**
+     stopLocalPreview 停掉进房前起的预览，**连采集一起停**（设计 v3.7 第 6 步）。
+
+     已经挂上 pub 的不停——通话中关摄像头走 `setMuted`。代际 +1：还在路上的那一路醒来
+     认得出自己作废了，会把设备放掉（见 `openCamera`），不会在用户关掉之后又把灯点亮。
+     */
+    public func stopLocalPreview() {
+        lock.lock()
+        guard publishedCameraCID == nil else {
+            lock.unlock()
+            return
+        }
+        captureGeneration += 1
+        let camera = capturer
+        let synthetic = syntheticCapturer
+        let cid = previewTrack?.cid
+        capturer = nil
+        syntheticCapturer = nil
+        videoSource = nil
+        previewTrack = nil
+        if let cid { localTracks[cid] = nil }
+        lock.unlock()
+
+        Self.halt(camera, synthetic)
+        if let cid { registry.remove(owner: imLocalViewKey(cid)) }
+    }
+
+    /**
+     acquireCamera 拿摄像头轨道挂到 pub 上。
+
+     `simulcast` 为真时**推三层**（rid = h/m/l，协议 §3.5）。三层的
+     `scaleResolutionDownBy` 是 1/2/4，服务端按订阅侧报的层上界与带宽估计选一层转发。
+     */
     public func acquireCamera(simulcast: Bool) async throws -> IMLocalTrackInfo {
         // **复用预览那条轨道**：拨出时已经开过摄像头了，再开一次会抢设备。
         let info = try await startLocalPreview()
         let cid = info.cid
         lock.lock()
-        let track = localTracks[cid] as? RTCVideoTrack
-        lock.unlock()
-        guard let track else {
-            throw IMRTCError(.deviceNotFound, "摄像头轨道丢失")
+        if publishedCameraCID == cid {
+            lock.unlock()
+            return info
         }
+        // 预览在这之间被关掉了：按作废报 2005，**不能报「没有设备」**——Kit 会把按钮打成「无权限」。
+        guard previewTrack?.cid == cid, let track = localTracks[cid] as? RTCVideoTrack else {
+            lock.unlock()
+            throw IMRTCError(.invalidState, "摄像头在发布前被关掉了")
+        }
+        publishedCameraCID = cid
+        lock.unlock()
+
         let transceiverInit = RTCRtpTransceiverInit()
         transceiverInit.direction = .sendOnly
         transceiverInit.streamIds = ["im-rtc"]
@@ -304,12 +365,36 @@ public final class IMWebRTCAdapter: NSObject, IMMediaAdapter, @unchecked Sendabl
             for: pc)
     }
 
-    /// setMuted 停/复发包。**不是 unpublish**：轨道与协商都保留。
+    /**
+     setMuted 停/复发包。**不是 unpublish**：轨道与协商都保留。
+
+     已发布的摄像头关掉时**连采集一起停**（状态栏绿点灭）；打开时同一个采集器原地再起，
+     轨道、transceiver、cid 一个都不变，不重新协商。libwebrtc 把 start / stop 排在
+     同一条采集队列上，按调用顺序执行，所以快速开关不会乱序。
+     */
     public func setMuted(_ cid: String, _ muted: Bool) {
         lock.lock()
         let track = localTracks[cid]
+        let toggles = cid == publishedCameraCID && capturePaused != muted
+        if toggles { capturePaused = muted }
+        let camera = toggles ? capturer : nil
+        let synthetic = toggles ? syntheticCapturer : nil
+        let front = usingFrontCamera
         lock.unlock()
         track?.isEnabled = !muted
+        guard toggles else { return }
+        if muted {
+            Self.halt(camera, synthetic)
+            return
+        }
+        synthetic?.startCapture(width: profile.width, height: profile.height, fps: profile.frameRate)
+        guard let camera else { return }
+        do {
+            let choice = try Self.captureChoice(front: front, profile: profile)
+            camera.startCapture(with: choice.device, format: choice.format, fps: choice.fps)
+        } catch {
+            IMRTCLog.warn("重新打开摄像头失败", ["err": String(describing: error)])
+        }
     }
 
     /// setSpeakerOn 切扬声器。走 `RTCAudioSession` 而不是直接碰 `AVAudioSession`——
@@ -331,14 +416,20 @@ public final class IMWebRTCAdapter: NSObject, IMMediaAdapter, @unchecked Sendabl
      **不重新协商**：`RTCCameraVideoCapturer` 换个 device 重新 `startCapture` 就行，
      轨道对象、`track_id` 与 `cid` 一个都不变，服务端与对端不需要知道这件事。
      只有一个摄像头（或另一个被别的程序占着）时保持原样——别为了翻转把通话弄断。
+     摄像头关着（采集停着）时不翻：翻转会重新 `startCapture`，等于替用户把摄像头打开了。
     */
     public func switchCamera() async {
         lock.lock()
-        let generation = closeGeneration
+        let generation = captureGeneration
         let capturer = self.capturer
+        let paused = capturePaused
         let wanted: AVCaptureDevice.Position = usingFrontCamera ? .back : .front
         lock.unlock()
         guard let capturer else { return }
+        guard !paused else {
+            IMRTCLog.warn("摄像头关着，不翻转", [:])
+            return
+        }
         guard RTCCameraVideoCapturer.captureDevices().contains(where: { $0.position == wanted }) else {
             IMRTCLog.warn("没有另一个摄像头可翻", ["wanted": wanted == .front ? "front" : "back"])
             return
@@ -347,7 +438,7 @@ public final class IMWebRTCAdapter: NSObject, IMMediaAdapter, @unchecked Sendabl
         do {
             try await startCapture(capturer)
             // 翻到一半通话结束了：把刚起来的采集停掉，别让摄像头留在那儿亮着。
-            try assertLive(generation) { capturer.stopCapture() }
+            try assertLive(generation) { Self.halt(capturer, nil) }
         } catch {
             // 翻转失败就翻回去：宁可保持原来那个摄像头，也不要一片黑。
             lock.lock(); usingFrontCamera.toggle(); lock.unlock()
@@ -401,10 +492,10 @@ public final class IMWebRTCAdapter: NSObject, IMMediaAdapter, @unchecked Sendabl
     /// close 收掉这一轮的媒体面。**一次锁里全部摘干净**，再在锁外面真正关。
     ///
     /// 代际 +1 是给还挂在 await 上的采集流程看的：它们醒来会发现自己这一轮已经作废
-    /// （见 `closeGeneration`），从而不会把摄像头留在那儿亮着。
+    /// （见 `captureGeneration`），从而不会把摄像头留在那儿亮着。
     public func close() {
         lock.lock()
-        closeGeneration += 1
+        captureGeneration += 1
         let camera = capturer
         let synthetic = syntheticCapturer
         // **关掉就丢掉**：RTCPeerConnection 不能复用，下一通电话由 ensurePeers 现造一对。
@@ -413,27 +504,28 @@ public final class IMWebRTCAdapter: NSObject, IMMediaAdapter, @unchecked Sendabl
         syntheticCapturer = nil
         videoSource = nil
         previewTrack = nil
+        publishedCameraCID = nil
+        capturePaused = false
         localTracks = [:]
         peers = nil
         lock.unlock()
 
         // 真正的关闭动作放在锁外面：不把 libwebrtc 的调用圈进自己的锁里。
-        camera?.stopCapture()
-        synthetic?.stopCapture()
+        Self.halt(camera, synthetic)
         registry.removeAll()
         oldPeers?.close()
     }
 
     // MARK: - 内部
 
-    /// assertLive 确认这一轮采集还没被 `close()` 作废；作废了就执行 cleanup 再抛错。
+    /// assertLive 确认这一轮采集还没被作废（`close()` / `stopLocalPreview()`）；作废了就执行 cleanup 再抛错。
     private func assertLive(_ generation: Int, cleanup: () -> Void = {}) throws {
         lock.lock()
-        let stale = generation != closeGeneration
+        let stale = generation != captureGeneration
         lock.unlock()
         guard stale else { return }
         cleanup()
-        throw IMRTCError(.invalidState, "采集还没起来，这通电话已经结束了")
+        throw IMRTCError(.invalidState, "采集还没起来就作废了（通话结束，或关了摄像头）")
     }
 
     private func remember(cid: String, track: RTCMediaStreamTrack) {
@@ -460,81 +552,13 @@ public final class IMWebRTCAdapter: NSObject, IMMediaAdapter, @unchecked Sendabl
         video.add(probe)
     }
 
-    /// startCapture 起摄像头，挑**前置 + 最接近档位分辨率**的格式。
-    ///
-    /// 挑「最接近」而不是「必须等于」：设备支持的格式表是离散的，
-    /// 要求精确匹配会在某些机型上一个格式都挑不出来，通话直接打不出去。
+    /// startCapture 按当前朝向起摄像头（格式怎么挑见 `captureChoice`）。
     private func startCapture(_ capturer: RTCCameraVideoCapturer) async throws {
-        let devices = RTCCameraVideoCapturer.captureDevices()
         lock.lock()
         let front = usingFrontCamera
         lock.unlock()
-        let wantedPosition: AVCaptureDevice.Position = front ? .front : .back
-        guard let device = devices.first(where: { $0.position == wantedPosition }) ?? devices.first else {
-            throw IMRTCError(.deviceNotFound, "没有可用的摄像头")
-        }
-        let wanted = profile.width
-        let formats = RTCCameraVideoCapturer.supportedFormats(for: device)
-        guard let format = formats.min(by: { lhs, rhs in
-            let l = CMVideoFormatDescriptionGetDimensions(lhs.formatDescription)
-            let r = CMVideoFormatDescriptionGetDimensions(rhs.formatDescription)
-            return abs(Int(l.width) - wanted) < abs(Int(r.width) - wanted)
-        }) else {
-            throw IMRTCError(.deviceNotFound, "摄像头没有可用格式")
-        }
-        let fps = format.videoSupportedFrameRateRanges
-            .map(\.maxFrameRate).max().map { Int(min($0, Double(profile.frameRate))) }
-            ?? profile.frameRate
-        let size = CMVideoFormatDescriptionGetDimensions(format.formatDescription)
-        IMRTCLog.info("摄像头已开", [
-            "profile": profile.name, "width": String(size.width),
-            "height": String(size.height), "fps": String(fps),
-        ])
-        try await capturer.startCapture(with: device, format: format, fps: fps)
-    }
-
-    /**
-     configureAudioSession 配音频会话。
-
-     `.voiceChat` 模式会打开**回声消除与自动增益**——不配的话自己会听到自己的回声，
-     而那听起来像"对方设备有问题"，很容易查错方向。
-     */
-    private func configureAudioSession() {
-        let session = RTCAudioSession.sharedInstance()
-        session.lockForConfiguration()
-        defer { session.unlockForConfiguration() }
-        do {
-            try session.setCategory(.playAndRecord, mode: .voiceChat, options: [.allowBluetooth])
-            try session.setActive(true)
-        } catch {
-            // 配不上不该让通话直接失败：多数情况下仍能出声，只是路由不理想。
-            IMRTCLog.warn("音频会话配置失败", ["err": String(describing: error)])
-        }
-    }
-
-    /// simulcastEncodings 是 simulcast 三层（协议 §3.5：rid 为 h/m/l），码率跟着档位走。
-    private static func simulcastEncodings(_ profile: IMVideoProfile) -> [RTCRtpEncodingParameters] {
-        profile.simulcastLayers.map { layer in
-            let encoding = RTCRtpEncodingParameters()
-            encoding.rid = layer.rid
-            encoding.isActive = true
-            encoding.scaleResolutionDownBy = NSNumber(value: layer.scaleDownBy)
-            encoding.maxBitrateBps = NSNumber(value: layer.bitrateBps)
-            return encoding
-        }
-    }
-
-    private static func stateName(_ state: RTCPeerConnectionState) -> String {
-        switch state {
-        case .new: return "new"
-        case .connecting: return "connecting"
-        case .connected: return "connected"
-        case .disconnected: return "disconnected"
-        case .failed: return "failed"
-        case .closed: return "closed"
-        @unknown default: return "unknown"
-        }
+        let choice = try Self.captureChoice(front: front, profile: profile)
+        try await capturer.startCapture(with: choice.device, format: choice.format, fps: choice.fps)
     }
 }
 #endif
-

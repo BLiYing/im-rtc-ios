@@ -108,8 +108,16 @@ public protocol IMMediaAdapter: AnyObject, Sendable {
      */
     func startLocalPreview() async throws -> IMLocalTrackInfo
 
+    /**
+     stopLocalPreview 停掉进房前起的预览，**连采集一起停**（设计 v3.7：来电页 / 拨出中关摄像头，灯立刻灭）。
+
+     已经挂上 pub 的摄像头不停——通话中关摄像头走 `setMuted`。还在路上的那次
+     `startLocalPreview` 要作废，不许在关掉之后又把摄像头点亮。
+     */
+    func stopLocalPreview()
+
     /// acquireCamera 拿摄像头轨道挂到 pub PC 上，返回它的 cid。
-    /// 已经在预览的话**复用那条轨道**，不重开摄像头。
+    /// 已经在预览的话**复用那条轨道**，不重开摄像头；正在起的预览**等它**，不另开一路。
     func acquireCamera(simulcast: Bool) async throws -> IMLocalTrackInfo
 
     /// createPubOffer 生成上行 offer。
@@ -140,6 +148,7 @@ public protocol IMMediaAdapter: AnyObject, Sendable {
     ///
     /// **这不是 unpublish**：轨道与协商都保留，只是停止发包。
     /// 反复开关摄像头走 unpublish 会触发重协商风暴（协议 §3.2）。
+    /// 已发布的摄像头关掉时**连采集一起停**（指示灯灭），打开时原地再起；没发布的预览只开关轨道。
     func setMuted(_ cid: String, _ muted: Bool)
 
     /// setSpeakerOn 切换扬声器 / 听筒。**只改路由不改采集**，通话不中断。
@@ -191,4 +200,7 @@ public protocol IMMediaAdapter: AnyObject, Sendable {
 public extension IMMediaAdapter {
     /// 默认按前置算——纯信令形态与只用前置的实现都不必操心它。
     var isUsingFrontCamera: Bool { true }
+
+    /// 默认什么都不做：没有采集的适配器无预览可停，已有的实现不受影响。
+    func stopLocalPreview() {}
 }

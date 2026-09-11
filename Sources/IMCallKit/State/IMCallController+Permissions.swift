@@ -101,17 +101,19 @@ extension IMCallController {
     /// startPreviewIfWanted：权限门放行之后，**本端摄像头开着才起预览**（草图 §03-E：接通前看得见自己）。
     func startPreviewIfWanted() async {
         // 判断和占位放在同一次主线程里做：来电页每次重画都会来问一遍，不能起出两路采集。
-        let go = await MainActor.run { () -> Bool in
+        let epoch = await MainActor.run { () -> Int? in
             let wanted = self.state.mediaType == "video" && self.state.selfState.cameraOn
                 && !self.state.selfState.cameraBlocked
-            guard wanted, self.cameraCID.isEmpty, !self.previewStarting else { return false }
+            guard wanted, self.cameraCID.isEmpty, !self.previewStarting else { return nil }
             self.previewStarting = true
-            return true
+            return self.previewEpoch
         }
-        guard go else { return }
+        guard let epoch else { return }
         do {
             let cid = try await engine.startLocalPreview()
             await MainActor.run {
+                // 路上被关掉了（`stopLocalPreview`）：这一路已经作废，别把它记成本端摄像头。
+                guard epoch == self.previewEpoch else { return }
                 self.previewStarting = false
                 // 预览还在路上时接听已经把摄像头推上去了：留着已发布的那个 cid，不拿预览的盖掉。
                 if self.cameraCID.isEmpty { self.cameraCID = cid }
@@ -122,10 +124,27 @@ extension IMCallController {
             // 权限门刚放行过，这里再失败多半是设备被占：按钮变禁用，通话照打。
             IMRTCLog.warn("[Kit] 本端预览起不来", ["err": String(describing: error)])
             await MainActor.run {
+                guard epoch == self.previewEpoch else { return }
                 self.previewStarting = false
                 if classifyPermissionError(error) != nil { self.apply(.cameraBlocked) }
             }
         }
+    }
+
+    /**
+     摄像头还没推上房间时关掉它：**真停采集**（设计 v3.7 第 6 步——来电页 / 拨出中关摄像头，灯立刻灭）。
+     原先只是不挂画面，采集一直开着，要等通话结束灯才灭。
+
+     `previewEpoch` +1，还在路上的那次 `startPreviewIfWanted` 回来时认得出自己作废了，
+     不会把死掉的 cid 记回 `cameraCID`；`previewStarting` 就地放开，用户再打开能马上重起
+     （媒体层会先等旧的那一路把设备放掉）。**必须在主线程调。**
+     */
+    func stopLocalPreview() {
+        previewEpoch += 1
+        previewStarting = false
+        cameraCID = ""
+        engine.stopLocalPreview()
+        broadcast()
     }
 
     /**

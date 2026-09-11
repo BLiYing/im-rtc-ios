@@ -48,6 +48,7 @@ final class FacadeTests: XCTestCase {
             note("startLocalPreview")
             return IMLocalTrackInfo(cid: "cam-1", kind: "video", source: "camera")
         }
+        func stopLocalPreview() { note("stopLocalPreview") }
         func acquireCamera(simulcast: Bool) async throws -> IMLocalTrackInfo {
             note("acquireCam(simulcast=\(simulcast))")
             return IMLocalTrackInfo(cid: "cam-1", kind: "video", source: "camera")
@@ -489,6 +490,21 @@ final class FacadeTests: XCTestCase {
 
         XCTAssertEqual(h.events.count(.roomLeft), 1, "会议没有 callEnd，收尾只能靠 roomLeft")
         XCTAssertTrue(h.media.calls().contains("close"))
+    }
+
+    /// 进房前关摄像头（设计 v3.7 第 6 步）：**同步**交给媒体层停采集，一帧信令都不发。
+    ///
+    /// 同步是断言对象：调用返回时媒体层就已经收到了，随后的 `startLocalPreview` 不会跑到它前面去。
+    func testStopLocalPreviewReachesMediaSynchronously() async throws {
+        let h = makeEngine()
+        let ws = try await login(h)
+        let framesBefore = ws.sent.count
+
+        h.engine.stopLocalPreview()
+
+        XCTAssertEqual(h.media.calls().last, "stopLocalPreview")
+        try await settle()
+        XCTAssertEqual(ws.sent.count, framesBefore, "停预览是本地的事，不该惊动服务端")
     }
 
     /// delegate 与 block 是**同一个分发点**的两个出口，收到的必须一致。
