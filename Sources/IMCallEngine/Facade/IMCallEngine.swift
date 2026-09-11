@@ -490,7 +490,6 @@ import Foundation
     private func makeConnection(token: String,
                                 inlet: AsyncStream<IMLoopWork>.Continuation) -> IMSignalConnection {
         var options = IMConnectionOptions(url: url, token: token, deviceID: deviceID)
-        options.sdk = "ios/0.0.1"
         if let webSocketFactory { options.webSocketFactory = webSocketFactory }
         var events = IMConnectionEvents()
         /*

@@ -68,6 +68,7 @@ final class DemoSession {
 
     private init() {
         records = Self.loadRecords()
+        restoreSwitches()
     }
 
     // MARK: - 服务器地址
@@ -169,7 +170,8 @@ final class DemoSession {
         // 日志回传（仅开发）：Engine 会把每一个公开事件也写进日志，服务端按时间轴合并。
         let sink = RemoteLogSink(server: server, client: "ios-\(username)")
         sink.start()
-        IMRTCLog.setLevel(.debug)
+        // 用设置页存下的级别。以前这里写死 debug：设置页关了详细日志，一重登又变回来。
+        IMRTCLog.setLevel(logLevel)
         IMRTCLog.setSink(sink)
         logSink = sink
 
@@ -273,6 +275,54 @@ final class DemoSession {
     private static func savedProfile() -> IMVideoProfile {
         let name = UserDefaults.standard.string(forKey: profileKey)
         return IMVideoProfile.presets.first { $0.name == name } ?? .default
+    }
+
+    // MARK: - 设置页的开关
+
+    /**
+     设置页那三个开关。**都要存下来**，理由同画质档位：这是宿主的配置，不是这一次运行的临时状态。
+     以前只放在内存里（横幅 / 悬浮窗只改 `kitConfig`，详细日志记在设置页自己身上），
+     杀掉 app 再进来全回缺省值。
+
+     横幅与悬浮窗**以 `kitConfig` 为准**，这里只负责读写它并落盘：`IMCallKitConfig` 是引用类型，
+     拨完 Kit 下次换形态就读到新值，不用重登。没存过就用 Kit 自己的缺省值，Demo 不另定一份。
+    */
+    var bannerFirst: Bool {
+        get { kitConfig.bannerFirst }
+        set {
+            kitConfig.bannerFirst = newValue
+            UserDefaults.standard.set(newValue, forKey: Self.bannerKey)
+        }
+    }
+
+    var floatingWindow: Bool {
+        get { kitConfig.floatingWindow }
+        set {
+            kitConfig.floatingWindow = newValue
+            UserDefaults.standard.set(newValue, forKey: Self.floatingKey)
+        }
+    }
+
+    /// 详细日志 = debug 级别（含主讲人 / 网络质量那些周期事件）。**缺省开**：Demo 就是拿来联调的。
+    var verboseLog: Bool = UserDefaults.standard.object(forKey: DemoSession.verboseKey) as? Bool ?? true {
+        didSet {
+            UserDefaults.standard.set(verboseLog, forKey: Self.verboseKey)
+            IMRTCLog.setLevel(logLevel)
+        }
+    }
+
+    private var logLevel: IMRTCLogLevel { verboseLog ? .debug : .info }
+
+    private static let bannerKey = "im-rtc-demo.bannerFirst"
+    private static let floatingKey = "im-rtc-demo.floatingWindow"
+    private static let verboseKey = "im-rtc-demo.verboseLog"
+
+    /// 启动时把存过的值灌回去。只灌存过的——没存过就留 Kit 的缺省值。
+    private func restoreSwitches() {
+        let defaults = UserDefaults.standard
+        if let saved = defaults.object(forKey: Self.bannerKey) as? Bool { kitConfig.bannerFirst = saved }
+        if let saved = defaults.object(forKey: Self.floatingKey) as? Bool { kitConfig.floatingWindow = saved }
+        IMRTCLog.setLevel(logLevel)
     }
 
     func logout() async {

@@ -4,7 +4,9 @@ import IMCallKit
 
 /*
  设置（草图 §02-D）：**这一屏其实是 Kit 配置项清单**。
- 开关直接改 `IMCallKitConfig`——它是引用类型，Kit 下次换形态时就读到新值，不用重启。
+ 开关经 `DemoSession` 改 `IMCallKitConfig` 并落盘——它是引用类型，Kit 下次换形态时就读到新值，不用重启。
+ **本页不存任何状态**，读写一律走 `DemoSession`：以前「详细日志」记在本页的一个 var 上，
+ 而 `login()` 里另写死了 debug——两份状态，开关显示的和实际日志级别会对不上。
 
  草图里那个「使用 Kit 整套 UI / 自画 UI」的总开关**这里没有**：iOS Demo 目前只走
  用法 B（Kit）。用法 A 在 Web Demo 里已经完整示范过一遍，iOS 这边等回调表稳定后再补。
@@ -22,19 +24,30 @@ final class SettingsViewController: UITableViewController {
 
     private lazy var rows: [Row] = [
         Row(title: "来电先出横幅", detail: "关掉则来电直接全屏",
-            isOn: { self.session.kitConfig.bannerFirst },
-            set: { self.session.kitConfig.bannerFirst = $0 }),
+            isOn: { self.session.bannerFirst },
+            set: { self.session.bannerFirst = $0 }),
         Row(title: "悬浮窗", detail: "允许把通话收成悬浮球",
-            isOn: { self.session.kitConfig.floatingWindow },
-            set: { self.session.kitConfig.floatingWindow = $0 }),
+            isOn: { self.session.floatingWindow },
+            set: { self.session.floatingWindow = $0 }),
         Row(title: "详细日志", detail: "debug 级别，含主讲人/网络质量的周期事件",
-            isOn: { self.verbose },
-            set: { on in
-                self.verbose = on
-                IMRTCLog.setLevel(on ? .debug : .info)
-            }),
+            isOn: { self.session.verboseLog },
+            set: { self.session.verboseLog = $0 }),
     ]
-    private var verbose = true
+
+    /**
+     「关于」。libwebrtc 那行要与 `Package.resolved` 锁的 stasel/WebRTC 版本一致，升级时一起改。
+
+     「视频编码」是**只读说明，不是开关**：iOS 用的是 libwebrtc 默认编码器工厂，
+     顺序依据见 `IMPeerConnections.sharedFactory` 的注释。
+    */
+    private var about: [(name: String, value: String)] {
+        [
+            ("SDK", "im-rtc-ios \(IMCallKitVersion)"),
+            ("libwebrtc", "M152（stasel/WebRTC 152.0.0）"),
+            ("视频编码", "H.264 硬编优先（libwebrtc 默认顺序），对端不支持时回落 VP8"),
+            ("设备 ID", session.deviceID),
+        ]
+    }
 
     override func viewDidLoad() {
         super.viewDidLoad()
@@ -63,7 +76,7 @@ final class SettingsViewController: UITableViewController {
         switch section {
         case 0: return rows.count
         case 1: return profiles.count
-        default: return 2
+        default: return about.count
         }
     }
 
@@ -92,8 +105,9 @@ final class SettingsViewController: UITableViewController {
             cell.accessoryType = profile.name == session.videoProfile.name ? .checkmark : .none
             cell.selectionStyle = .default
         default:
-            content.text = indexPath.row == 0 ? "SDK" : "设备 ID"
-            content.secondaryText = indexPath.row == 0 ? "im-rtc-ios 0.0.1" : session.deviceID
+            let item = about[indexPath.row]
+            content.text = item.name
+            content.secondaryText = item.value
             cell.accessoryView = nil
         }
         cell.contentConfiguration = content

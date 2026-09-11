@@ -150,7 +150,17 @@ final class IMPeerConnections: NSObject {
     */
     private static let sharedFactory: RTCPeerConnectionFactory = {
         RTCInitializeSSL()
-        // 软编解码工厂：**VP8 是 MVP 基线**，同时放行 H.264 让硬编生效（设计文档 §7）。
+        /*
+         libwebrtc 的默认编解码工厂，**编码器先后顺序由它决定，我们没有排序**。
+         原注释写「VP8 是 MVP 基线」，与实际不符。
+
+         这个顺序本仓没有源码能直接证实：预编译包的 `RTCDefaultVideoEncoderFactory.h`
+         只声明了 `supportedCodecs`，不写次序。依据是 Android 侧
+         `IMUplinkPolicy.preferH264Codec` 的分析——「iOS 这个工厂恰好把 H.264 排前面，
+         所以 iOS 一直在用硬编」，与 Android 默认 VP8 在前正好相反。
+         VP8 仍在列表里，对端不支持这档 H.264 时靠它回落。
+         要确认某次通话实际用的是哪个，看服务端日志 `上行 Track 已接入 … codec=`。
+        */
         return RTCPeerConnectionFactory(
             encoderFactory: RTCDefaultVideoEncoderFactory(),
             decoderFactory: RTCDefaultVideoDecoderFactory())
