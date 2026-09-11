@@ -81,7 +81,7 @@ public struct IMConnectionOptions {
     public var url: URL
     public var token: String
     public var deviceID: String
-    public var sdk: String = "ios/0.0.1"
+    public var sdk: String = "ios/\(IMCallEngineVersion)"
     /// 请求超时。协议建议 10 秒（§2.2）。
     public var requestTimeoutMS: Int = 10_000
     public var webSocketFactory: IMWebSocketFactory = imURLSessionWebSocketFactory

@@ -52,6 +52,9 @@
     }
     // `default` 是 ObjC 的关键字，点语法写不出来，只能走方括号。
     NSLog(@"[objc] 缺省档位 %@", [IMVideoProfile default].name);
+
+    // SDK 版本：与握手帧里的 sdk 字段同源。Swift 的全局常量 ObjC 看不见，走类属性。
+    NSLog(@"[objc] SDK %@", IMCallEngine.sdkVersion);
 }
 
 // device_id 的入参校验（协议 §2.5）。宿主可以不等 login 就自己先验一遍。

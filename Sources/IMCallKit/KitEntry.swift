@@ -26,8 +26,9 @@ import IMCallEngine
  （CONVENTIONS §11）。Kit 只负责来电页/横幅、1v1 四态、九宫格、悬浮窗。
  */
 
-/// Kit 的版本号。与 Engine 同步升，**四端共享大版本**（协议不兼容才升大版本）。
-public let IMCallKitVersion = "0.0.1"
+/// Kit 的版本号。**就是 Engine 的版本号**（`IMCallEngineVersion`），不单独维护——
+/// 两者同仓同发，分开写只会漂。五端共享大版本（协议不兼容才升大版本）。
+public let IMCallKitVersion = IMCallEngineVersion
 
 /// Kit 的配置。随界面落地逐步长出来。
 @objc public final class IMCallKitConfig: NSObject {

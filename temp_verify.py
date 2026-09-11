@@ -1,11 +1,8 @@
 #!/usr/bin/env python3
-"""临时自检：Vectors.directory() 的逐级查找 + scripts/test.sh 的 sibling_root()。
+"""临时自检：SDK 版本统一 1.0.0 + 设置页「关于」四行 + 三个开关持久化。
 
-从仓库里的**真实源码**抽出那两段逻辑来跑（不是抄一份），源码改坏了这里跟着红。
-三个修复各有专门的用例：
-  - 同名普通文件不能当目录收（fileExists 要带 isDirectory）
-  - 一路找不到时走到根要停（"/" 的上一级是 "/.."，不 standardized 会挂死）
-  - sibling_root 的 common 不漏到全局，且 `||` 兜底仍然生效
+纯静态检查：读仓库里的**真实源码**做文本断言，源码改坏了这里跟着红。
+编译是否通过交给 scripts/test.sh；持久化与界面是否真的生效要真机点一遍，这里验不了。
 
 用法：python3 temp_verify.py
 """
@@ -14,17 +11,34 @@ from __future__ import annotations
 import json
 import logging
 import re
-import subprocess
 import sys
-import tempfile
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent
-SERVER_CONFORMANCE = (REPO.parent / "im-rtc-server/docs/conformance").resolve()
-SWIFT_TIMEOUT_S = 180  # 首次起 swift 解释器要编译；超时即视为挂死
-WALK_RE = re.compile(r"^[ \t]*var dir = packageRoot\n.*?(?=^[ \t]*return fallback$)", re.S | re.M)
-SIBLING_ROOT_RE = re.compile(r"^sibling_root\(\) \{\n.*?^\}$", re.S | re.M)
+DEMO = REPO / "Demo/IMRTCDemo/IMRTCDemo"
+EXPECTED_VERSION = "1.0.0"
+VERSION_FILE = REPO / "Sources/IMCallEngine/Facade/IMCallEngineVersion.swift"
+FACADE_FILE = REPO / "Sources/IMCallEngine/Facade/IMCallEngine.swift"
+SIGNAL_FILE = REPO / "Sources/IMCallEngine/Signaling/SignalConnection.swift"
+KIT_FILE = REPO / "Sources/IMCallKit/KitEntry.swift"
+FACTORY_FILE = REPO / "Sources/IMCallEngineWebRTC/IMPeerConnections.swift"
+SETTINGS_FILE = DEMO / "SettingsViewController.swift"
+SESSION_FILE = DEMO / "DemoSession.swift"
+OBJC_FILE = DEMO / "IMObjCAPICheck.m"
+RESOLVED_FILE = REPO / "Package.resolved"
+SCAN_DIRS = ("Sources", "Tests", "Demo")
+SCAN_SUFFIXES = {".swift", ".m", ".h", ".plist", ".pbxproj"}
+SKIP_PARTS = {".build", "DerivedData", "xcuserdata"}
+# 前后不能挨着数字或点——否则 127.0.0.1 也会被当成版本号
+STALE_VERSION_RE = re.compile(r"(?<![\d.])0\.0\.1(?![\d.])")
+SDK_LITERAL_RE = re.compile(r'"ios/\d')
+ABOUT_RE = re.compile(r"private var about: .*?\n    \}\n", re.S)
+LOGIN_RE = re.compile(r"func login\(server:.*?\n    \}\n", re.S)
+# 属性名 → DemoSession 里的 key 常量名
+SWITCH_KEYS = {"bannerFirst": "bannerKey", "floatingWindow": "floatingKey", "verboseLog": "verboseKey"}
+ABOUT_NAMES = ["SDK", "libwebrtc", "视频编码", "设备 ID"]
 log = logging.getLogger("temp_verify")
 
 
@@ -35,149 +49,172 @@ class Result:
     detail: str
 
 
-@dataclass
-class WalkCase:
-    name: str
-    start: Path
-    expect: Path | None  # None = 期望找不到（返回 nil，走 fallback）
+class SourceError(Exception):
+    """源文件读不到或结构变了（该更新本脚本的正则）。"""
 
 
-@dataclass
-class Proc:
-    code: int
-    stdout: str
-    stderr: str
-
-
-def run(cmd: list[str], cwd: Path, timeout: float) -> Proc:
-    """跑子进程；超时 / 命令不存在都转成非零码，不往外抛。"""
+def read(path: Path) -> str:
     try:
-        p = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True, timeout=timeout)
-        return Proc(p.returncode, p.stdout, p.stderr)
-    except subprocess.TimeoutExpired as e:
-        partial = e.stdout.decode() if isinstance(e.stdout, bytes) else (e.stdout or "")
-        return Proc(124, partial, f"TIMEOUT after {timeout}s（挂死？）")
-    except OSError as e:
-        return Proc(127, "", f"无法执行 {cmd[0]}: {e}")
+        return path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError) as e:
+        raise SourceError(f"读不到 {path.relative_to(REPO)}: {e}") from e
 
 
-def extract(pattern: re.Pattern[str], path: Path, what: str) -> str:
-    """从源文件里抽一段代码；读不到或结构变了抛 ValueError。"""
-    try:
-        text = path.read_text(encoding="utf-8")
-    except OSError as e:
-        raise ValueError(f"读不到 {path}: {e}") from e
-    m = pattern.search(text)
+def section(pattern: re.Pattern[str], path: Path, what: str) -> str:
+    m = pattern.search(read(path))
     if not m:
-        raise ValueError(f"{path.name} 里找不到 {what}（源码结构变了？更新本脚本的正则）")
+        raise SourceError(f"{path.name} 里找不到 {what}（源码结构变了？）")
     return m.group(0)
 
 
-# ── Swift：Vectors.directory() 的逐级查找 ──────────────────────────────
+def scan_files() -> list[Path]:
+    files: list[Path] = []
+    for d in SCAN_DIRS:
+        root = REPO / d
+        if not root.is_dir():
+            continue
+        files += [p for p in root.rglob("*") if p.is_file() and p.suffix in SCAN_SUFFIXES
+                  and not SKIP_PARTS.intersection(p.parts)]
+    return files
 
 
-def build_swift_fixtures(tmp: Path) -> list[WalkCase]:
-    stray = tmp / "stray/im-rtc-server/docs"
-    stray.mkdir(parents=True)
-    (stray / "conformance").touch()  # 同名的普通文件
-    mixed_real = tmp / "mixed/im-rtc-server/docs/conformance"
-    mixed_real.mkdir(parents=True)
-    (tmp / "mixed/a/im-rtc-server/docs").mkdir(parents=True)
-    (tmp / "mixed/a/im-rtc-server/docs/conformance").touch()
-    return [
-        WalkCase("主检出 → 同级 im-rtc-server", REPO, SERVER_CONFORMANCE),
-        WalkCase("worktree 形状的路径 → 仍找到同级", REPO / ".claude/worktrees/x", SERVER_CONFORMANCE),
-        WalkCase("近处是同名文件、远处是目录 → 跳过文件取目录", tmp / "mixed/a/pkg", mixed_real),
-        WalkCase("只有同名普通文件 → 不收，返回 nil", tmp / "stray/pkg", None),
-        WalkCase("一路都没有 → 走到根停下，不挂死", tmp / "empty/pkg", None),
-    ]
+def grep(pattern: re.Pattern[str], files: list[Path]) -> list[str]:
+    hits: list[str] = []
+    for f in files:
+        try:
+            lines = f.read_text(encoding="utf-8").splitlines()
+        except (OSError, UnicodeDecodeError) as e:
+            hits.append(f"{f.relative_to(REPO)}: 读不到（{e}）")
+            continue
+        hits += [f"{f.relative_to(REPO)}:{i}" for i, line in enumerate(lines, 1) if pattern.search(line)]
+    return hits
 
 
-def swift_program(walk_body: str, cases: list[WalkCase]) -> str:
-    calls = "\n".join(
-        f'print("=> " + (find(URL(fileURLWithPath: {json.dumps(str(c.start))}))?.path ?? "nil"))'
-        for c in cases
-    )
-    return (
-        "import Foundation\nsetvbuf(stdout, nil, _IOLBF, 0)\n"
-        f"func find(_ packageRoot: URL) -> URL? {{\n{walk_body}    return nil\n}}\n{calls}\n"
-    )
+# ── 版本号：单一来源 ────────────────────────────────────────────────
 
 
-def judge_walk(case: WalkCase, got: str | None, proc: Proc) -> Result:
-    name = f"swift: {case.name}"
-    if got is None:
-        return Result(name, False, f"没有输出 exit={proc.code} {proc.stderr.strip()[-300:]}")
-    if case.expect is None:
-        return Result(name, got == "nil", f"got {got}")
-    return Result(name, got != "nil" and Path(got).resolve() == case.expect.resolve(), f"got {got}")
+def check_version_constant() -> Result:
+    text = read(VERSION_FILE)
+    defs = grep(re.compile(r"\blet IMCallEngineVersion\b"), scan_files())
+    ok = f'public let IMCallEngineVersion = "{EXPECTED_VERSION}"' in text and len(defs) == 1
+    return Result("版本常量 IMCallEngineVersion = 1.0.0 且只定义一次", ok, f"定义处 {defs}")
 
 
-def check_swift_walk(tmp: Path) -> list[Result]:
+def check_version_consumers() -> Result:
+    problems: list[str] = []
+    if 'public var sdk: String = "ios/\\(IMCallEngineVersion)"' not in read(SIGNAL_FILE):
+        problems.append("SignalConnection 的 sdk 缺省值没用常量")
+    if "public let IMCallKitVersion = IMCallEngineVersion" not in read(KIT_FILE):
+        problems.append("IMCallKitVersion 没引用 Engine 常量")
+    if "options.sdk =" in read(FACADE_FILE):
+        problems.append("IMCallEngine 门面仍在覆写 options.sdk")
+    if "IMCallEngine.sdkVersion" not in read(OBJC_FILE):
+        problems.append("IMObjCAPICheck.m 没调 sdkVersion")
+    literals = grep(SDK_LITERAL_RE, scan_files())
+    if literals:
+        problems.append(f'仍有 "ios/<数字>" 字面量 {literals}')
+    return Result("sdk 字段 / Kit 版本 / ObjC 门面都取自常量", not problems, "; ".join(problems) or "ok")
+
+
+def check_no_stale_version() -> Result:
+    hits = grep(STALE_VERSION_RE, scan_files())
+    return Result("Sources/Tests/Demo 无残留 0.0.1", not hits, f"命中 {hits}" if hits else "ok")
+
+
+# ── 设置页「关于」 ──────────────────────────────────────────────────
+
+
+def check_about_rows() -> Result:
+    block = section(ABOUT_RE, SETTINGS_FILE, "about 列表")
+    names = re.findall(r'\("([^"]+)",', block)
+    problems: list[str] = []
+    if names != ABOUT_NAMES:
+        problems.append(f"行名 {names} ≠ {ABOUT_NAMES}")
+    if '"im-rtc-ios \\(IMCallKitVersion)"' not in block:
+        problems.append("SDK 行没用 IMCallKitVersion")
+    if not re.search(r"H\.264.*VP8", block):
+        problems.append("视频编码行缺 H.264 优先 / VP8 回落")
+    if "about.count" not in read(SETTINGS_FILE):
+        problems.append("行数没跟 about.count 走")
+    return Result("关于 = SDK / libwebrtc / 视频编码 / 设备 ID 四行", not problems, "; ".join(problems) or "ok")
+
+
+def resolved_webrtc_version() -> str:
     try:
-        body = extract(WALK_RE, REPO / "Tests/IMCallEngineTests/Vectors.swift", "逐级查找循环")
-        cases = build_swift_fixtures(tmp)
-        program = tmp / "walk.swift"
-        program.write_text(swift_program(body, cases), encoding="utf-8")
-    except (ValueError, OSError) as e:
-        return [Result("swift: 准备", False, str(e))]
-    proc = run(["swift", str(program)], cwd=tmp, timeout=SWIFT_TIMEOUT_S)
-    outs = [line[3:] for line in proc.stdout.splitlines() if line.startswith("=> ")]
-    return [judge_walk(c, outs[i] if i < len(outs) else None, proc) for i, c in enumerate(cases)]
+        pins = json.loads(read(RESOLVED_FILE)).get("pins", [])
+    except json.JSONDecodeError as e:
+        raise SourceError(f"Package.resolved 不是合法 JSON: {e}") from e
+    for pin in pins:
+        if pin.get("identity") == "webrtc":
+            return str(pin.get("state", {}).get("version", ""))
+    raise SourceError("Package.resolved 里没有 webrtc 这一条")
 
 
-# ── Shell：test.sh 的 sibling_root() ─────────────────────────────────
+def check_libwebrtc_matches_lock() -> Result:
+    version = resolved_webrtc_version()
+    expect = f"M{version.split('.')[0]}（stasel/WebRTC {version}）"
+    ok = f'"{expect}"' in section(ABOUT_RE, SETTINGS_FILE, "about 列表")
+    return Result("libwebrtc 行与 Package.resolved 锁定版本一致", ok, f"锁定 {version}，期望文案 {expect}")
 
 
-def make_git_worktree(base: Path) -> tuple[Path, Path]:
-    """临时仓 base/main，worktree 挂在 main/.claude/worktrees/x（与真实布局同形）。返回 (期望的兄弟根, worktree)。"""
-    main = base / "main"
-    main.mkdir(parents=True)
-    ident = ["-c", "user.email=verify@local", "-c", "user.name=verify", "-c", "commit.gpgsign=false"]
-    steps = [
-        ["git", "init", "-q"],
-        ["git", *ident, "commit", "-q", "--no-verify", "--allow-empty", "-m", "init"],
-        ["git", "worktree", "add", "-q", "-b", "x", ".claude/worktrees/x"],
-    ]
-    for cmd in steps:
-        proc = run(cmd, cwd=main, timeout=30)
-        if proc.code != 0:
-            raise RuntimeError(f"{' '.join(cmd)} 失败: {proc.stderr or proc.stdout}")
-    return base, main / ".claude/worktrees/x"
+# ── 三个开关持久化 ─────────────────────────────────────────────────
 
 
-def shell_case(fn: str, name: str, cwd: Path, expect: Path | None) -> Result:
-    script = f'{fn}\nsibling_root\necho "leak=[${{common-unset}}]"'
-    proc = run(["bash", "-c", script], cwd=cwd, timeout=30)
-    lines = proc.stdout.strip().splitlines()
-    if proc.code != 0 or len(lines) < 2:
-        return Result(f"shell: {name}", False, f"exit={proc.code} out={proc.stdout!r} err={proc.stderr!r}")
-    got, leak = lines[-2], lines[-1]
-    path_ok = got == ".." if expect is None else Path(got).resolve() == expect.resolve()
-    return Result(f"shell: {name}", path_ok and leak == "leak=[unset]", f"got {got}; {leak}")
+def check_switch_keys() -> Result:
+    text = read(SESSION_FILE)
+    problems: list[str] = []
+    for prop, key in SWITCH_KEYS.items():
+        if f'private static let {key} = "im-rtc-demo.{prop}"' not in text:
+            problems.append(f"{prop}: 缺 key 常量")
+        if not re.search(rf"UserDefaults\.standard\.set\(\w+, forKey: Self\.{key}\)", text):
+            problems.append(f"{prop}: 没写盘")
+        if not re.search(rf"object\(forKey: (Self|DemoSession)\.{key}\) as\? Bool", text):
+            problems.append(f"{prop}: 启动没读回")
+    if not re.search(r"var verboseLog: Bool = .*\?\? true", text):
+        problems.append("verboseLog 缺省值不是 true")
+    return Result("三个开关都有 UserDefaults key、写盘且启动读回", not problems, "; ".join(problems) or "ok")
 
 
-def check_sibling_root(tmp: Path) -> list[Result]:
+def check_log_level_wiring() -> Result:
+    login = section(LOGIN_RE, SESSION_FILE, "login(server:username:)")
+    settings = read(SETTINGS_FILE)
+    problems: list[str] = []
+    if "setLevel(.debug)" in login or "setLevel(logLevel)" not in login:
+        problems.append("login 里的日志级别没用存下的值")
+    if re.search(r"\bvar verbose\b", settings) or "IMRTCLog.setLevel" in settings:
+        problems.append("设置页仍自己持有 verbose / 自己调 setLevel")
+    if "kitConfig" in settings:
+        problems.append("设置页绕过 DemoSession 直接改 kitConfig")
+    for prop in SWITCH_KEYS:
+        if f"self.session.{prop} = $0" not in settings:
+            problems.append(f"设置页 {prop} 没经 DemoSession 写")
+    return Result("日志级别与开关读写一律经 DemoSession", not problems, "; ".join(problems) or "ok")
+
+
+def check_factory_comment() -> Result:
+    text = read(FACTORY_FILE)
+    old = "// 软编解码工厂：**VP8 是 MVP 基线**"
+    ok = old not in text and "IMUplinkPolicy.preferH264Codec" in text
+    return Result("编码器工厂注释已改（引 Android 分析，不再称 VP8 基线）", ok, "ok" if ok else "旧注释仍在或缺出处")
+
+
+CHECKS: list[Callable[[], Result]] = [
+    check_version_constant, check_version_consumers, check_no_stale_version,
+    check_about_rows, check_libwebrtc_matches_lock,
+    check_switch_keys, check_log_level_wiring, check_factory_comment,
+]
+
+
+def run_check(fn: Callable[[], Result]) -> Result:
     try:
-        fn = extract(SIBLING_ROOT_RE, REPO / "scripts/test.sh", "sibling_root()")
-        nogit = tmp / "nogit"
-        nogit.mkdir()
-        wt_root, wt = make_git_worktree(tmp / "g")
-    except (ValueError, OSError, RuntimeError) as e:
-        return [Result("shell: 准备", False, str(e))]
-    cases = [
-        ("主检出 → 仓库的上一级", REPO, REPO.parent),
-        ("worktree（绝对路径分支）→ 主检出的上一级", wt, wt_root),
-        ("非 git 目录 → 退回 ..（|| 兜底仍生效）", nogit, None),
-    ]
-    return [shell_case(fn, name, cwd, expect) for name, cwd, expect in cases]
+        return fn()
+    except SourceError as e:
+        return Result(fn.__name__, False, str(e))
 
 
 def main() -> int:
     logging.basicConfig(level=logging.INFO, format="%(message)s")
-    with tempfile.TemporaryDirectory(prefix="im-rtc-verify-") as d:
-        tmp = Path(d).resolve()
-        results = check_sibling_root(tmp) + check_swift_walk(tmp)
+    results = [run_check(fn) for fn in CHECKS]
     for r in results:
         (log.info if r.ok else log.error)("%s %s — %s", "✓" if r.ok else "✗", r.name, r.detail)
     failed = sum(not r.ok for r in results)
