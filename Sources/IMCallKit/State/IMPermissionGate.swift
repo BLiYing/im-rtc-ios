@@ -71,6 +71,18 @@ public func imPermissionDevicesForPlacing(mediaType: String, isGroup: Bool) -> [
     imPermissionDevices(mediaType: mediaType, withCamera: true)
 }
 
+/**
+ **接听**时该申请哪些设备（交互稿 §01）。1v1 视频、群通话都是麦克风 + 摄像头——
+ **群通话默认关着摄像头也照样问**：接通后界面上就有开摄像头的按钮。
+ 只有用户在来电页上亲手关掉摄像头（`cameraOptedOut`，拍板 §11-10）才只要麦克风。
+
+ 原先按 `cameraOn` 判：群通话默认关摄像头，于是群通话接听从来不问摄像头，与设计表不符。
+ 与 Android `IMPermissionGate.devicesForAnswering`、Web `devicesForAnswering` 同一条判据。
+ */
+public func imPermissionDevicesForAnswering(mediaType: String, cameraOptedOut: Bool) -> [IMDeviceKind] {
+    imPermissionDevices(mediaType: mediaType, withCamera: !cameraOptedOut)
+}
+
 /// imNeedsPermissionExplanation：只有「首次」才出我们自己的说明卡。
 public func imNeedsPermissionExplanation(_ status: IMPermissionStatus) -> Bool {
     status == .notDetermined
@@ -140,8 +152,8 @@ public struct IMPromptCard: Sendable {
 /**
  IMPermissionGate 把三段式串起来。
 
- `present` 是「出一张卡并等用户点」；`probe` 是真的去拿设备（Engine 的 `probeMicrophone` /
- `startLocalPreview`），它抛的 2001 / 2002 决定分支。**系统状态查询只用来决定要不要出说明卡，
+ `present` 是「出一张卡并等用户点」；`probe` 是真的去问一次（麦克风走 Engine 的 `probeMicrophone`，
+ 摄像头只问系统权限、**不开摄像头**），它抛的 2001 / 2002 决定分支。**系统状态查询只用来决定要不要出说明卡，
  判失败一律靠真探**——Web 端在合成媒体源上撞过「查询说被拒、其实拿得到」。
  */
 public final class IMPermissionGate: @unchecked Sendable {

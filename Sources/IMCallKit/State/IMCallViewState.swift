@@ -89,13 +89,17 @@ public struct IMSelfState: Equatable, Sendable {
     public var speakerOn = false
     /// 摄像头权限被拒（或没有设备）。**通话继续，只是没有画面**（交互稿 §02 P3）：按钮变禁用态写「无权限」。
     public var cameraBlocked = false
+    /// 用户在**来电页上亲手关掉了**摄像头（拍板 §11-10：关掉摄像头再接听 = 以语音接听）。
+    /// 不能拿 `cameraOn == false` 代替：群通话默认就关着进来，那不是用户的选择，接听照样要问摄像头（交互稿 §01）。
+    public var cameraOptedOut = false
 
     public init(micOn: Bool = true, cameraOn: Bool = false, speakerOn: Bool = false,
-                cameraBlocked: Bool = false) {
+                cameraBlocked: Bool = false, cameraOptedOut: Bool = false) {
         self.micOn = micOn
         self.cameraOn = cameraOn
         self.speakerOn = speakerOn
         self.cameraBlocked = cameraBlocked
+        self.cameraOptedOut = cameraOptedOut
     }
 }
 
@@ -361,6 +365,8 @@ public func reduceCallView(_ state: IMCallViewState,
         // 权限被拒时开不了：按钮本来就是禁用态，这里再挡一道免得状态漂移。
         if state.selfState.cameraBlocked && on { return state }
         next.selfState.cameraOn = on
+        // 只有来电页上的这一下算「以语音接听」；接通后的开关与它无关。
+        if state.phase == .incoming { next.selfState.cameraOptedOut = !on }
 
     case let .setSpeaker(on):
         next.selfState.speakerOn = on

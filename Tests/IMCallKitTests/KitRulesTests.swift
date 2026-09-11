@@ -112,6 +112,15 @@ final class PermissionGateTests: XCTestCase {
         XCTAssertEqual(imPermissionDevices(mediaType: "video", withCamera: false), [.microphone], "关着摄像头接听只要麦克风")
     }
 
+    /// 接听看的是「来电页上有没有亲手关掉摄像头」，不是 `cameraOn`（交互稿 §01 第 250–252 行）。
+    func testDevicesForAnswering() {
+        XCTAssertEqual(imPermissionDevicesForAnswering(mediaType: "video", cameraOptedOut: false),
+                       [.microphone, .camera], "群通话默认关摄像头，接听也照样问")
+        XCTAssertEqual(imPermissionDevicesForAnswering(mediaType: "video", cameraOptedOut: true),
+                       [.microphone], "来电页上关掉摄像头再接只要麦克风")
+        XCTAssertEqual(imPermissionDevicesForAnswering(mediaType: "audio", cameraOptedOut: false), [.microphone])
+    }
+
     func testGrantedAsksNothing() async {
         let h = harness(statuses: [.microphone: .granted, .camera: .granted])
         let outcome = await h.gate.ensure([.microphone, .camera])

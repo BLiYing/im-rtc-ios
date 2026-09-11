@@ -59,7 +59,7 @@ extension IMCallController {
             },
             probe: { [weak self] kind in
                 guard let self else { return }
-                try await self.probeDevice(kind)
+                try await self.probeDevice(kind, systemProbe: systemProbe)
             },
             classify: { classifyPermissionError($0) })
     }
@@ -79,19 +79,39 @@ extension IMCallController {
         }
     }
 
-    /// probeDevice 真的去拿设备：麦克风走 `probeMicrophone`，摄像头走预览（它本来就该在拨出时起来）。
-    private func probeDevice(_ kind: IMDeviceKind) async throws {
+    /**
+     probeDevice 真的去问一次。**摄像头只问权限、不开摄像头。**
+
+     原先摄像头拿 `startLocalPreview` 探，探完还 `setCamera(true)`：群通话默认关摄像头进来，
+     过一遍权限门按钮就被点亮、摄像头也真开着——等于替用户开了摄像头。
+     开不开由 `startPreviewIfWanted` 看 `cameraOn` 决定。
+     */
+    private func probeDevice(_ kind: IMDeviceKind, systemProbe: IMDevicePermissionProbe) async throws {
         switch kind {
         case .microphone:
             try await engine.probeMicrophone()
         case .camera:
-            guard cameraCID.isEmpty else { return }
+            guard cameraCID.isEmpty else { return } // 已经在采集，权限早就有了
+            guard await systemProbe.request(.camera) else {
+                throw IMRTCError(.devicePermissionDenied, "摄像头权限被拒")
+            }
+        }
+    }
+
+    /// startPreviewIfWanted：权限门放行之后，**本端摄像头开着才起预览**（草图 §03-E：接通前看得见自己）。
+    func startPreviewIfWanted() async {
+        let wanted = await MainActor.run {
+            self.state.mediaType == "video" && self.state.selfState.cameraOn && !self.state.selfState.cameraBlocked
+        }
+        guard wanted, cameraCID.isEmpty else { return }
+        do {
             cameraCID = try await engine.startLocalPreview()
             // cid 不在 state 里，状态相等时 didSet 不会通知——本端预览要靠这一下才挂得上。
-            await MainActor.run {
-                self.apply(.setCamera(true))
-                self.broadcast()
-            }
+            await MainActor.run { self.broadcast() }
+        } catch {
+            // 权限门刚放行过，这里再失败多半是设备被占：按钮变禁用，通话照打。
+            IMRTCLog.warn("[Kit] 本端预览起不来", ["err": String(describing: error)])
+            if classifyPermissionError(error) != nil { await MainActor.run { self.apply(.cameraBlocked) } }
         }
     }
 }
