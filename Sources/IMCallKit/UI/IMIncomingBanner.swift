@@ -46,7 +46,9 @@ public final class IMIncomingBanner: UIView {
                          image: imResolvedAvatar(resolver, uid: caller))
         titleLabel.text = shown
         subtitleLabel.text = isGroup ? "邀请你加入群通话" : (mediaType == "video" ? "邀请你视频通话" : "邀请你语音通话")
-        acceptButton.setImage((mediaType == "video" ? IMKitIcon.video : IMKitIcon.phone).image(pointSize: 16), for: .normal)
+        // 接听键恒为听筒，与来电页那颗、与 Web 一致（UI_SPEC「phone · 来电页、来电横幅」）。
+        // 原先视频来电换成摄像机图标：群通话默认关着摄像头也显示摄像机，像是「以视频接听」。
+        // 出不出镜只由最左那颗摄像头开关表达（§11-10）。
         // 语音来电没有摄像头可关。
         cameraButton.isHidden = mediaType != "video"
         cameraButton.setImage((cameraOn ? IMKitIcon.video : IMKitIcon.videoSlash).image(pointSize: 16), for: .normal)

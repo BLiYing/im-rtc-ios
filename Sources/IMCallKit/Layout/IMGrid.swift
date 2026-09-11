@@ -99,6 +99,26 @@ public func imGridDimensions(_ count: Int,
 }
 
 /**
+ 九宫格正方形格子的边长，**向下取整到物理像素**。
+
+ 边长 = `min(按列分到的宽, 按行分到的高)`。不取整的话它是小数（393pt 宽两列 = 192.5pt = 577.5px），
+ UIStackView 按像素摆放时宽高各自取整、差出 1px，格子就不再是严格正方形——
+ 9:16 的源正好压在 FILL/FIT 阈值上，于是左右露出两条黑边（2026-09-11 真机）。
+ Android 的 `IMGrid.cellSide` 一直是整数像素，所以只有 iOS 踩到。
+
+ **只往小取**：往大取会撑出容器。
+ */
+public func imSquareTileSide(width: Double, height: Double, dims: IMGridDimensions,
+                             gap: Double, scale: Double) -> Double {
+    guard dims.columns > 0, dims.rows > 0 else { return 0 }
+    let cellWidth = (width - Double(dims.columns - 1) * gap) / Double(dims.columns)
+    let cellHeight = (height - Double(dims.rows - 1) * gap) / Double(dims.rows)
+    let side = max(min(cellWidth, cellHeight), 0)
+    let pixels = max(scale, 1)
+    return (side * pixels).rounded(.down) / pixels
+}
+
+/**
  决定每个格子该报哪一层（协议 §3.5）。
 
  **报的是上界不是命令**：服务端会取 min(这个上界, 带宽估计允许的层, 实际存在的层)。

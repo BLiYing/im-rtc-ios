@@ -83,6 +83,20 @@ public func imPermissionDevicesForAnswering(mediaType: String, cameraOptedOut: B
     imPermissionDevices(mediaType: mediaType, withCamera: !cameraOptedOut)
 }
 
+/**
+ **还没接听**时，来电页上要不要起本端预览（草图 §03-E：接通前看得见自己）。
+
+ 视频、摄像头开着、没被禁用，且系统权限**早就给过**。响铃时什么都不申请（交互稿 §01 权限时机表），
+ 所以没授权过的不起——等接听时权限门问完、`startPreviewIfWanted` 再起。
+
+ 原先来电页上点开摄像头什么都不发生：只有拨出中才起预览（2026-09-11 真机，群视频来电页）。
+ Android 的 `wantsLocalPreview()` 一直是「开着 + 已授权就起」，不分阶段。
+ */
+public func imShouldPreviewWhileRinging(mediaType: String, cameraOn: Bool, cameraBlocked: Bool,
+                                        cameraStatus: IMPermissionStatus) -> Bool {
+    mediaType == "video" && cameraOn && !cameraBlocked && cameraStatus == .granted
+}
+
 /// imNeedsPermissionExplanation：只有「首次」才出我们自己的说明卡。
 public func imNeedsPermissionExplanation(_ status: IMPermissionStatus) -> Bool {
     status == .notDetermined

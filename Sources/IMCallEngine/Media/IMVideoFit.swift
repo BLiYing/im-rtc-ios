@@ -37,6 +37,15 @@ import Foundation
 /// 与 libwebrtc `RendererCommon.BALANCED_VISIBLE_FRACTION` 同值。
 public let imMinVisibleFraction: Double = 0.5625
 
+/// 判据的容差：**贴着阈值的那一格不能因为一两个像素翻成 FIT**。
+///
+/// 9:16 源在正方形格子里正好压在阈值上，任何微小偏差都会把它推到另一边（2026-09-11 真机，九宫格左右两条黑边）：
+/// 格子边长是小数、UIStackView 取整后宽高差 1px（175.67 × 175.33 → 0.5614），
+/// 或发送端缩放后源不再是精确的 9:16（对齐到偶数 / 16 的倍数）。
+/// 0.01 盖得住这两种，又远够不到真该留黑边的组合（竖屏全屏 + 横屏源是 0.276）。
+/// 与 Android 的 `IMVideoFit.FILL_TOLERANCE` 同值。
+public let imFillTolerance: Double = 0.01
+
 /// imVisibleFraction 算「裁切填满之后源画面还剩多少比例可见」。
 /// 任一边为 0（尺寸还没量出来）时返回 `0`。
 public func imVisibleFraction(
@@ -59,5 +68,5 @@ public func imShouldFillVideo(
     let fraction = imVisibleFraction(
         videoWidth: videoWidth, videoHeight: videoHeight,
         viewWidth: viewWidth, viewHeight: viewHeight)
-    return fraction == 0 || fraction >= imMinVisibleFraction
+    return fraction == 0 || fraction >= imMinVisibleFraction - imFillTolerance
 }

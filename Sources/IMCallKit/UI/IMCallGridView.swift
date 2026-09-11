@@ -91,10 +91,10 @@ final class IMCallGridView: UIView {
             return
         }
 
-        // 正方形边长：宽高两边都要放得下，取小的那个。
-        let cellWidth = (bounds.width - CGFloat(dims.columns - 1) * gap) / CGFloat(dims.columns)
-        let cellHeight = (bounds.height - CGFloat(dims.rows - 1) * gap) / CGFloat(dims.rows)
-        let side = max(min(cellWidth, cellHeight), 0)
+        // 正方形边长：宽高两边都要放得下，取小的那个，**取整到物理像素**（见 imSquareTileSide）。
+        let scale = window?.screen.scale ?? UIScreen.main.scale
+        let side = CGFloat(imSquareTileSide(width: bounds.width, height: bounds.height,
+                                            dims: dims, gap: gap, scale: scale))
         applySize(width: side * CGFloat(dims.columns) + CGFloat(dims.columns - 1) * gap,
                   height: side * CGFloat(dims.rows) + CGFloat(dims.rows - 1) * gap)
     }

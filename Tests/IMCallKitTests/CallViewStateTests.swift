@@ -257,6 +257,21 @@ final class GridTests: XCTestCase {
         XCTAssertEqual(imGridDimensions(9), IMGridDimensions(columns: 3, rows: 3))
     }
 
+    /// 2026-09-11 真机：边长是小数时格子差 1px 不是正方形，9:16 源翻成 FIT、左右两条黑边。
+    func testSquareTileSideSnapsToPixels() {
+        // 393pt 宽、2 列、间距 8、3x 屏：(393 - 8) / 2 = 192.5pt = 577.5px。
+        let side = imSquareTileSide(width: 393, height: 600,
+                                    dims: IMGridDimensions(columns: 2, rows: 2), gap: 8, scale: 3)
+        XCTAssertEqual(side * 3, (side * 3).rounded(), accuracy: 1e-9, "边长必须是整数像素")
+        XCTAssertEqual(side, 577.0 / 3, accuracy: 1e-9, "只往小取")
+        XCTAssertLessThanOrEqual(side * 2 + 8, 393, "取整不能撑出容器")
+        // 放得下的那一边说了算。
+        XCTAssertEqual(imSquareTileSide(width: 1000, height: 300,
+                                        dims: IMGridDimensions(columns: 2, rows: 1), gap: 8, scale: 2), 300)
+        XCTAssertEqual(imSquareTileSide(width: 100, height: 100,
+                                        dims: IMGridDimensions(columns: 0, rows: 0), gap: 8, scale: 2), 0)
+    }
+
     /**
      **决定列数的不是人数，是容器形状。**
 

@@ -67,7 +67,13 @@ public final class IMCallController: NSObject {
     private let observers = NSHashTable<AnyObject>.weakObjects()
     /// 本端已发布轨道的 cid。**不进 state**：它不参与渲染。
     var micCID = ""
+    /// 本端摄像头轨道的 cid：**可能只是预览、还没发布**（拨出中 / 来电页上起的预览），看 `cameraPublished`。
     var cameraCID = ""
+    /// `cameraCID` 真的推上房间了没有。只起过预览的 cid 调 `setMuted` 只开关轨道、不发信令——
+    /// 靠「cid 非空」判「已发布」的话，来电页上开过又关掉摄像头再接听，通话中再打开就只是解除静音，对端永远看不到。
+    var cameraPublished = false
+    /// 预览正在起，防来电页每次重画都再起一路。
+    var previewStarting = false
     /// 已经为哪个房间发布过。防止同一个房间推两次流。
     private var publishedRoomID = ""
     /// 结束画面停留多久再自动收起。0 = 不自动收。
@@ -262,12 +268,14 @@ public final class IMCallController: NSObject {
         }
         Task {
             // 第一次开摄像头要真的发布；之后只是开关，**不走 unpublish**（协议 §3.2 的重协商风暴）。
-            guard cameraCID.isEmpty, on else {
-                if !cameraCID.isEmpty { await engine.setMuted(cameraCID, muted: !on) }
+            // 判「发布过没有」不看 cid：来电页上起过的预览也有 cid，但从没推上去（见 `cameraPublished`）。
+            guard !cameraPublished, on else {
+                if cameraPublished { await engine.setMuted(cameraCID, muted: !on) }
                 return
             }
             do {
-                cameraCID = try await engine.publishCamera()
+                cameraCID = try await engine.publishCamera() // 有预览轨道时引擎直接复用它
+                cameraPublished = true
                 await MainActor.run { self.broadcast() }
             } catch {
                 /*
@@ -390,6 +398,8 @@ public final class IMCallController: NSObject {
             promptCard?.answer(false)
             micCID = ""
             cameraCID = ""
+            cameraPublished = false
+            previewStarting = false
             publishedRoomID = ""
             cameraPausedByBackground = false
             settleTimers.values.forEach { $0.cancel() }
@@ -473,6 +483,7 @@ public final class IMCallController: NSObject {
         if mediaType == "video", wantsCamera {
             do {
                 cameraCID = try await engine.publishCamera()
+                cameraPublished = true
             } catch {
                 IMRTCLog.warn("[Kit] 摄像头推流失败，本通只有声音", ["err": String(describing: error)])
                 if classifyPermissionError(error) != nil { await MainActor.run { self.apply(.cameraBlocked) } }

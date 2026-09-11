@@ -299,6 +299,9 @@ public final class IMCallOverlayViewController: UIViewController {
             unpinFull()
             return
         }
+        // 来电页上看得见自己：摄像头开着且早就授权过才起，响铃时不申请（见 imShouldPreviewWhileRinging）。
+        // 只在全屏来电页起——横幅上没有预览位，起了就是摄像头灯亮着却看不见自己。
+        if state.phase == .incoming { controller.startRingingPreviewIfAllowed() }
         switch layout {
         case .audio: renderAudio(state)
         case .video: renderVideo(state)

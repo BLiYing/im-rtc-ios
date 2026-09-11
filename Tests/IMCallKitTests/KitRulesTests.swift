@@ -121,6 +121,22 @@ final class PermissionGateTests: XCTestCase {
         XCTAssertEqual(imPermissionDevicesForAnswering(mediaType: "audio", cameraOptedOut: false), [.microphone])
     }
 
+    /// 来电页上点开摄像头要看得见自己（2026-09-11 真机），但响铃时不许弹权限框（交互稿 §01）。
+    func testPreviewWhileRinging() {
+        XCTAssertTrue(imShouldPreviewWhileRinging(mediaType: "video", cameraOn: true, cameraBlocked: false,
+                                                  cameraStatus: .granted), "开着 + 早就授权过：起预览")
+        XCTAssertFalse(imShouldPreviewWhileRinging(mediaType: "video", cameraOn: true, cameraBlocked: false,
+                                                   cameraStatus: .notDetermined), "没问过：响铃时不问，接听时再说")
+        XCTAssertFalse(imShouldPreviewWhileRinging(mediaType: "video", cameraOn: true, cameraBlocked: false,
+                                                   cameraStatus: .denied))
+        XCTAssertFalse(imShouldPreviewWhileRinging(mediaType: "video", cameraOn: false, cameraBlocked: false,
+                                                   cameraStatus: .granted), "群通话默认关着：不起")
+        XCTAssertFalse(imShouldPreviewWhileRinging(mediaType: "video", cameraOn: true, cameraBlocked: true,
+                                                   cameraStatus: .granted))
+        XCTAssertFalse(imShouldPreviewWhileRinging(mediaType: "audio", cameraOn: true, cameraBlocked: false,
+                                                   cameraStatus: .granted))
+    }
+
     func testGrantedAsksNothing() async {
         let h = harness(statuses: [.microphone: .granted, .camera: .granted])
         let outcome = await h.gate.ensure([.microphone, .camera])

@@ -47,6 +47,25 @@ final class VideoFitTests: XCTestCase {
                       "帧尺寸还没来也一样")
     }
 
+    /// 2026-09-11 真机：格子取整后宽高差 1px，9:16 源从 FILL 翻成 FIT，九宫格左右两条黑边。
+    func testOnePixelOffSquareTileStillFills() {
+        let fraction = imVisibleFraction(
+            videoWidth: 720, videoHeight: 1280, viewWidth: 175.667, viewHeight: 175.333)
+        XCTAssertLessThan(fraction, imMinVisibleFraction, "不加容差这一格就是 FIT")
+        XCTAssertTrue(imShouldFillVideo(
+            videoWidth: 720, videoHeight: 1280, viewWidth: 175.667, viewHeight: 175.333))
+        // 源缩放后 358×640（0.559），不是精确 9:16 也一样。
+        XCTAssertTrue(imShouldFillVideo(
+            videoWidth: 358, videoHeight: 640, viewWidth: 350, viewHeight: 350))
+    }
+
+    func testToleranceDoesNotSwallowRealLetterboxCases() {
+        XCTAssertEqual(imFillTolerance, 0.01, accuracy: 0.0001, "与 Android FILL_TOLERANCE 同值")
+        // 0.54：明显低于阈值，照样留黑边。
+        XCTAssertFalse(imShouldFillVideo(
+            videoWidth: 540, videoHeight: 1000, viewWidth: 350, viewHeight: 350))
+    }
+
     func testMatchingAspectKeepsWholeFrame() {
         XCTAssertEqual(imVisibleFraction(
             videoWidth: 1280, videoHeight: 720, viewWidth: 640, viewHeight: 360),
