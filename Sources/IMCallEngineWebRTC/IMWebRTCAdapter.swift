@@ -22,6 +22,8 @@ public final class IMWebRTCAdapter: NSObject, IMMediaAdapter, @unchecked Sendabl
     */
     private var peers: IMPeerConnections?
     private let registry = IMVideoRegistry()
+    /// 开关摄像头前后的上行视频采样（排查对端「画面出来又刷新一下」）。见 `IMUplinkVideoStats`。
+    private let uplinkVideoStats = IMUplinkVideoStats()
     private var events = IMMediaAdapterEvents()
 
     /// 本端轨道，按 cid 索引。
@@ -316,7 +318,8 @@ public final class IMWebRTCAdapter: NSObject, IMMediaAdapter, @unchecked Sendabl
             encoding.maxBitrateBps = NSNumber(value: profile.maxBitrateBps)
             transceiverInit.sendEncodings = [encoding]
         }
-        ensurePeers().pub.addTransceiver(with: track, init: transceiverInit)
+        let transceiver = ensurePeers().pub.addTransceiver(with: track, init: transceiverInit)
+        Self.preferResolutionOverFramerate(transceiver?.sender)
         return info
     }
 
@@ -372,11 +375,13 @@ public final class IMWebRTCAdapter: NSObject, IMMediaAdapter, @unchecked Sendabl
      轨道、transceiver、cid 一个都不变，不重新协商。libwebrtc 把 start / stop 排在
      同一条采集队列上，按调用顺序执行，所以快速开关不会乱序。
 
-     重新打开前先 `resetForReopen`：轨道对象没变，登记表不会走「换轨道先摘旧帧」
-     那条路（见 `IMVideoRegistry.bind(owner:track:)`），关闭前的最后一帧会一直
-     留在渲染视图里——摄像头图标一亮，Kit 那边 `hasVideo` 立刻变 true 把视图
-     显出来，露的是这张旧帧，新采集的第一帧到了才覆盖上去，看着就是「先闪一下
-     旧画面、再跳到新画面」。见 `IMVideoRegistry.resetForReopen(owner:)` 的注释。
+     # 画布「关」的时候就换，「开」的时候只放行第一帧
+
+     轨道对象没变，登记表不会走「换轨道先摘旧帧」那条路，关闭前的最后一帧会一直留在渲染视图里。
+     原先「开」的时候才换，可 Kit 按下按钮的同一拍就把格子显出来了，这里却是从 Task 异步回主线程——
+     中间一两帧露的正是旧画面。现在关的时候换成一块藏着的新画布，开的时候 `awaitFirstFrame`
+     只是开始认帧，第一帧真到了才露：格子里是「头像消失 → 底色 → 画面」，与 Android 一致。
+     见 `IMVideoRegistry.resetForReopen(owner:)` 的注释。
      */
     public func setMuted(_ cid: String, _ muted: Bool) {
         lock.lock()
@@ -386,14 +391,18 @@ public final class IMWebRTCAdapter: NSObject, IMMediaAdapter, @unchecked Sendabl
         let camera = toggles ? capturer : nil
         let synthetic = toggles ? syntheticCapturer : nil
         let front = usingFrontCamera
+        let pub = peers?.pub
         lock.unlock()
         track?.isEnabled = !muted
         guard toggles else { return }
         if muted {
             Self.halt(camera, synthetic)
+            registry.resetForReopen(owner: imLocalViewKey(cid))
+            uplinkVideoStats.sample(pub, phase: "关摄像头")
             return
         }
-        registry.resetForReopen(owner: imLocalViewKey(cid))
+        registry.awaitFirstFrame(owner: imLocalViewKey(cid))
+        uplinkVideoStats.burst(pub)
         synthetic?.startCapture(width: profile.width, height: profile.height, fps: profile.frameRate)
         guard let camera else { return }
         do {
@@ -525,6 +534,7 @@ public final class IMWebRTCAdapter: NSObject, IMMediaAdapter, @unchecked Sendabl
         // 真正的关闭动作放在锁外面：不把 libwebrtc 的调用圈进自己的锁里。
         Self.halt(camera, synthetic)
         registry.removeAll()
+        uplinkVideoStats.cancel()
         oldPeers?.close()
     }
 
@@ -558,7 +568,7 @@ public final class IMWebRTCAdapter: NSObject, IMMediaAdapter, @unchecked Sendabl
         // 而挂载侧传的是真 uid，两把钥匙永远对不上——协商全通但一格画面都没有。
         registry.addTrack(trackID, video, owner: "")
         // 第一帧探针。**判据是真的出帧**，不是协商完成——提前抛等于让 UI 撤了 loading 去露黑屏。
-        let probe = IMFirstFrameProbe { [weak self] in
+        let probe = IMFirstFrameProbe { [weak self] _, _, _ in
             self?.events.onFirstVideoFrame?(trackID)
         }
         video.add(probe)

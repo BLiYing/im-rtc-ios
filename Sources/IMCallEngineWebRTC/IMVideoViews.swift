@@ -17,14 +17,34 @@ import IMCallEngine
  等价的做法是挂一个渲染器，**收到第一帧尺寸回调时才算数**。
  */
 
-/// 一次性的第一帧探针。**收到第一帧就自己摘下来**，不留在渲染链路上。
+/// 一次性的第一帧探针。**只报一次**。
+///
+/// 远端轨道上的那个报完就一直挂着（之后每帧只剩一次加锁判断）；
+/// 本端画布用的那个由登记表报完就摘掉（见 `IMVideoRegistry.resetForReopen(owner:)`）。
 final class IMFirstFrameProbe: NSObject, RTCVideoRenderer {
-    private let onFirstFrame: () -> Void
+    private let onFirstFrame: (_ width: Int32, _ height: Int32, _ rotation: Int) -> Void
     private var fired = false
+    /// 还认不认帧。见 ``accept()``。
+    private var accepting: Bool
     private let lock = NSLock()
 
-    init(onFirstFrame: @escaping () -> Void) {
+    init(accepting: Bool = true,
+         onFirstFrame: @escaping (_ width: Int32, _ height: Int32, _ rotation: Int) -> Void) {
+        self.accepting = accepting
         self.onFirstFrame = onFirstFrame
+    }
+
+    /**
+     accept 从现在起才认帧。
+
+     本端关摄像头时轨道先 `isEnabled = false`，而 `stopCapture` 是排到采集队列上异步停的——
+     停下来之前漏过来的那几帧是 libwebrtc 替换出来的**黑帧**。它们不是「重开后的第一帧」，
+     拿它们当判据，画布会在用户还没点开摄像头时就先露出来。
+     */
+    func accept() {
+        lock.lock()
+        accepting = true
+        lock.unlock()
     }
 
     func setSize(_ size: CGSize) {
@@ -32,13 +52,13 @@ final class IMFirstFrameProbe: NSObject, RTCVideoRenderer {
     }
 
     func renderFrame(_ frame: RTCVideoFrame?) {
-        guard frame != nil else { return }
+        guard let frame else { return }
         lock.lock()
-        let alreadyFired = fired
-        fired = true
+        let fire = accepting && !fired
+        if fire { fired = true }
         lock.unlock()
-        guard !alreadyFired else { return }
-        onFirstFrame()
+        guard fire else { return }
+        onFirstFrame(frame.width, frame.height, frame.rotation.rawValue)
     }
 }
 
@@ -83,6 +103,18 @@ final class IMVideoRegistry {
     private var owners: [String: String] = [:]
     /// 已经把视图接到轨道上的 owner。见 ``attachRenderer(owner:)``——`add` 不去重。
     private var rendered: Set<String> = []
+    /// owner → 本端画布正在等的第一帧。**等到之前画布藏着**（见 ``resetForReopen(owner:)``）。
+    private var gates: [String: FirstFrameGate] = [:]
+    /// 探针编号。探针在采集线程上报、主线程上认，认的时候可能已经换过一个了——对不上号的作废。
+    private var gateSerial = 0
+
+    private struct FirstFrameGate {
+        let serial: Int
+        let probe: IMFirstFrameProbe
+        let track: RTCVideoTrack
+        /// 从什么时候开始认帧。nil = 摄像头还关着。
+        var openedAt: CFAbsoluteTime?
+    }
 
     /// addTrack 收下一条轨道。`owner` 为空表示「还不知道是谁的」，先进 orphans 等认领。
     func addTrack(_ trackID: String, _ track: RTCVideoTrack, owner: String) {
@@ -120,8 +152,6 @@ final class IMVideoRegistry {
     /// 本端摄像头关闭时 Kit 会用 `attach(owner:to: nil)` 把预览从容器上收回。
     /// 视图和它接在轨道上的 sink 都**留在表里**——只是暂时没有 superview，
     /// 轨道那边（`RTCCameraVideoCapturer`）也已经停采集，不会再送帧过来。
-    /// 重新开摄像头时同一个 `owner` 命中缓存，`attachRenderer` 判重之后
-    /// 直接收到新采集的第一帧，不会先经历一次「新建视图 → 挂 sink → 等首帧」。
     /// 整通电话只彻底释放一次，在 `remove`/`removeAll`（挂断、进房前的
     /// `stopLocalPreview`）——见那两个方法的注释。
     /// 与 Android `IMCallKit.localPreviewView` 同一个思路：Kit 层的预览视图
@@ -133,6 +163,11 @@ final class IMVideoRegistry {
     /// （参与者离场）同样生效——效果是好的：对端短暂断线重连时不会因为
     /// 中间那一下 `attach(nil)` 而把已经渲染好的最后一帧连视图一起丢掉，
     /// 与 Android 「九宫格 tile 不传 null 以避免 Surface 销毁闪烁」是同一个方向。
+    ///
+    /// # 新造的本端画布也等第一帧再露
+    ///
+    /// 与 Android 渲染器每次 `init` 之后等 `onFirstFrameRendered` 同一个效果，
+    /// 顺带在日志里留一行「本端画面首帧到达」和等了多久。
     func attach(owner: String, to container: UIView?) {
         onMain { [self] in
             guard let container else {
@@ -140,7 +175,8 @@ final class IMVideoRegistry {
                 views[owner]?.removeFromSuperview()
                 return
             }
-            let view = views[owner] ?? makeRenderView()
+            let cached = views[owner]
+            let view = cached ?? makeRenderView(owner: owner)
             if view.superview !== container {
                 view.removeFromSuperview()
                 view.frame = container.bounds
@@ -149,6 +185,12 @@ final class IMVideoRegistry {
             }
             views[owner] = view
             attachRenderer(owner: owner)
+            guard cached == nil, owner.hasPrefix(imLocalViewKey("")) else { return }
+            if gates[owner] == nil {
+                armGate(owner: owner, open: true)
+            } else {
+                view.isHidden = true
+            }
         }
     }
 
@@ -160,6 +202,7 @@ final class IMVideoRegistry {
                 detachRenderer(owner: owner, view: view)
                 view.removeFromSuperview()
             }
+            dropGate(owner: owner)
             views[owner] = nil
             tracks[owner] = nil
         }
@@ -172,6 +215,7 @@ final class IMVideoRegistry {
                 detachRenderer(owner: owner, view: view)
                 view.removeFromSuperview()
             }
+            for owner in Array(gates.keys) { dropGate(owner: owner) }
             views = [:]
             tracks = [:]
             orphans = [:]
@@ -181,48 +225,95 @@ final class IMVideoRegistry {
     }
 
     /**
-     resetForReopen 让某个 owner 的渲染视图「翻篇」：摄像头重新打开前调用，
-     保证接下来的第一帧画在一块全新的画布上，不会先闪一下关闭前留下的最后一帧。
+     resetForReopen 让某个 owner 的渲染视图「翻篇」：**摄像头关掉的那一刻**调用。
+     换上一块藏着的新画布，并挂一个还不认帧的探针；重新打开时 ``awaitFirstFrame(owner:)``
+     才开始认帧，第一帧真到了才露出来。
 
-     只换视图、不改挂载状态：换下来的旧视图从容器上摘掉，新视图立刻补到
-     同一个容器的同一个位置；没被 `attach` 过（当前没有缓存视图）就什么都不做。
+     # 为什么在「关」的时候换，而不是「开」的时候
+
+     原先是开的时候换。可 Kit 在按下按钮的同一拍（主线程、同步）就把格子显出来了，
+     而换画布是从 `Task` 里的 `setMuted` 异步回主线程——中间那一两帧露的正是
+     关闭前留下的最后一帧，看着就是「先闪一下旧画面，再黑，再出新画面」（2026-09-11 真机）。
+     关的时候格子本来就藏着，这时候换，无论 Kit 什么时候把格子显出来，里面都没有旧帧。
 
      # 为什么是「换一块新画布」而不是「清空这块画布」
 
-     `RTCMTLVideoView` 没有公开的清帧接口——`renderFrame(nil)` 会不会清空当前
-     显示的内容，libwebrtc 没有文档承诺，直接依赖等于在赌私有实现细节。换一个
-     全新的 `IMAspectVideoView` 实例就不用赌：新视图从没渲染过东西，
-     `CAMetalLayer` 天然是空的，不可能带着上一次开机时的旧帧。
-     与 Android `IMWebRTCAdapter.kt` 的 `attachLocalPreview` 每次 `release()` +
-     重新 `init()` 同一个 `SurfaceViewRenderer` 是同一个目的：复用的是宿主看到的
-     那个视图**位置**，不是画布里已经画上去的像素。
+     `RTCMTLVideoView` 没有公开的清帧接口——`renderFrame(nil)` 直接 return，不会清空当前
+     显示的内容。换一个全新的 `IMAspectVideoView` 实例就不用赌：新视图从没渲染过东西，
+     `CAMetalLayer` 天然是空的。与 Android `IMWebRTCAdapter.kt` 的 `attachLocalPreview`
+     每次 `release()` + 重新 `init()` 同一个目的：复用的是宿主看到的那个视图**位置**，
+     不是画布里已经画上去的像素。
 
-     # 为什么只对本端调用
+     # 为什么还要等第一帧才露
 
-     调用点在 `IMWebRTCAdapter.setMuted(_:_:)` 摄像头重新打开那一支——本端的
-     采集停了又重启，轨道对象不变，登记表也就不会走 `bind` 那条「换轨道先摘
-     旧帧」的路（见 `bind(owner:track:)` 的注释），旧帧才会一直留在渲染视图里
-     等着被「重新亮起」的一刻曝出来。远端画面走的是另一条路——对端摄像头关
-     闭时这条本端方法根本不会被调用，所以这个改动不影响远端渲染。
+     Android 的 `SurfaceView` 不可见时 surface 就销毁了，再显出来是空的，第一帧到了才有画面；
+     iOS 的 `CAMetalLayer` 会一直留着画过的东西。关摄像头到 `stopCapture` 真停下之间漏过来的
+     黑帧也会画到新画布上——所以「新画布」还不够，要藏到**重开之后的第一帧**。
+
+     只对本端调用：调用点是 `IMWebRTCAdapter.setMuted(_:_:)`。远端画面走 `bind` 那条
+     「换轨道先摘旧帧」的路，不受影响。
      */
     func resetForReopen(owner: String) {
+        onMain { [self] in swapCanvas(owner: owner) }
+    }
+
+    /// awaitFirstFrame 摄像头重新打开时调：从这一刻起认帧，第一帧到了才露出画布。
+    /// 关的时候没换成（那会儿还没有画布）就现在补换一次。
+    func awaitFirstFrame(owner: String) {
         onMain { [self] in
-            guard let old = views[owner] else { return }
-            let container = old.superview
-            detachRenderer(owner: owner, view: old)
-            old.removeFromSuperview()
-            let fresh = makeRenderView()
-            if let container {
-                fresh.frame = container.bounds
-                fresh.autoresizingMask = [.flexibleWidth, .flexibleHeight]
-                container.addSubview(fresh)
-            }
-            views[owner] = fresh
-            attachRenderer(owner: owner)
+            if gates[owner] == nil { swapCanvas(owner: owner) }
+            gates[owner]?.openedAt = CFAbsoluteTimeGetCurrent()
+            gates[owner]?.probe.accept()
         }
     }
 
     // MARK: - 内部（全部在主线程）
+
+    private func swapCanvas(owner: String) {
+        guard let old = views[owner] else { return }
+        let container = old.superview
+        detachRenderer(owner: owner, view: old)
+        old.removeFromSuperview()
+        let fresh = makeRenderView(owner: owner)
+        fresh.inheritVideoSize(from: old)
+        if let container {
+            fresh.frame = container.bounds
+            fresh.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+            container.addSubview(fresh)
+        }
+        views[owner] = fresh
+        attachRenderer(owner: owner)
+        armGate(owner: owner, open: false)
+    }
+
+    /// armGate 藏起 owner 的画布，挂一个新探针等第一帧；旧探针（如果有）先摘掉。没有轨道就什么都不做。
+    private func armGate(owner: String, open: Bool) {
+        guard let track = tracks[owner] else { return }
+        dropGate(owner: owner)
+        gateSerial += 1
+        let serial = gateSerial
+        let probe = IMFirstFrameProbe(accepting: open) { [weak self] width, height, rotation in
+            let frame = "\(width)x\(height)@\(rotation)"
+            DispatchQueue.main.async { self?.firstFrameArrived(owner: owner, serial: serial, frame: frame) }
+        }
+        gates[owner] = FirstFrameGate(serial: serial, probe: probe, track: track,
+                                      openedAt: open ? CFAbsoluteTimeGetCurrent() : nil)
+        views[owner]?.isHidden = true
+        track.add(probe)
+    }
+
+    private func dropGate(owner: String) {
+        guard let gate = gates.removeValue(forKey: owner) else { return }
+        gate.track.remove(gate.probe)
+    }
+
+    private func firstFrameArrived(owner: String, serial: Int, frame: String) {
+        guard let gate = gates[owner], gate.serial == serial else { return }
+        dropGate(owner: owner)
+        views[owner]?.isHidden = false
+        let waited = gate.openedAt.map { String(Int((CFAbsoluteTimeGetCurrent() - $0) * 1000)) } ?? "?"
+        IMRTCLog.info("本端画面首帧到达", ["owner": owner, "waitMs": waited, "frame": frame])
+    }
 
     private func bind(owner: String, track: RTCVideoTrack) {
         // 同一个 owner 换了轨道（对方关了摄像头再开）：**先把旧轨道从渲染视图上摘掉**，
@@ -233,6 +324,10 @@ final class IMVideoRegistry {
         }
         tracks[owner] = track
         attachRenderer(owner: owner)
+        // 等第一帧的探针还挂在旧轨道上就永远等不到了：跟着换过去，别让画布一直藏着。
+        if let gate = gates[owner], gate.track !== track {
+            armGate(owner: owner, open: gate.openedAt != nil)
+        }
     }
 
     /**
@@ -263,7 +358,11 @@ final class IMVideoRegistry {
         tracks[owner]?.remove(view)
     }
 
-    private func makeRenderView() -> IMAspectVideoView { IMAspectVideoView(frame: .zero) }
+    private func makeRenderView(owner: String) -> IMAspectVideoView {
+        let view = IMAspectVideoView(frame: .zero)
+        view.owner = owner
+        return view
+    }
 
     /// onMain 保证在主线程执行。**用 async 不用 sync**（CONVENTIONS §5 禁止 main.sync）；
     /// 已经在主线程时直接跑，免得挂载比调用方晚一个 runloop。
@@ -296,9 +395,16 @@ final class IMVideoRegistry {
  */
 final class IMAspectVideoView: RTCMTLVideoView, RTCVideoViewDelegate {
 
+    /// 这块画布登记在谁名下（uid 或 `:local:cid`）。只用来打日志。
+    var owner = ""
+
     /// 最近一次拿到的视频尺寸。**已经旋转过**——iOS 的 delegate 给的就是显示尺寸
     /// （与 Android 不同，那边给的是未旋转缓冲区 + 旋转角）。
     private var videoSize: CGSize = .zero
+
+    /// 这块画布已经打过几行「画面尺寸变化」。见 ``logSizeChange(from:to:)``。
+    private var sizeLogs = 0
+    private static let maxSizeLogs = 6
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -315,8 +421,34 @@ final class IMAspectVideoView: RTCMTLVideoView, RTCVideoViewDelegate {
     }
 
     func videoView(_ videoView: RTCVideoRenderer, didChangeVideoSize size: CGSize) {
+        let previous = videoSize
         videoSize = size
         applyContentMode()
+        logSizeChange(from: previous, to: size)
+    }
+
+    /**
+     inheritVideoSize 新画布一出生就按旧画布的视频尺寸算填充模式（摄像头关掉换画布时用）。
+
+     不继承的话新画布尺寸是 0，`imShouldFillVideo` 按「没量出来」先给填满；而尺寸回调是
+     异步回主线程的，可能晚于第一次绘制——横屏源在竖屏格子里就会先裁切填满一帧、再跳成留边。
+     与 Android `IMVideoFitter.mount`（挂上时先按记下的尺寸算一次）同一个做法。
+     */
+    func inheritVideoSize(from other: IMAspectVideoView) {
+        videoSize = other.videoSize
+        applyContentMode()
+    }
+
+    /// 尺寸**真的变了**才打（第一次拿到尺寸不算），每块画布最多 `maxSizeLogs` 行：
+    /// 远端画布整通复用，对端每换一次层就变一次，不封顶会刷屏。
+    private func logSizeChange(from previous: CGSize, to size: CGSize) {
+        guard previous != .zero, previous != size, sizeLogs < Self.maxSizeLogs else { return }
+        sizeLogs += 1
+        IMRTCLog.info("画面尺寸变化", [
+            "owner": owner,
+            "from": "\(Int(previous.width))x\(Int(previous.height))",
+            "to": "\(Int(size.width))x\(Int(size.height))",
+        ])
     }
 
     private func applyContentMode() {

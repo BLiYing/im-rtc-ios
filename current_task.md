@@ -1,224 +1,76 @@
 # Current Task — im-rtc-ios（Swift Engine + Kit + Demo）
 
-> **活快照**：只记当前状态，**就地覆盖、不追加**。历史见 `git log` 与
-> [current_task.archive.md](current_task.archive.md)（只读归档，2026-09-06 搬入）。
-> 工程规范见 [CONVENTIONS.md](CONVENTIONS.md)；方案与分期见 `im-rtc-server` 的
-> `docs/design/RTC_CALL_DESIGN.md` §10；**界面以设计稿 v3 为准**：
-> `../im-rtc-server/docs/design/sketches/RTC_CALL_UI_SPEC.html`（令牌 / 图标 / 组件红线）与
-> `RTC_CALL_UX_FLOWS.html`（权限 / 小窗 / 互换 / 加人）。**两稿已升到 v3.1**——
-> v3.1 推翻了 v3 的六条（小窗入口、视频版式退化、小窗挂断、呼叫页标题、Android 画中画与全屏），
-> 冲突时以 v3.1 为准。
-
+> **活快照**：就地覆盖、不追加。历史见 `git log` 与 [current_task.archive.md](current_task.archive.md)（末节「2026-09-11 精简前全文」）。
+> 规范 [CONVENTIONS.md](CONVENTIONS.md) · 分期 server `docs/design/RTC_CALL_DESIGN.md` §10 ·
+> 界面以设计稿 **v3.1** 为准：`../im-rtc-server/docs/design/sketches/RTC_CALL_UI_SPEC.html` / `RTC_CALL_UX_FLOWS.html`。
+> ✅ 状态只写在 `../im-rtc-server/docs/CLIENT_PARITY.md`。
 
 ## 当前焦点
 
-**2026-09-11 深夜：真机报的「通话中关摄像头再打开，画面先出来又闪一下（前后同一张图）」（本仓），直接在 main 改，未提交。** Android 没这个问题。
+**2026-09-11 夜：开摄像头「画面出来又刷新一下」——本端改成和 Android 同一套（关时换隐藏新画布、开后等首帧才揭示），iOS / Android 两边加诊断日志。直接在 main 改，未提交，等真机。**
+上一刀 `e2e9749`（重开时换新画布）已提交。
 
-上一刀（09-11 晚「来电页 + 进房前关摄像头停采集」）已提交、用户真机验过，细节看 `git log`。
-
-| 现象 | 根因 | 改了什么 |
-|---|---|---|
-| 通话中把摄像头关了再打开，画面先曝出来一下、紧接着又闪一次，闪前闪后是同一张画面 | `setMuted(_:_:)` 重开摄像头时**复用同一个 `RTCVideoTrack`**（只停/重启 capturer，没换轨道、没重协商），`IMVideoRegistry` 挂载表也就不会走「新轨道→清旧 sink」那条分支，于是上次渲染的最后一帧被冻在同一个 `RTCMTLVideoView` 的 Metal 层里没人清。Kit 的格子揭示是被 `cameraOn` 状态**直接**驱动的（`IMVideoTileView.apply(hasVideo:)`），不是等真正的首帧到达才揭示——所以重开的瞬间先曝出**关闭前的旧帧**，新首帧几帧之后才覆盖上去，看着像同一张画面闪了一下 | `IMVideoRegistry` 新增 `resetForReopen(owner:)`：把渲染视图换成一块全新画布（`RTCMTLVideoView` 没有公开的"清帧"API，只能换实例，位置/父容器不变），在 `IMWebRTCAdapter.setMuted(_:_:)` 重新打开摄像头那一支、`camera.startCapture` 之前调用。同时把 `attach(owner:to:)` 传 `nil` 容器时的语义从"销毁视图 + sink"改成"只从容器摘下来、视图与 sink 都留在表里"，真释放只留给 `remove`/`removeAll`（挂断、进房前 `stopLocalPreview`）——呼应「整通复用同一个预览视图」的要求 |
-
-**已排查但没照抄的一点**：任务原描述怀疑的根因是"通话中 `attach(nil)` 被调用、把视图拆了"——顺着 `imPickLayout(for:)` 和 `IMCallOverlayViewController` 的 `renderVideo`/`renderGrid` 走了一遍调用点，1v1 视频与九宫格在整通连接期间容器**始终非 nil**，这条路径在当前代码里并不会触发。仍按要求把 `attach(nil)` 改成非破坏性的（防御性、也顺带保住九宫格切换时的同一逻辑），但真正的闪烁是上面这条"复用同一 Metal 视图冻结旧帧"链路，用 `resetForReopen` 单独修。
-
-**Android 实际行为**（`IMCallKit.localPreviewView` / `IMWebRTCAdapter.kt`）：本地预览用的是**整通复用的同一个 Kit 级 View**，但每次重新附着本地预览时，`attachLocalPreview(view, token)` 会对**同一个** `SurfaceViewRenderer` 先 `release()` 再重新 `init()`——真正防"曝旧帧"的是这个 release+init 循环，不是"从不摘视图"本身。iOS 这边 `RTCMTLVideoView` 没有等价的公开 reset API，改用"换一个全新视图实例"达到同样效果，这是 `resetForReopen` 设计的直接依据。
-
-**改动范围**：只有 `Sources/IMCallEngineWebRTC/IMVideoViews.swift` 与 `Sources/IMCallEngineWebRTC/IMWebRTCAdapter.swift` 两个文件（`git diff --stat`：2 files changed, 77 insertions(+), 7 deletions(-)）。远端视图渲染逻辑没有单独改动——只是 `attach(owner:to:)` 是本地/远端共用的同一份代码，语义变化连带影响远端 tile 被摘下容器时的行为（同理由：避免九宫格换格子时曝出多余的销毁/重建）。
-
-**单测**：试过新增 `IMCallEngineWebRTCTests` 测试目标覆盖 `IMVideoRegistry` 的纯挂载逻辑，写完发现该目标依赖的源码整体包在 `#if canImport(UIKit) && canImport(WebRTC)` 里，`swift test` 在这台机器上跑的 `Target Platform` 是 macOS，条件编译整段被跳过、0 个用例被执行——`scripts/test.sh` 自己的注释（`swift_test_with_census` 那段）早就点名这类"声明数对不上、面板却全绿"的假绿，还提到 `ProfileResolverTests` 踩过同一个坑。已放弃这条路，撤掉了 `Package.swift` 里那个 test target 和新文件，改动范围收回到上面两个 adapter 源码文件。验证手段仍是：`swift build` 编译通过 + 走读 `resetForReopen`/`setMuted`/`attach` 的调用链 + `./scripts/test.sh` 第 10 步的 iOS Demo 编译 + **真机验证（未做，只能等用户在真机上确认是否还闪）**。
-
-`./scripts/test.sh` 全绿情况见本次改动后的完整输出（贴在对话记录里，10 步、声明 211 = 执行 210 + 跳过 1，Demo iOS 编译成功）。
-
-**simulcast 换包方案已验证完、暂缓**（2026-09-09 拍板），结论与 checksum 全在「已知坑」第一条，不用重查。
+- **本端格子先黑一下 / 露旧帧**：Kit 按 `cameraOn` 同步揭示，而 `resetForReopen` 走 `Task`→`setMuted`→主线程晚一拍；`CAMetalLayer` 留住最后一帧。
+  改法在 `Sources/IMCallEngineWebRTC/IMVideoViews.swift` 的 `IMVideoRegistry`：**关时** `swapCanvas` 换隐藏新画布 + `armGate` 挂首帧探针；**开时** `awaitFirstFrame`，`firstFrameArrived` 才揭示（对应 Android release+init + `onFirstFrameRendered`）。
+- **Android 看 iOS 刷新一下**：根因在 Android 接收端（19:17 真机，见 `../im-rtc-android/current_task.md`）。本仓顺手留下：`MAINTAIN_RESOLUTION`（`IMWebRTCAdapter+Support.swift` 的 `preferResolutionOverFramerate`）、上行采样 `IMUplinkVideoStats.swift`。
+- 统计值转字符串抽成 `Sources/IMCallEngine/Observability/IMStatsFields.swift`（macOS 可测，`StatsFieldsTests`）。公开回调没变。
+- 日志：`本端画面首帧到达`（waitMs + 帧尺寸）· `上行视频采样` · `编码降级偏好=MAINTAIN_RESOLUTION` · `画面尺寸变化`（每视图 ≤ 6 行）。
+- `./scripts/test.sh` 全绿（10 步，声明 215 = 执行 214 + 跳过 1）。WebRTC 部分 macOS 编不进，**只有第 10 步把关，没真机验**。
 
 ## 下一步
 
-- **本仓的静默失败点清单**（P0×3 / P1×7 / P2×8，2026-09-09 扫描）见
-  `../im-rtc-server/docs/ops/silent-failure/ios.md`，跨端结论与修复顺序见同目录的
-  `SILENT_FAILURE_AUDIT.md`。**逐条状态只在那里维护，别抄回本文件。**
-  未修的头两条：麦克风推流失败被 `try?` 吞掉（接通了但一个字都没发出去）、权限卡 continuation 可永久挂起。
+**真机验收（报通话时间）**：
+1. 开摄像头刷新感：本端 19:17 已不再刷新；剩 Android 看 iOS 那格，随 Android 那刀一起验。
+2. **19:14 另记、没修**：服务端判掉线后本端卡在 `connecting`，call/cancel 被拒 2005、红键点不掉，19:15 才本地收场——疑似没跟上服务端结束通话。
+3. 更早没验：九宫格正方形填满、横幅接听键是听筒、群视频来电页点开摄像头看得见自己。
+4. 分支 `worktree-fix-autohide-arm-gate`（1v1 视频）：接通后控制条完整停 3 秒再淡出；挂断后结束画面标题栏不淡掉。
+5. 跨端老批次（含本端「后置摄像头镜像」）清单见 `../im-rtc-server/current_task.md`「跨端待验」。
 
-### 真机验收
-
-**本轮优先**：
-
-1. 本批（预览没出来就接听只开一次摄像头、进房前 / 通话中关摄像头灯灭）用户 2026-09-11 真机验过。
-2. 上一刀没验的：九宫格正方形填满、横幅接听键是听筒、群视频来电页点开摄像头看得见自己。
-
-**上一轮挂着的**（分支 `worktree-fix-autohide-arm-gate`，1v1 视频）：接通后控制条完整停 3 秒再淡出；挂断后结束画面标题栏不淡掉。
-
-### 真机验收（**这一整批一条都没验**）
-
-按风险排序，前两条不过其余不用看：
-
-1. **语音判定**（server）：`SPEECH_DEBUG=1 ./scripts/dev.sh` → 不说话时是不是真的不亮了；
-   说话时亮不亮、条高随音量变不变；把 `margin` 的实测值发回来核门槛。
-2. **说话指示器三态**：别人的格子「关 / 开着没说话 / 正在说话」，自己那格只有前两态；
-   1v1 不显示说话但显示麦克风开关；多人同时说话每格各亮各的。
-3. **Android 呼叫中按静音**：**接通前**按静音 → 对方接 → 确认对方听不见，
-   且日志里有 `补做发布前攒下的静音`。（上次验成了「接通后按」，没走到修复那条路。）
-4. **iOS 镜像**：翻到后置摄像头，自己看到的字不该是反的。
-5. **web 挂断后重进**：bob 进群通话 → 挂断 → 再邀请回来 → 这次该看得到他的画面。
-6. **通话时长**：群通话里中途加入的人退出后，记录里的时长是他自己那段，不是整通。
-7. 之前那七条 code-review 修复也都没验（故障注入手册 `docs/ops/FAULT_INJECTION.md`）。
-
-### 待办
-
-- **下一个任务（已和用户对齐）**：四端扫一遍**静默失败点**——早退分支、被吞掉的异常、
-  静默空实现。今天两个 bug 全是这一类（一句不吭的 `return`，界面/日志/报错三个观测面
-  同时是瞎的）。只给真正可疑的加日志，判据卡死到「正常时一通电话最多出现一次」。
-- **desktop 端说话指示器没做**：它 `MediaAdapter` 唯一实现是 `tests/FakeMediaAdapter.h`，
-  libwebrtc 还没接进来，九宫格本身就是 ⬜。要等媒体面落地。
-- **`CLIENT_PARITY.md` 没更新**：真机验完再改；验之前 iOS/Android 停在 🟡，不写 ✅。
-- **web 端 `getUserMedia` 那类失败仍可能静默**：日志回传够不到浏览器 console。
-
+**待办**：
+- 静默失败点清单（P0×3 / P1×7 / P2×8）：`../im-rtc-server/docs/ops/silent-failure/ios.md`，逐条状态只在那里。未修头两条：麦克风推流失败被 `try?` 吞掉（接通了一个字都没发出去）、权限卡 continuation 可永久挂起。
+- `Vectors.swift` 找向量仍是「同级没有就往上逐级找」，会捡到上层旧克隆（web 已修同类问题）。
+- `CLIENT_PARITY.md` 真机验完再改，验之前停 🟡。
 
 ## 已知坑 / 限制
 
-- **本仓的 simulcast 其实没生效；换包方案已验证完毕，但 2026-09-09 决定暂缓。**
-
-  **决定**：暂时不换（用户拍板 2026-09-09）。理由是现阶段三端画面都看得见，
-  「Android 在 iOS 上偏糊」已由另外两刀缓解（`im-rtc-android` 的上行预算播种 +
-  `im-rtc-server` 的 BWE 死锁修复），清晰度问题可以靠后。**下面这份验证结果是留着做决定用的，
-  不要重新查一遍。**
-
-  ### 现状：为什么没生效
-
-  `stasel/WebRTC` exact `152.0.0` **没打进 `RTCVideoEncoderFactorySimulcast`**——
-  94 个头文件里没有，`nm -g WebRTC | grep -i simulcast` 也是空。
-  `acquireCamera(simulcast:)` 造的三个 `RTCRtpEncodingParameters` 进得了 SDP
-  （服务端看到的是 `rid=h` 而不是空串），但只有一个编码器在跑。
-  **证据**：服务端全量日志里 H264 视频轨道 101 条**全是 1 层**，从没出现过 2 层或 3 层。
-
-  后果是**降层只砸别人**：iOS 发的流没有低层可掉，SFU 的 `bw_cap=l` 对它无效
-  （`selectLayer` 兜底到「发布端最低的那层」= h）。同一份日志里 iOS 的下行 21 条
-  即使 17 条 `bw_cap=l` 也照发 h；VP8 那边 32 条有 20 条真降到了 `l`。
-  **「为什么只有 Android 糊」的答案在这里**，不在 Android 的编码参数上。
-
-  ### 候选包：两个都下载验过（校验过官方 checksum）
-
-  | | **webrtc-sdk/Specs** ← 选它 | LiveKit/webrtc-xcframework | 现在的 stasel/WebRTC |
-  |---|---|---|---|
-  | 版本 | `150.7871.01` | `150.7871.01` | `152.0.0` |
-  | `RTCVideoEncoderFactorySimulcast` | 头文件 + 符号都在 | 在，但叫 `LKRTC*` | **不存在** |
-  | 类名前缀 | **原样 `RTC*`** | 全部 `LKRTC*` | `RTC*` |
-  | SwiftPM product 名 | **`WebRTC`**（与现在同名） | `LiveKitWebRTC` | `WebRTC` |
-  | 改名工作量 | **0 处** | ~110 处 / 5 个文件 | — |
-
-  `webrtc-sdk/Specs` 的 SwiftPM 声明（`Package.swift` 里换成 `binaryTarget`）：
-
-  ```
-  url:      https://github.com/webrtc-sdk/Specs/releases/download/150.7871.01/WebRTC.xcframework.zip
-  checksum: 03815cdf2f6a0ed328c94d74cce8fd1b8d2b6e95e2b37eab66795012fcecfdfa
-  ```
-
-  **兼容性做过逐类核对**：本仓用到的 30 个 `RTC*` 类型在新包里**一个都不缺**。
-  类数 stasel152=70 / webrtc-sdk150=88，是真超集（多出 `RTCFrameCryptor` 等 19 个），
-  只少一个 `RTCDtlsFingerprint`（本仓没用）。
-
-  ### 换包时要一起做的三件事
-
-  1. `Package.swift` 换依赖声明（`binaryTarget` + 上面那个 checksum）。
-  2. `IMPeerConnections.sharedFactory` 套上 adapter：
-     `RTCVideoEncoderFactorySimulcast(primary:fallback:)`（头文件里就这一个初始化方法）。
-  3. **`IMVideoProfile.simulcastLayers` 的顺序改成 l, m, h** —— 见下面那条坑，
-     它**只能和第 2 步一起改**。
-
-  ### 换包时才能改的那一行（单独动 = 纯回归）
-
-  `simulcastLayers` 现在是 h, m, l（`scaleResolutionDownBy` 1, 2, 4），按 libwebrtc
-  的要求是反的（要从大到小，见 Android `IMVideoProfile.kt` 的注释）。
-  **但 simulcast 没生效时真正跑起来的是第一个 encoding**，现在第一个是 h（满分辨率）；
-  改成 l 在前，iOS 会当场开始发 1/4 分辨率。**看着像一行就能修的 bug，其实是回归。**
-
-  ### 决定前要先想清的两件事
-
-  - **里程碑是往回走的**：M152 → M150。`webrtc-sdk` 那条线没有比 M150 更高的
-    （`144.7559.15` 日期虽新但那是维护中的 M144 老线）。所以「既要 simulcast、
-    又要 ≥M152」这个组合不存在。M150 发布于 2026-08-31、仍在维护，
-    不是当初否掉 `bengreenier/webrtc` 那种冻在 M115 的死包。
-  - **codec 选 H.264 还是 VP8 得实测**：新包里 `RTCDefaultVideoEncoderFactory`
-    有 `preferredCodec` 属性，可以显式钉住、不必听凭默认注册顺序。但两条路都有代价——
-    钉 H.264 保住硬件编码（省电省热），却和 §11 #4 定的「**VP8 做基线**」相左，
-    而且 H.264 跨端要跑 `CLIENT_PARITY.md` 那份三条实测清单；走 VP8 与 Android/Web 一致，
-    代价是 iPhone 上**三路 libvpx 软编**的 CPU 与发热。只有真机测得出来。
-
-  ### 兜底
-
-  `144.7559.15` 在 **iOS 与 Android 两条线上都有**（webrtc-sdk 两个平台版本号同步发布），
-  Android 的 `libs.versions.toml` 本来就写着兜底这一版。所以万一 M150 真机出问题，
-  两端能一起退到 M144，退路是对称的。
-
-  ### 真要换的时候还要动的
-
-  `../im-rtc-server/docs/CLIENT_PARITY.md` §3 那张里程碑表（那是跨仓真相源，
-  版本状态**只写在那里**）。§4 写了什么时候该改那张表。
-  **现在不用改**——表上写的 iOS = stasel 152.0.0 / M152 仍然是事实。
-
-- **2006 的阈值「3」没经过真机校准，而且它现在抛出来也没人接。** 两件事一起记（2026-09-09）：
-  - **阈值待校准**：libwebrtc 判 `failed` 约 30 秒一轮，连续 3 次就是**一分半以后**宿主才知道，
-    用户多半早挂了。真机弱网跑过之后很可能要调成 2 次、或者改成按时间而不是按次数。
-    四端 libwebrtc 版本还不一样（iOS M152 / Android M150 / 桌面 M150 / Web 是浏览器自带），
-    `failed` 的触发时机不见得对得齐——这条只有真机验得出来。
-  - **目前它在界面上等于不存在**：四端 Kit 的错误出口都只认几个码
-    （Web uikit 2 个、iOS `default: break`、Android `when` 没有 `else`），2006 落地即消失。
-    所以现在**回归风险≈0，价值也≈0**，要等 Kit 那几个兜底补上才通。
-  - 弱网环境暂缓搭建（2026-09-09 决定），有条件再做。
-
-- **「人先进来、轨道后到」是常态，不是异常**：`onUserEnter` 那一刻他的远端视频轨道往往还没到。
-  任何「摆好格子就顺手做一次」的动作（层上报、尺寸、订阅）**都要能在轨道到达时再做一遍**，
-  且别让去重表把补做的那次也吃掉——层上界为此空转过整整一版（`report(_:layer:hasVideo:)` 已补）。
-
-- **别单独 `rm -rf ~/Library/Developer/Xcode/DerivedData`**（2026-09-06 踩，半小时）：Xcode 开着时
-  那条 `rm` 会半途失败（`Directory not empty`），只删掉 `SourcePackages/`，而
-  `~/Library/Caches/org.swift.swiftpm/artifacts/` 里那个 44MB 的 WebRTC zip 还在。SwiftPM 见缓存命中
-  就**跳过下载**去解压它以为已放好的那份——路径没了，它**不回退、只 `fatalError`**。表现是
-  `There is no XCFramework found at …/artifacts/webrtc/WebRTC/WebRTC.xcframework`，**越清越好不了**。
-  平时用 **⇧⌘K（Clean Build Folder）** 就够，它不动 `SourcePackages`。真要清就先退 Xcode、两个一起清
-  （重下 44MB）：`osascript -e 'quit app "Xcode"'; sleep 3; rm -rf ~/Library/Developer/Xcode/DerivedData ~/Library/Caches/org.swift.swiftpm/artifacts`。
-  已经踩了就把缓存那个 zip **挪走（别删，网慢能还原）**再 `xcodebuild -resolvePackageDependencies`。
-  `test.sh` 前 9 步全绿说明不了问题——**只有第 10 步碰 `WebRTC.xcframework`**。
-
-- **Kit 的界面代码 macOS 上编不到**（全在 `#if canImport(UIKit)`），`swift test` 绿不算数；`test.sh` 第 10 步为 iOS 编 Demo 才是闸门。
-  Controller 那些在 macOS 上也要编的文件**不能引用 `IMKitTheme`**（它是 UIKit-only）——时长常量放 `IMCallViewRules.swift`。
-- **权限状态查询只决定要不要出说明卡**，判失败靠真探：Web 端在合成媒体源上撞过「查询说被拒、其实拿得到」。
-- **`UIStackView` 没有固有尺寸**，三段式要把两头钉死高度（64 / 96），中间那段才被完全确定。为此错过三轮。
-- **公开 API 必须 ObjC 友好**；`IMMediaAdapter` 刻意不是 `@objc` 协议。加了公开 API 就往 `IMObjCAPICheck.m` 补一行。
-- **MVP 不覆盖锁屏来电**（PushKit + CallKit 属后续期）；每次交付都要明说。
-- **通话中关摄像头停的是采集、不是轨道**（2026-09-11）：重开失败（设备被占 / 选不到格式）**只记日志**，按钮是开的、画面黑。
-  Kit 每点一次开一个 `Task` 调 `setMuted`，没严格排队——快速连点时落地顺序理论上可能和点击顺序不一致（没复现过）。
-  **`stopCapture()` 在 async 上下文里会解析到 async 重载**，要同步停就走 `IMWebRTCAdapter.halt`。
-- **iOS 切后台视频会被系统暂停**：现在由 controller 自动 mute 摄像头轨道，对端看到头像而不是黑屏；回前台不替用户打开他本来关着的摄像头。
-- **`RTCPeerConnectionFactory` 全进程一份、永不销毁**，否则挂断即闪退；挂载登记表只在主线程上动；远端轨道要「认领」（`claimRemoteTracks`）。
-- **图标一律 SF Symbols**（`IMKitIcon`）：emoji 在设备上会变成方框问号。
-- **给 UILabel 插渐变子层是没用的**：CALayer 画完自身内容（= 文字）才画子层，`at: 0` 只在
-  子层之间排序。要渐变底 + 文字就用 `IMAvatarDiscView`（容器画渐变、文字在它上面）。
-- **下行 call 帧必须按 call_id 过滤**：通话中被第三方呼叫时，服务端发来的 `call.ended{busy}`
-  带的是**新来那通**的 call_id，不过滤就会把正在进行的通话拆掉（真机 08:30:39）。
-- **`IMPipView.setContent` 只摘还挂在自己身上的内容**：A/B 互换的顺序是「先钉全屏、再塞小窗」，
-  无条件摘会把刚被全屏容器领养走的那一个摘下来，大窗当场空白。
-- **格子恒为正方形、行列跟容器形状走**（`imGridDimensions(_:aspect:)`），五端同一个算法，改一边要改五边。
-- **还在响铃的来电结束时不进 ended**；主叫那一侧要停一下说明原因（`imEndReasonText`，与 Web 逐字对齐）。
-- **`JSONSerialization` 分不清 true 与 1**，本仓用 `CFBooleanGetTypeID` 判；**Swift 块注释可嵌套**，注释里别写 `/*`。
-- **4401 重试上限 3**（五端同一个数）；**日志回传要给请求设超时**（已设 5 秒）。
-- **画质是宿主策略**（`IMVideoProfile`），改档位要同步服务端 `bwe.go` 的 `bitrateHigh`；
-  **宿主的选择要自己持久化**（Demo 存的是档位名），Engine 不替宿主记。
-- **Demo 里任何一条 `guard … else { return }` 都要留下一句话**：真机上「按钮点了没反应」
-  基本都是静默 return 或者提示落在了看不见的位置（整页最底下的 `errorLabel`）。
+- **simulcast 没生效，换包暂缓**（2026-09-09 拍板，**别重查**）：`stasel/WebRTC 152.0.0` 没有 `RTCVideoEncoderFactorySimulcast`，三个 encoding 进得了 SDP 但只跑第一个（h），SFU 降层对 iOS 无效。
+  选定候选 `webrtc-sdk/Specs 150.7871.01`（`RTC*` 原名、product 同名、0 处改名）；checksum、逐类兼容核对、换包三件事、M152→M150 与 H.264/VP8 取舍、兜底 M144，全在 archive 末节「已知坑」第一条。
+  **`IMVideoProfile.simulcastLayers` 的 h,m,l 顺序只能随换包一起改**，单独改成 l 在前 = 当场发 1/4 分辨率。真换包时同步 `CLIENT_PARITY.md` §3 里程碑表。
+- **2006 阈值「3」未校准、Kit 不接 2006**（iOS `default: break`）：见 server「已知坑」。
+- **别单独 `rm -rf DerivedData`**：Xcode 开着时只删掉 `SourcePackages/`，SwiftPM 命中 `~/Library/Caches/org.swift.swiftpm/artifacts/` 里的 44MB WebRTC zip 就跳过下载然后 `fatalError`
+  （`There is no XCFramework found …`），越清越坏。平时用 ⇧⌘K；真要清先退 Xcode 两个一起清：
+  `osascript -e 'quit app "Xcode"'; sleep 3; rm -rf ~/Library/Developer/Xcode/DerivedData ~/Library/Caches/org.swift.swiftpm/artifacts`。已踩了就把缓存 zip 挪走（别删）再 `xcodebuild -resolvePackageDependencies`。
+- **Kit 界面代码 macOS 上编不到**（`#if canImport(UIKit)`）：`swift test` 绿不算数，只有 `test.sh` 第 10 步编 Demo、碰 `WebRTC.xcframework`。macOS 也要编的 Controller 文件不能引用 `IMKitTheme`（时长常量放 `IMCallViewRules.swift`）。
+- **「人先进来、轨道后到」是常态**：摆格子时做的动作（层上报、尺寸、订阅）要能在轨道到达时再做一遍，别让去重表吃掉补做（`report(_:layer:hasVideo:)`）。
+- **通话中关摄像头停的是采集、不是轨道**：重开失败只记日志（按钮开着、格子一直底色）；Kit 每点一次开一个 `Task` 调 `setMuted`，没严格排队；
+  `stopCapture()` 在 async 上下文会解析到 async 重载，同步停走 `IMWebRTCAdapter.halt`；本端画布关着时隐藏，靠 `IMVideoRegistry.firstFrameArrived` 揭示。
+- 切后台视频被系统暂停：controller 自动 mute 摄像头轨道（对端看到头像）；回前台不替用户打开本来关着的摄像头。
+- `RTCPeerConnectionFactory` 全进程一份、永不销毁（否则挂断闪退）；挂载登记表只在主线程动；远端轨道要 `claimRemoteTracks` 认领。
+- 下行 call 帧必须按 call_id 过滤：通话中被第三方呼叫时的 `call.ended{busy}` 带的是新来那通的 id。
+- 还在响铃的来电结束不进 ended；主叫侧停一下说明原因（`imEndReasonText`，与 Web 逐字对齐）。
+- `IMPipView.setContent` 只摘还挂在自己身上的内容（A/B 互换是先钉全屏、再塞小窗）。
+- 格子恒为正方形、行列跟容器形状走（`imGridDimensions(_:aspect:)`），五端同一个算法。
+- `UIStackView` 没有固有尺寸，三段式要把两头钉死高度（64 / 96）；给 UILabel 插渐变子层没用，用 `IMAvatarDiscView`。
+- 图标一律 SF Symbols（`IMKitIcon`），emoji 在设备上会变方框问号。
+- 权限状态查询只决定要不要出说明卡，判失败靠真探。
+- 公开 API 必须 ObjC 友好（`IMMediaAdapter` 刻意不是 `@objc`）；加公开 API 就往 `IMObjCAPICheck.m` 补一行。
+- `JSONSerialization` 分不清 true 与 1（用 `CFBooleanGetTypeID`）；Swift 块注释可嵌套，注释里别写 `/*`。
+- 4401 重试上限 3（五端同数）；日志回传请求超时 5 秒。
+- 画质是宿主策略（`IMVideoProfile`），改档位同步服务端 `bwe.go` 的 `bitrateHigh`；宿主的选择自己持久化，Engine 不替宿主记。
+- SDK 版本号只改 `Sources/IMCallEngine/Facade/IMCallEngineVersion.swift`（五端统一 1.0.0，ObjC 走 `IMCallEngine.sdkVersion`）；Demo 的 `MARKETING_VERSION` 不联动。
+  「关于」里「H.264 硬编优先」没实测，看服务端 `上行 Track 已接入 … codec=`。
+- Demo 里每条 `guard … else { return }` 都要留一句话：真机上「按钮点了没反应」基本都是静默 return。
+- MVP 不覆盖锁屏来电（PushKit + CallKit 属后续期），每次交付都要明说。
 
 ## 关联工程 / 常用命令
 
-- **各端能力对照表：`../im-rtc-server/docs/CLIENT_PARITY.md`**（✅ 只写在那里，本文件不重复）。
-- 五仓（本地同级 `/Users/liying/IOSProject/im-rtc/`）：server（协议契约，只读引用）· **ios**（本仓）· web · desktop · android。
-- 首批宿主（下游）：`../../IMProgram`（Objective-C iOS App）。
-- 常用命令：
+- 五仓（本地同级）：server（协议契约，只读引用）· **ios**（本仓）· web · desktop · android。首批宿主：`../../IMProgram`（ObjC）。
   ```bash
   ./scripts/install-hooks.sh       # 新 clone 跑一次
   ./scripts/test.sh                # 唯一测试入口（10 步，末步为 iOS 编 Demo）
   BUILD_ONLY=1 ./scripts/test.sh   # 只编译
   SKIP_DEMO_BUILD=1 ./scripts/test.sh   # 跳过 xcodebuild（快，但验不到 Kit 的 UI）
-  swift test --filter KitRulesTests     # 只跑本轮新加的纯逻辑用例
+  swift test --filter KitRulesTests     # 只跑纯逻辑用例
   cd ../im-rtc-server && ./scripts/dev.sh                                   # 起服务端
   RTC_LIVE_SERVER=http://127.0.0.1:8787 swift test --filter LiveServerTests # 真服务端联调
   ```

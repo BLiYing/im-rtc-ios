@@ -106,6 +106,34 @@ extension IMWebRTCAdapter {
         }
     }
 
+    /**
+     preferResolutionOverFramerate CPU / 码率吃紧时**掉帧率、不掉分辨率**。
+
+     与 Android `IMUplinkPolicy.preferResolutionOverFramerate` 同一条取舍，理由在那边写全了：
+     本产品最吃分辨率的场景是看清画面里的字。iOS 原先没设，libwebrtc 默认 BALANCED——
+     分辨率与帧率一起降、再一起升，**每升降一档，对端就换一次解码尺寸**。
+     这是 Android 看 iOS 重开摄像头时「画面出来了又刷新一下」的候选原因之一
+     （待「上行视频采样」里的 `frameWidth` / `qualityLimitationResolutionChanges` 证实）；
+     就算不是，两端取舍不一致本身也说不过去。
+
+     挂上 transceiver 之后、生成 offer 之前设。ObjC 的 setter 不回错误，设没设上看回读。
+     */
+    static func preferResolutionOverFramerate(_ sender: RTCRtpSender?) {
+        guard let sender else {
+            IMRTCLog.warn("没拿到视频 sender，降级偏好没设上", [:])
+            return
+        }
+        let wanted = RTCDegradationPreference.maintainResolution.rawValue
+        let parameters = sender.parameters
+        parameters.degradationPreference = NSNumber(value: wanted)
+        sender.parameters = parameters
+        if sender.parameters.degradationPreference?.intValue == wanted {
+            IMRTCLog.info("编码降级偏好=MAINTAIN_RESOLUTION（宁可掉帧率也保分辨率）", [:])
+        } else {
+            IMRTCLog.warn("降级偏好没设上，退回 libwebrtc 默认的 BALANCED（分辨率会跟着降）", [:])
+        }
+    }
+
     static func stateName(_ state: RTCPeerConnectionState) -> String {
         switch state {
         case .new: return "new"
