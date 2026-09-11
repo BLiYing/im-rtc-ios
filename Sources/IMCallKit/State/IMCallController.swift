@@ -124,6 +124,8 @@ public final class IMCallController: NSObject {
                 IMRTCLog.warn("[Kit] 过完权限门时这一屏已经不在了，invite 不发")
                 return
             }
+            // 群通话默认关着摄像头：权限照问（交互稿 §01），摄像头不开。
+            await startPreviewIfWanted()
             await engine.call(calleeIDs, mediaType: mediaType, isGroup: isGroup)
         }
     }
@@ -137,6 +139,7 @@ public final class IMCallController: NSObject {
                 self.apply(.meetingJoined(roomID: roomID, now: Date().timeIntervalSince1970))
                 if outcome == .cameraBlocked { self.apply(.cameraBlocked) }
             }
+            await startPreviewIfWanted()
             await engine.joinRoom(roomID, roomToken: roomToken)
             await publishFor(mediaType: "video")
         }
@@ -144,11 +147,12 @@ public final class IMCallController: NSObject {
 
     /**
      接听。**先过权限门再发 accept**——先 accept 再发现没权限，对方那边已经接通了却听不到人。
-     来电页上关掉了摄像头就只问麦克风（= 以语音接听，拍板 §11-10）。接不了就拒掉，别让对方一直等。
+     来电页上亲手关掉了摄像头才只问麦克风（= 以语音接听，拍板 §11-10）；群通话默认关着进来不算，
+     照样问（交互稿 §01）。接不了就拒掉，别让对方一直等。
      */
     public func accept() {
-        let devices = imPermissionDevices(mediaType: state.mediaType,
-                                          withCamera: state.selfState.cameraOn)
+        let devices = imPermissionDevicesForAnswering(mediaType: state.mediaType,
+                                                      cameraOptedOut: state.selfState.cameraOptedOut)
         Task {
             let outcome = await permissionGate.ensure(devices)
             guard await settle(outcome, onBlocked: { Task { await self.engine.reject() } }) else { return }
@@ -157,6 +161,7 @@ public final class IMCallController: NSObject {
                 IMRTCLog.warn("[Kit] 过完权限门时这通来电已经不在了，accept 不发")
                 return
             }
+            await startPreviewIfWanted()
             await engine.accept()
         }
     }
@@ -250,7 +255,11 @@ public final class IMCallController: NSObject {
         }
         let on = !state.selfState.cameraOn
         apply(.setCamera(on))
-        guard !state.roomID.isEmpty else { return }
+        guard !state.roomID.isEmpty else {
+            // 群通话拨出中打开摄像头：权限拨出前问过了，这时起预览好让人看见自己。
+            if on, state.phase == .outgoing { Task { await self.startPreviewIfWanted() } }
+            return
+        }
         Task {
             // 第一次开摄像头要真的发布；之后只是开关，**不走 unpublish**（协议 §3.2 的重协商风暴）。
             guard cameraCID.isEmpty, on else {

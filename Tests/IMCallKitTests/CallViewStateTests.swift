@@ -579,6 +579,26 @@ final class CameraDefaultTests: XCTestCase {
                        [.microphone], "语音通话不要摄像头")
     }
 
+    /// 「以语音接听」只认来电页上亲手关掉摄像头这一下——群通话默认关着进来不算（交互稿 §01）。
+    func testOnlyIncomingToggleCountsAsCameraOptOut() {
+        let groupIn = reduceCallView(IMCallViewState(),
+                                     .callReceived(callID: "c-1", caller: "alice", calleeIDs: ["carol"],
+                                                   mediaType: "video", isGroup: true))
+        XCTAssertFalse(groupIn.selfState.cameraOptedOut, "群通话默认关不是用户的选择")
+
+        let soloIn = reduceCallView(IMCallViewState(),
+                                    .callReceived(callID: "c-1", caller: "alice", calleeIDs: [],
+                                                  mediaType: "video", isGroup: false))
+        let off = reduceCallView(soloIn, .setCamera(false))
+        XCTAssertTrue(off.selfState.cameraOptedOut)
+        XCTAssertFalse(reduceCallView(off, .setCamera(true)).selfState.cameraOptedOut, "关了又打开不再算")
+
+        let began = reduceCallView(soloIn, .callBegin(callID: "c-1", roomID: "r-1", mediaType: "video",
+                                                       isGroup: false, role: "callee", now: 0))
+        XCTAssertFalse(reduceCallView(began, .setCamera(false)).selfState.cameraOptedOut,
+                       "接通后的开关与接听时问不问权限无关")
+    }
+
     /// 本地收场写的原因要跟红键实际发的动作一致：写 "network" 的话，
     /// 用户在网络好好的情况下按取消，屏幕上会写「网络中断」并多停 1.5 秒。
     func testWatchdogReasonFollowsTheEndAction() {
