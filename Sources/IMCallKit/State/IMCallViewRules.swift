@@ -80,11 +80,11 @@ public let IMHintHoldSeconds: TimeInterval = 3
 /**
  imCanShowInvite 决定要不要给「添加成员」入口（交互稿 §05）。
 
- 三个条件缺一不可：是群通话（会议房没有 call，走的是别的加人机制）、本端是主叫
- （协议 1407：非主叫发 `invite_more` 会被拒）、房间没满（含本端 9 人）。
+ 条件缺一不可：是群通话（会议房没有 call，走的是别的加人机制）、已接通、房间没满（含本端 9 人）。
+ **不看主叫被叫**：通话里的任何人都能加人（2026-09-15 起）；还在响铃的人阶段不对，自然没有入口。
  */
 public func imCanShowInvite(for state: IMCallViewState) -> Bool {
-    state.isGroup && !state.isMeeting && state.role == "caller" && state.canInvite
+    state.isGroup && !state.isMeeting && state.canInvite
         && state.participants.count + 1 < IMMaxCallParticipants
         && (state.phase == .active || state.phase == .connecting)
 }

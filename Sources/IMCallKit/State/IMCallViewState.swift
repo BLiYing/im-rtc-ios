@@ -115,6 +115,8 @@ public struct IMCallViewState: Equatable, Sendable {
     public var role = ""
     /// 1v1 的对端 uid；群通话为空串。
     public var peerUID = ""
+    /// 发起人 uid，只在被叫侧有值（主叫侧就是自己）。选人页靠它不列发起人：他离场后服务端拉不回来。
+    public var callerUID = ""
     public var participants: [IMParticipant] = []
     public var selfState = IMSelfState()
     /// 是否收进悬浮小窗。
@@ -140,7 +142,7 @@ public struct IMCallViewState: Equatable, Sendable {
     /// 媒体是否已经就绪。**单独记**：`callBegin` 与「媒体通了」谁先到都可能。
     public var isMediaReady = false
     public var connection: IMConnectionStatus = .ok
-    /// 还能不能加人。主叫默认能；收到 `1407 not_call_owner` 后关掉（正常情况下非主叫根本看不到按钮，这条是兜底）。
+    /// 还能不能加人。默认能；收到 `1407 not_call_owner`（本端已不在通话里）后关掉——正常情况下那时根本看不到按钮，这条是兜底。
     public var canInvite = true
 
     public init() {}
@@ -163,7 +165,7 @@ public enum IMCallViewAction: Sendable {
     case mediaReady
     /// 摄像头拿不到（权限被拒 / 没设备）：通话继续，按钮禁用。
     case cameraBlocked
-    /// 主叫往群通话里又拉了一批人，先摆上占位格。
+    /// 本端往群通话里又拉了一批人，先摆上占位格。
     case invited(uids: [String])
     case userEnter(uid: String)
     case userLeave(uid: String)
@@ -172,7 +174,7 @@ public enum IMCallViewAction: Sendable {
     case userSettled(uid: String, outcome: IMSettledOutcome)
     /// 终局停够了，把格子收掉。
     case userRemove(uid: String)
-    /// 服务端说不是主叫（1407）：藏掉加人入口。
+    /// 服务端说本端不在通话里（1407）：藏掉加人入口。
     case inviteDenied
     case userAudio(uid: String, available: Bool)
     case userVideo(uid: String, available: Bool)
@@ -204,6 +206,7 @@ public func reduceCallView(_ state: IMCallViewState,
         next.isGroup = isGroup
         next.role = "callee"
         next.peerUID = isGroup ? "" : caller
+        next.callerUID = caller
         /*
          主叫先摆上（他一定在通话里），其余被邀请的人摆成「还在响铃」的占位格。
 
@@ -328,7 +331,7 @@ public func reduceCallView(_ state: IMCallViewState,
 
     case .inviteDenied:
         next.canInvite = false
-        next.hint = "只有发起人可以添加成员"
+        next.hint = "你已不在通话中，无法添加成员"
 
     case let .userAudio(uid, available):
         next = withParticipant(next, uid) { $0.hasAudio = available }

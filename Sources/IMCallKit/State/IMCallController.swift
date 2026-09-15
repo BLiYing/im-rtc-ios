@@ -315,7 +315,7 @@ public final class IMCallController: NSObject {
 
     /// inviteMore 往群通话里加人：占位格**立刻**出现，帧随后才发（交互稿 §05 G3）。
     ///
-    /// 记下这一批是谁：服务端拒掉（1407 非主叫 / 1202 满员）时不会有 `userDidReject`——
+    /// 记下这一批是谁：服务端拒掉（1407 本端不在通话里 / 1202 满员）时不会有 `userDidReject`——
     /// 那条是给「真的响了铃的人」的。不收回占位格的话它们会一直挂着「呼叫中…」，还占着人数。
     public func inviteMore(_ uids: [String]) {
         guard !uids.isEmpty else { return }

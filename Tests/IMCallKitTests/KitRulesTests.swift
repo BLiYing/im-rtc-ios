@@ -198,10 +198,23 @@ final class LayoutRulesTests: XCTestCase {
         return state
     }
 
-    func testOnlyTheCallerSeesTheInviteEntry() {
+    func testEveryoneInTheCallSeesTheInviteEntry() {
         XCTAssertTrue(imCanShowInvite(for: groupCall(role: "caller")))
-        XCTAssertFalse(imCanShowInvite(for: groupCall(role: "callee")), "非主叫发 invite_more 会被拒成 1407，入口直接不给")
+        XCTAssertTrue(imCanShowInvite(for: groupCall(role: "callee")), "通话里的任何人都能加人（2026-09-15 起，原先仅主叫）")
         XCTAssertEqual(imInviteSlotsLeft(for: groupCall(role: "caller")), 7)
+    }
+
+    /// 被叫侧记下发起人（选人页靠它不列发起人）；还在响铃时没有入口——那时发了也是 1407。
+    func testCalleeRemembersTheCallerAndGetsTheEntryOnceConnected() {
+        var state = reduceCallView(IMCallViewState(), .callReceived(callID: "c", caller: "alice", calleeIDs: ["carol"],
+                                                                    mediaType: "video", isGroup: true))
+        XCTAssertEqual(state.callerUID, "alice")
+        XCTAssertFalse(imCanShowInvite(for: state), "还在响铃的人不在通话里")
+        state = reduceCallView(state, .callBegin(callID: "c", roomID: "r", mediaType: "video", isGroup: true, role: "callee", now: 1))
+        XCTAssertEqual(state.callerUID, "alice", "接通不能把发起人抹掉")
+        XCTAssertTrue(imCanShowInvite(for: state))
+        XCTAssertEqual(reduceCallView(state, .callPlaced(calleeIDs: ["bob"], mediaType: "audio", isGroup: true)).callerUID, "",
+                       "自己拨出的下一通不带上一通的发起人")
     }
 
     func testInviteEntryHidesWhenFullOrDenied() {

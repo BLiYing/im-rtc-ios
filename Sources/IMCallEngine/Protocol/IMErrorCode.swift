@@ -81,7 +81,7 @@ import Foundation
     case invalidCallState = 1405
     /// 1406 `too_many_callees` —— callee_ids 超上限
     case tooManyCallees = 1406
-    /// 1407 `not_call_owner` —— 非主叫发 call.cancel / call.invite_more
+    /// 1407 `not_call_owner` —— 非主叫发 call.cancel；不在通话里的人发 call.invite_more
     case notCallOwner = 1407
     /// 1408 `already_in_call` —— 自己已在别的通话中
     case alreadyInCall = 1408

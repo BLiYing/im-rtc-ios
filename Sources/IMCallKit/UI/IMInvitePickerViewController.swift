@@ -30,7 +30,8 @@ final class IMInvitePickerViewController: UITableViewController, UISearchBarDele
     private var inCall: Set<String> { Set(controller.state.participants.map(\.uid)) }
     private var candidates: [IMInviteCandidate] {
         // 宿主的名单里多半含自己；自己不能邀请自己，直接不列。
-        controller.inviteCandidates.filter { $0.uid != controller.engine.uid }
+        // 发起人也不列：他不在服务端成员表里，离场后拉不回来（回 bad_params），列出来只会留下一个转不停的占位格。
+        controller.inviteCandidates.filter { $0.uid != controller.engine.uid && $0.uid != controller.state.callerUID }
     }
     private var shown: [IMInviteCandidate] {
         let q = query.trimmingCharacters(in: .whitespaces)
@@ -38,7 +39,8 @@ final class IMInvitePickerViewController: UITableViewController, UISearchBarDele
     }
     private var typedUID: String? {
         let q = query.trimmingCharacters(in: .whitespaces)
-        guard candidates.isEmpty, !q.isEmpty, !inCall.contains(q), !picked.contains(q) else { return nil }
+        guard candidates.isEmpty, !q.isEmpty, !inCall.contains(q), !picked.contains(q),
+              q != controller.state.callerUID else { return nil }
         return q
     }
     private var slotsLeft: Int { imInviteSlotsLeft(for: controller.state) - picked.count }

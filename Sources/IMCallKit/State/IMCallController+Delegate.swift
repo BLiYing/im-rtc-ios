@@ -26,7 +26,7 @@ extension IMCallController: IMCallEngineDelegate {
         // 这里不实现的话宿主照样收得到（delegate 是宿主自己挂的），故留空即可。
     }
 
-    /// 加人的两条失败分支（交互稿 §05）：满员出提示；非主叫把入口藏掉。别的错误码由宿主处理。
+    /// 加人的两条失败分支（交互稿 §05）：满员出提示；本端已不在通话里（1407）把入口藏掉。别的错误码由宿主处理。
     public func callEngine(_ engine: IMCallEngine, didFailWithError error: NSError) {
         switch error.code {
         case IMErrorCode.roomFull.rawValue:

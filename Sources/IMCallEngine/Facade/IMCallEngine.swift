@@ -330,8 +330,8 @@ import Foundation
     /**
      inviteMore 往进行中的群通话里再拉人（协议 §4.1 `call.invite_more`，四端同名）。
 
-     **只有主叫能发**——非主叫会被服务端拒成 `1407 not_call_owner`，
-     所以界面上那个「添加成员」入口对非主叫根本不该显示（交互稿 §05）。房间满了回 `1202 room_full`。
+     **通话里的任何人都能发**（2026-09-15 起，原先仅主叫）；还在响铃 / 已离场的人发会被服务端拒成
+     `1407 not_call_owner`（交互稿 §05）。房间满了回 `1202 room_full`；名单里含发起人回 `bad_params`（离场后拉不回来）。
      名单里含自己就地拒掉，理由与 `call` 一样。
      */
     @objc public func inviteMore(_ calleeIDs: [String]) async {
