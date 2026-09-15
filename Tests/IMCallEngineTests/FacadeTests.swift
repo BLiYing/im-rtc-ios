@@ -533,6 +533,32 @@ final class FacadeTests: XCTestCase {
         XCTAssertEqual(h.events.count(.callEnd), 1, "补发 cancel 是善后，不能再抛一次结束")
     }
 
+    /// 拨出后 invite.ok 还没回来就取消：线路上先不出 cancel、宿主不收 error；invite.ok 一回来立刻补发。
+    func testCancelWhileInviteInFlightIsSentOnceTheInviteLands() async throws {
+        let h = makeEngine()
+        let ws = try await login(h)
+
+        async let calling: Void = h.engine.call(["bob"], mediaType: "audio")
+        let invite = try await waitForFrame(ws, ofType: IMFrameType.callInvite) // 故意不回
+
+        await h.engine.cancel()
+        try await settle(4)
+        XCTAssertFalse(ws.frames().contains { $0.type == IMFrameType.callCancel }, "没有 call_id，先不发")
+        XCTAssertEqual(h.events.count(.error), 0, "不许为一个发不了的帧给宿主报错")
+
+        ws.receive("""
+        {"type":"call.invite.ok","req_id":"\(invite.reqID)","ts":1,"data":{"call_id":"c-8","room_id":"r-8"}}
+        """)
+        let cancel = try await waitForFrame(ws, ofType: IMFrameType.callCancel)
+        XCTAssertEqual(cancel.data["call_id"]?.stringValue, "c-8")
+        ws.receive("""
+        {"type":"call.cancel.ok","req_id":"\(cancel.reqID)","ts":1,"data":{}}
+        """)
+        await calling
+        try await settle(4)
+        XCTAssertEqual(h.events.count(.error), 0)
+    }
+
     /// 空候选表示收集结束，**协议要求容忍**（§3.3）——不能当成一个坏候选去报错。
     func testEmptyCandidateIsIgnored() async throws {
         let h = makeEngine()

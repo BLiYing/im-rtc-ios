@@ -19,6 +19,15 @@ import Foundation
 public struct IMEngineContext: Equatable, Sendable {
     public var room = IMRoomContext()
     public var call = IMCallContext()
+    /**
+     **本端**这一场从哪一刻开始（本地时钟，毫秒）。0 = 不在通话里。
+
+     只给「服务端的 call.ended 用不上」的那两条本地结束路径算时长（`forceEnd`）。
+     不能用 `call.connectedAtMS`：那是**整通电话**接通的时刻，中途被拉进来的人拿它算，
+     时长就把他进来之前的那一段也算进去了（2026-09-15 10:05 frank 待了约 6 秒，写成 124 秒）。
+     服务端给每个成员算的也是「他自己接听起」（`memberElapsedSec`），这里是本端的同一个口径。
+     */
+    public var callStartedAtMS: Int64 = 0
 
     public init() {}
 }
@@ -36,16 +45,36 @@ public enum IMEngineMachine {
     public static func reduce(_ ctx: IMEngineContext, _ input: IMMachineInput,
                               nowMS: Int64 = Int64(Date().timeIntervalSince1970 * 1000))
         -> IMMachineOutput<IMEngineContext> {
+        let result: IMMachineOutput<IMEngineContext>
         switch input {
         case let .recv(type, data) where type == IMEnvelope.okType(IMFrameType.hello):
-            return handleHelloOK(ctx, data, nowMS: nowMS)
+            result = handleHelloOK(ctx, data, nowMS: nowMS)
         case let .recv(type, data):
-            return routeFrame(ctx, type: type, data: data)
+            result = routeFrame(ctx, type: type, data: data)
         case let .internalEvent(name):
-            return handleInternal(ctx, name, nowMS: nowMS)
+            result = handleInternal(ctx, name, nowMS: nowMS)
         case let .act(op, args):
-            return routeAct(ctx, op: op, args: args)
+            result = routeAct(ctx, op: op, args: args)
         }
+        return stampCallStart(result, before: ctx, nowMS: nowMS)
+    }
+
+    /// stampCallStart 维护 `callStartedAtMS`：抛 onCallBegin 那一刻记下，通话回 idle 清零，其余沿用。
+    ///
+    /// **在总入口统一做**：好几个分支会新建一个 `IMEngineContext`（liftCall、被踢），逐个带过去迟早漏一个。
+    private static func stampCallStart(_ result: IMMachineOutput<IMEngineContext>,
+                                       before ctx: IMEngineContext,
+                                       nowMS: Int64) -> IMMachineOutput<IMEngineContext> {
+        var next = result.state
+        if result.emit.contains(where: { $0.callback == "onCallBegin" }) {
+            next.callStartedAtMS = nowMS
+        } else if next.call.state == .idle {
+            next.callStartedAtMS = 0
+        } else {
+            next.callStartedAtMS = ctx.callStartedAtMS
+        }
+        guard next != result.state else { return result }
+        return IMMachineOutput(next, send: result.send, emit: result.emit)
     }
 
     /// handleHelloOK：握手成功。

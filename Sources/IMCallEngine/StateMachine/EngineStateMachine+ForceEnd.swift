@@ -26,12 +26,14 @@ extension IMEngineMachine {
         if ctx.call.state != .idle {
             let call = ctx.call
             let (frames, reason) = endFrames(for: call)
+            // 从**本端**进来那一刻算（见 `IMEngineContext.callStartedAtMS`）；没记到才退回整通接通时刻。
+            let startedAtMS = ctx.callStartedAtMS > 0 ? ctx.callStartedAtMS : call.connectedAtMS
             var next = IMEngineContext()
             next.room = IMRoomMachine.cleared(.idle)
             return IMMachineOutput(next, send: frames, emit: [IMEmittedEvent("onCallEnd", [
                 "call_id": .string(call.callID),
                 "reason": .string(reason.wireValue),
-                "duration_sec": .int(IMCallOutcome.durationSec(connectedAtMS: call.connectedAtMS,
+                "duration_sec": .int(IMCallOutcome.durationSec(connectedAtMS: startedAtMS,
                                                                endedAtMS: nowMS)),
                 "ended_by": .string(""),
             ])])

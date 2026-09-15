@@ -150,4 +150,72 @@ final class ForceEndTests: XCTestCase {
         XCTAssertTrue(out.send.isEmpty)
         XCTAssertTrue(out.emit.isEmpty)
     }
+
+    // MARK: - 时长从本端进来算
+
+    /// 中途被拉进群通话的人：时长从**他自己**进来算，不是整通电话接通那一刻
+    /// （2026-09-15 10:05 frank 待了约 6 秒，写成 124 秒）。
+    func testDurationCountsFromWhenThisDeviceBegan() {
+        var ctx = inCall(.connected, room: .joined)
+        ctx.call.connectedAtMS = 1_000
+        ctx.callStartedAtMS = 119_000
+
+        let out = IMEngineMachine.forceEnd(ctx, nowMS: 125_500)
+        XCTAssertEqual(out.emit.first?.args["duration_sec"]?.intValue, 6)
+    }
+
+    /// 抛 onCallBegin 那一刻记下本端开始时刻，中间的推进不冲掉，通话结束清零。
+    func testEngineStampsWhenThisDeviceBeginsAndClearsOnEnd() {
+        var ctx = IMEngineContext()
+        ctx.call.state = .accepting
+        ctx.call.callID = "c-1"
+
+        let began = IMEngineMachine.reduce(ctx, .recv(type: IMFrameType.callConnected, data: [
+            "call_id": .string("c-1"), "room_id": .string("r-1"), "room_token": .string("rt"),
+            "connected_at_ms": .int(1_000),
+        ]), nowMS: 119_000)
+        XCTAssertEqual(began.state.callStartedAtMS, 119_000)
+
+        let later = IMEngineMachine.reduce(began.state, .recv(
+            type: IMFrameType.roomParticipantJoined, data: ["uid": .string("bob")]), nowMS: 120_000)
+        XCTAssertEqual(later.state.callStartedAtMS, 119_000, "中间的推进不许把它冲掉")
+
+        let ended = IMEngineMachine.reduce(later.state, .recv(type: IMFrameType.callEnded, data: [
+            "call_id": .string("c-1"), "reason": .string("hangup"),
+        ]), nowMS: 125_000)
+        XCTAssertEqual(ended.state.callStartedAtMS, 0)
+    }
+
+    // MARK: - invite.ok 回来之前按取消
+
+    /// 没有 call_id 的 cancel 发出去只会被拒成 1401：先挂起，invite.ok 一到立刻补发。
+    func testCancelBeforeInviteOKIsHeldThenSentWhenInviteLands() {
+        let placed = IMCallMachine.reduce(IMCallContext(), .act(op: "call", args: [
+            "callee_ids": .array([.string("bob")]), "media_type": .string("audio"), "is_group": .bool(false),
+        ]))
+
+        let held = IMCallMachine.reduce(placed.state, .act(op: "cancel", args: [:]))
+        XCTAssertTrue(held.send.isEmpty, "没有 call_id 的 cancel 只会被服务端拒成 1401")
+        XCTAssertTrue(held.emit.isEmpty, "也不许本地报 2005")
+        XCTAssertTrue(held.state.cancelPending)
+        XCTAssertEqual(held.state.state, .inviting)
+
+        let landed = IMCallMachine.reduce(held.state, .recv(type: "call.invite.ok", data: [
+            "call_id": .string("c-7"), "room_id": .string("r-7"),
+        ]))
+        XCTAssertEqual(landed.send.map(\.type), [IMFrameType.callCancel])
+        XCTAssertEqual(landed.send.first?.data["call_id"]?.stringValue, "c-7")
+        XCTAssertFalse(landed.state.cancelPending)
+    }
+
+    /// 已经有 call_id 的 cancel 照旧立刻发（向量 caller_1v1_cancel 走的就是这条）。
+    func testCancelWithCallIDIsSentRightAway() {
+        var ctx = IMCallContext()
+        ctx.state = .inviting
+        ctx.callID = "c-1"
+
+        let out = IMCallMachine.reduce(ctx, .act(op: "cancel", args: [:]))
+        XCTAssertEqual(out.send.map(\.type), [IMFrameType.callCancel])
+        XCTAssertFalse(out.state.cancelPending)
+    }
 }

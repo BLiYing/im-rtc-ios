@@ -27,7 +27,10 @@ extension IMCallMachine {
             var next = ctx
             next.callID = Wire.string(data, "call_id")
             next.roomID = Wire.string(data, "room_id")
-            return out(next)
+            // invite.ok 回来之前按过取消（见 reduceAct 的 cancel）：现在有 call_id 了，立刻补发。
+            guard ctx.cancelPending, !next.callID.isEmpty else { return out(next) }
+            next.cancelPending = false
+            return out(next, send: [callIDFrame(IMFrameType.callCancel, next)])
 
         case IMFrameType.callConnected:
             return handleConnected(ctx, data)

@@ -43,6 +43,8 @@ public struct IMCallContext: Equatable, Sendable {
     public var role: IMCallRole = .none
     /// 通话时长的起点，来自服务端。**客户端不自己算时长**（I8）。
     public var connectedAtMS: Int64 = 0
+    /// invite.ok 回来之前就按了取消（那时没有 call_id，发不了）。见 `reduceAct` 的 cancel。
+    public var cancelPending = false
 
     public init() {}
 }
@@ -110,9 +112,21 @@ public enum IMCallMachine {
                 ? out(ctx, send: [callIDFrame(IMFrameType.callReject, ctx)])
                 : invalidState(ctx)
         case "cancel":
-            return ctx.state == .inviting
-                ? out(ctx, send: [callIDFrame(IMFrameType.callCancel, ctx)])
-                : invalidState(ctx)
+            guard ctx.state == .inviting else { return invalidState(ctx) }
+            /*
+             **invite.ok 还没回来就按取消：先记下，不发。**
+
+             这时手里没有 call_id，发出去的 `call.cancel` 只会被服务端拒成 1401，
+             宿主平白多收一条 error，而被叫照样在响（2026-09-15 10:09 demo-react 真机）。
+             invite.ok 一回来就立刻补发（`reduceRecv` 的 invite.ok 分支）；
+             一直不回、红键看门狗先到点的，由 `forceEnd` 与 idle 下的迟到帧分支接着兜。
+            */
+            guard !ctx.callID.isEmpty else {
+                var next = ctx
+                next.cancelPending = true
+                return out(next)
+            }
+            return out(ctx, send: [callIDFrame(IMFrameType.callCancel, ctx)])
         case "hangup":
             return ctx.state == .connected || ctx.state == .connecting
                 ? out(ctx, send: [callIDFrame(IMFrameType.callHangup, ctx)])
