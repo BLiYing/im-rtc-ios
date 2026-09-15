@@ -204,7 +204,7 @@ final class LayoutRulesTests: XCTestCase {
         XCTAssertEqual(imInviteSlotsLeft(for: groupCall(role: "caller")), 7)
     }
 
-    /// 被叫侧记下发起人（选人页靠它不列发起人）；还在响铃时没有入口——那时发了也是 1407。
+    /// 被叫侧记下发起人（选人页靠它认出离场的发起人）；还在响铃时没有入口——那时发了也是 1407。
     func testCalleeRemembersTheCallerAndGetsTheEntryOnceConnected() {
         var state = reduceCallView(IMCallViewState(), .callReceived(callID: "c", caller: "alice", calleeIDs: ["carol"],
                                                                     mediaType: "video", isGroup: true))

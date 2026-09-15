@@ -17,7 +17,7 @@ import IMCallEngine
  `selectable == false` 的候选人同样置灰，并显示 `unselectableReason`。
  顶部实时算「还能加 N 人」= 9 − 当前人数 − 已选。
  */
-final class IMInvitePickerViewController: UITableViewController, UISearchBarDelegate {
+final class IMInvitePickerViewController: UIViewController, UITableViewDataSource, UITableViewDelegate, UISearchBarDelegate {
 
     /// provider 未在 10 秒内回调就按失败处理（§3.4：容信 iOS 现有实现账号全无效时不回调，页面永远转圈）。
     private static let requestTimeoutSeconds: TimeInterval = 10
@@ -36,6 +36,7 @@ final class IMInvitePickerViewController: UITableViewController, UISearchBarDele
     private let context: IMInviteContext
 
     private let searchBar = UISearchBar()
+    private let tableView = UITableView()
     private let inviteButton = UIButton(type: .system)
     private var picked: [String] = []
     private var query = ""
@@ -54,7 +55,7 @@ final class IMInvitePickerViewController: UITableViewController, UISearchBarDele
         self.controller = controller
         self.provider = controller.inviteMemberProvider
         self.context = controller.inviteContext
-        super.init(style: .insetGrouped)
+        super.init(nibName: nil, bundle: nil)
         modalPresentationStyle = .pageSheet
         if let sheet = sheetPresentationController { sheet.detents = [.medium(), .large()] }
     }
@@ -67,11 +68,14 @@ final class IMInvitePickerViewController: UITableViewController, UISearchBarDele
         requestTimeout?.cancel()
     }
 
-    private var inCall: Set<String> { Set(controller.state.participants.map(\.uid)) }
+    /// 在通话里的人（含自己）。`state.participants` 不含自己，不补上的话自己会被当成可邀请。
+    private var inCall: Set<String> { Set([controller.engine.uid] + controller.state.participants.map(\.uid)) }
+
+    /// 离场的发起人服务端拉不回来（`invite_more` 回 bad_params），只能置灰。
+    private func isCallerWhoLeft(_ uid: String) -> Bool { uid == context.callerUID && !inCall.contains(uid) }
 
     /// candidates 是**这一屏此刻该展示的候选人**：provider 有数据就用它的累计页，
-    /// 没有 provider 时退回静态名单本地过滤。两条路都要去掉自己与发起人
-    /// （发起人不在服务端成员表里，离场后拉不回来，回 bad_params）。
+    /// 没有 provider 时退回静态名单本地过滤。宿主给什么列什么（含自己与发起人），在通话里的人置灰。
     private var candidates: [IMInviteCandidate] {
         let base: [IMInviteCandidate]
         if provider != nil {
@@ -81,7 +85,7 @@ final class IMInvitePickerViewController: UITableViewController, UISearchBarDele
             let all = controller.inviteCandidates
             base = q.isEmpty ? all : all.filter { $0.uid.contains(q) || $0.name.contains(q) }
         }
-        return base.filter { $0.uid != controller.engine.uid && $0.uid != context.callerUID }
+        return base
     }
 
     private var typedUID: String? {
@@ -100,29 +104,55 @@ final class IMInvitePickerViewController: UITableViewController, UISearchBarDele
         title = "添加成员"
         overrideUserInterfaceStyle = .dark
         view.backgroundColor = theme.banner
-        tableView.backgroundColor = theme.banner
-        tableView.register(UITableViewCell.self, forCellReuseIdentifier: "c")
-        navigationItem.rightBarButtonItem = UIBarButtonItem(
-            image: IMKitIcon.xmark.image(pointSize: 15), style: .plain, target: self, action: #selector(close))
+
+        // 搜索框：固定在顶部
         searchBar.placeholder = provider != nil ? "搜索联系人" : (controller.inviteCandidates.isEmpty ? "输入对方 uid" : "搜索联系人")
         searchBar.delegate = self
         searchBar.searchBarStyle = .minimal
-        tableView.tableHeaderView = searchBar
-        searchBar.sizeToFit()
+        searchBar.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(searchBar)
 
+        // 列表：在搜索框和邀请按钮之间
+        tableView.dataSource = self
+        tableView.delegate = self
+        tableView.backgroundColor = theme.banner
+        tableView.register(IMInviteCandidateCell.self, forCellReuseIdentifier: IMInviteCandidateCell.reuseID)
+        tableView.rowHeight = 56
+        tableView.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(tableView)
+
+        // 邀请按钮：固定在底部
         inviteButton.titleLabel?.font = .systemFont(ofSize: 15, weight: .bold)
         inviteButton.layer.cornerRadius = 12
         inviteButton.addTarget(self, action: #selector(invite), for: .touchUpInside)
-        let footer = UIView(frame: CGRect(x: 0, y: 0, width: 0, height: 76))
         inviteButton.translatesAutoresizingMaskIntoConstraints = false
-        footer.addSubview(inviteButton)
+        view.addSubview(inviteButton)
+
+        // 导航栏右上角关闭按钮
+        navigationItem.rightBarButtonItem = UIBarButtonItem(
+            image: IMKitIcon.xmark.image(pointSize: 15), style: .plain, target: self, action: #selector(close))
+
+        // Auto Layout 约束：固定搜索框 - 中间列表 - 固定按钮
         NSLayoutConstraint.activate([
-            inviteButton.leadingAnchor.constraint(equalTo: footer.leadingAnchor, constant: 14),
-            inviteButton.trailingAnchor.constraint(equalTo: footer.trailingAnchor, constant: -14),
-            inviteButton.topAnchor.constraint(equalTo: footer.topAnchor, constant: 8),
+            // 搜索框：顶部对齐，左右各 14
+            searchBar.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 8),
+            searchBar.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 14),
+            searchBar.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -14),
+            searchBar.heightAnchor.constraint(equalToConstant: 36),
+
+            // 列表：搜索框下面，邀请按钮上面
+            tableView.topAnchor.constraint(equalTo: searchBar.bottomAnchor, constant: 8),
+            tableView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            tableView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            tableView.bottomAnchor.constraint(equalTo: inviteButton.topAnchor, constant: -8),
+
+            // 邀请按钮：底部固定
+            inviteButton.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 14),
+            inviteButton.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -14),
+            inviteButton.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -16),
             inviteButton.heightAnchor.constraint(equalToConstant: 44),
         ])
-        tableView.tableFooterView = footer
+
         refreshChrome()
 
         if provider != nil {
@@ -246,9 +276,9 @@ final class IMInvitePickerViewController: UITableViewController, UISearchBarDele
         return outside + (typedUID.map { [$0] } ?? [])
     }
 
-    override func numberOfSections(in tableView: UITableView) -> Int { 2 }
+    func numberOfSections(in tableView: UITableView) -> Int { 2 }
 
-    override func tableView(_ tableView: UITableView, numberOfRowsInSection section: Int) -> Int {
+    func tableView(_ tableView: UITableView, numberOfRowsInSection section: Int) -> Int {
         if section == 0 { return extraRows.count }
         switch loadState {
         case .loading, .failed:
@@ -307,42 +337,42 @@ final class IMInvitePickerViewController: UITableViewController, UISearchBarDele
         return container
     }
 
-    override func tableView(_ tableView: UITableView, cellForRowAt indexPath: IndexPath) -> UITableViewCell {
+    func tableView(_ tableView: UITableView, cellForRowAt indexPath: IndexPath) -> UITableViewCell {
         let theme = IMKitTheme.current
-        let cell = tableView.dequeueReusableCell(withIdentifier: "c", for: indexPath)
-        cell.backgroundColor = UIColor(white: 1, alpha: 0.05)
-        cell.textLabel?.textColor = theme.primaryText
-        cell.detailTextLabel?.textColor = theme.secondaryText
+        let cell = tableView.dequeueReusableCell(withIdentifier: IMInviteCandidateCell.reuseID, for: indexPath)
+        guard let row = cell as? IMInviteCandidateCell else { return cell }
+        row.backgroundColor = UIColor(white: 1, alpha: 0.05)
         if indexPath.section == 0 {
             let uid = extraRows[indexPath.row]
             let isPicked = picked.contains(uid)
-            cell.textLabel?.text = isPicked ? uid : "邀请 \(uid)"
-            cell.accessoryType = isPicked ? .checkmark : .none
-            cell.tintColor = theme.accept
-            cell.selectionStyle = .default
-            cell.textLabel?.alpha = 1
-            return cell
+            row.configure(uid: uid, name: isPicked ? uid : "邀请 \(uid)", subtitle: nil, dimmed: false)
+            row.accessoryType = isPicked ? .checkmark : .none
+            row.tintColor = theme.accept
+            row.selectionStyle = .default
+            return row
         }
         let candidate = candidates[indexPath.row]
         let already = inCall.contains(candidate.uid)
-        let blocked = already || !candidate.selectable
-        var text = candidate.name
+        let callerLeft = isCallerWhoLeft(candidate.uid)
+        let blocked = already || callerLeft || !candidate.selectable
+        let subtitle: String?
         if already {
-            text += "（已在通话中）"
-        } else if !candidate.selectable, let reason = candidate.unselectableReason, !reason.isEmpty {
-            text += "（\(reason)）"
-        } else if let subtitle = candidate.subtitle, !subtitle.isEmpty {
-            cell.detailTextLabel?.text = subtitle
+            subtitle = "已在通话中"
+        } else if callerLeft {
+            subtitle = "暂时无法邀请"
+        } else if !candidate.selectable {
+            subtitle = candidate.unselectableReason
+        } else {
+            subtitle = candidate.subtitle
         }
-        cell.textLabel?.text = text
-        cell.textLabel?.alpha = blocked ? 0.45 : 1
-        cell.accessoryType = blocked ? (already ? .checkmark : .none) : (picked.contains(candidate.uid) ? .checkmark : .none)
-        cell.tintColor = blocked ? theme.secondaryText : theme.accept
-        cell.selectionStyle = blocked ? .none : .default
-        return cell
+        row.configure(uid: candidate.uid, name: candidate.name, subtitle: subtitle, dimmed: blocked)
+        row.accessoryType = already || (!blocked && picked.contains(candidate.uid)) ? .checkmark : .none
+        row.tintColor = blocked ? theme.secondaryText : theme.accept
+        row.selectionStyle = blocked ? .none : .default
+        return row
     }
 
-    override func tableView(_ tableView: UITableView, didSelectRowAt indexPath: IndexPath) {
+    func tableView(_ tableView: UITableView, didSelectRowAt indexPath: IndexPath) {
         tableView.deselectRow(at: indexPath, animated: true)
         if indexPath.section == 0 {
             let uid = extraRows[indexPath.row]
@@ -351,16 +381,61 @@ final class IMInvitePickerViewController: UITableViewController, UISearchBarDele
             return
         }
         let candidate = candidates[indexPath.row]
-        guard !inCall.contains(candidate.uid), candidate.selectable else { return }
+        guard !inCall.contains(candidate.uid), !isCallerWhoLeft(candidate.uid), candidate.selectable else { return }
         toggle(candidate.uid)
     }
 
     /// 滚到底且还有下一页时追加取（§3.4）。
-    override func tableView(_ tableView: UITableView, willDisplay cell: UITableViewCell,
-                            forRowAt indexPath: IndexPath) {
+    func tableView(_ tableView: UITableView, willDisplay cell: UITableViewCell,
+                   forRowAt indexPath: IndexPath) {
         guard provider != nil, indexPath.section == 1, nextCursor != nil, !isLoadingMore,
               indexPath.row >= candidates.count - 3 else { return }
         loadPage(reset: false)
+    }
+}
+/// 选人页的一行：头像 + 名字 / 副标题两行 + 系统勾选标记（与 Web / Android 同形）。
+private final class IMInviteCandidateCell: UITableViewCell {
+    static let reuseID = "invite-candidate"
+    private static let avatarSize: CGFloat = 32
+
+    private let avatar = IMAvatarDiscView()
+    private let nameLabel = UILabel()
+    private let subtitleLabel = UILabel()
+
+    override init(style: UITableViewCell.CellStyle, reuseIdentifier: String?) {
+        super.init(style: style, reuseIdentifier: reuseIdentifier)
+        let theme = IMKitTheme.current
+        nameLabel.font = .systemFont(ofSize: 15)
+        nameLabel.textColor = theme.primaryText
+        subtitleLabel.font = .systemFont(ofSize: 12)
+        subtitleLabel.textColor = theme.secondaryText
+        let texts = UIStackView(arrangedSubviews: [nameLabel, subtitleLabel])
+        texts.axis = .vertical
+        texts.spacing = 2
+        avatar.translatesAutoresizingMaskIntoConstraints = false
+        texts.translatesAutoresizingMaskIntoConstraints = false
+        contentView.addSubview(avatar)
+        contentView.addSubview(texts)
+        NSLayoutConstraint.activate([
+            avatar.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 14),
+            avatar.centerYAnchor.constraint(equalTo: contentView.centerYAnchor),
+            avatar.widthAnchor.constraint(equalToConstant: Self.avatarSize),
+            avatar.heightAnchor.constraint(equalToConstant: Self.avatarSize),
+            texts.leadingAnchor.constraint(equalTo: avatar.trailingAnchor, constant: 10),
+            texts.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -8),
+            texts.centerYAnchor.constraint(equalTo: contentView.centerYAnchor),
+        ])
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { fatalError("Kit 不用 storyboard") }
+
+    func configure(uid: String, name: String, subtitle: String?, dimmed: Bool) {
+        avatar.apply(key: uid, name: name, size: Self.avatarSize)
+        nameLabel.text = name
+        subtitleLabel.text = subtitle
+        subtitleLabel.isHidden = subtitle?.isEmpty ?? true
+        contentView.alpha = dimmed ? 0.45 : 1
     }
 }
 #endif

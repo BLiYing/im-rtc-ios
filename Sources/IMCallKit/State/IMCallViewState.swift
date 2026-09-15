@@ -115,7 +115,7 @@ public struct IMCallViewState: Equatable, Sendable {
     public var role = ""
     /// 1v1 的对端 uid；群通话为空串。
     public var peerUID = ""
-    /// 发起人 uid，只在被叫侧有值（主叫侧就是自己）。选人页靠它不列发起人：他离场后服务端拉不回来。
+    /// 发起人 uid，只在被叫侧有值（主叫侧就是自己）。选人页靠它认出离场的发起人：服务端拉不回来，只能置灰。
     public var callerUID = ""
     /**
      宿主自己的群号（HOST_INTEGRATION_DESIGN §3.2），空串 = 不是从一个群发起 / 宿主没传。
