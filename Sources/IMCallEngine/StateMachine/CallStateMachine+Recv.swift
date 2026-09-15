@@ -135,19 +135,28 @@ extension IMCallMachine {
         next.roomID = Wire.string(data, "room_id")
         next.mediaType = mediaType
         next.isGroup = Wire.bool(data, "is_group")
+        // 发起人 / 群号 / user_data 记下来：接通时 call.connected 没带（旧服务端）就回落到这里。
+        next.callerUID = Wire.string(data, "caller")
+        next.chatGroupID = Wire.string(data, "chat_group_id")
+        next.userData = Wire.string(data, "user_data")
 
         /*
          **callee_ids 要原样带给宿主。** 群通话里被叫这一侧原先只知道主叫是谁，
          界面上就只能画「已经进来的人」；主叫那边是四格（含还没接的占位格），
          被叫这边是两格，同一通电话两种样子。这条信息服务端一直在发（§4.2 的
          call.incoming），只是没人往上抛。
+
+         群号 / user_data 同理（HOST_INTEGRATION_DESIGN §3.2）：Kit 靠 chat_group_id
+         决定「添加成员」列哪个群的人。
         */
         return out(next, emit: [IMEmittedEvent("onCallReceived", [
             "call_id": .string(next.callID),
-            "caller": .string(Wire.string(data, "caller")),
+            "caller": .string(next.callerUID),
             "callee_ids": .array(Wire.stringArray(data, "callee_ids").map { .string($0) }),
             "media_type": .string(mediaType),
             "is_group": .bool(next.isGroup),
+            "chat_group_id": .string(next.chatGroupID),
+            "user_data": .string(next.userData),
         ])])
     }
 
@@ -173,6 +182,18 @@ extension IMCallMachine {
         next.mediaType = mediaType
         next.isGroup = Wire.bool(data, "is_group") || ctx.isGroup
         next.connectedAtMS = Wire.int(data, "connected_at_ms")
+        /*
+         **群号 / user_data / 发起人：取 call.connected 里的值，为空时回落到本通
+         call.incoming（被叫）或 call() 选项（主叫）里记下的值**（HOST_INTEGRATION_DESIGN
+         §3.3）——兼容不带这三个字段的旧服务端。`call.join` 进来的人没收过 call.incoming，
+         只能从这一条拿到发起人是谁。
+        */
+        let connectedCaller = Wire.string(data, "caller")
+        let connectedChatGroupID = Wire.string(data, "chat_group_id")
+        let connectedUserData = Wire.string(data, "user_data")
+        next.callerUID = connectedCaller.isEmpty ? ctx.callerUID : connectedCaller
+        next.chatGroupID = connectedChatGroupID.isEmpty ? ctx.chatGroupID : connectedChatGroupID
+        next.userData = connectedUserData.isEmpty ? ctx.userData : connectedUserData
 
         return out(next,
                    send: [IMOutgoingFrame(IMFrameType.roomJoin, [
@@ -185,6 +206,9 @@ extension IMCallMachine {
                        "media_type": .string(mediaType),
                        "is_group": .bool(next.isGroup),
                        "role": .string(next.role.rawValue),
+                       "caller": .string(next.callerUID),
+                       "chat_group_id": .string(next.chatGroupID),
+                       "user_data": .string(next.userData),
                    ])])
     }
 

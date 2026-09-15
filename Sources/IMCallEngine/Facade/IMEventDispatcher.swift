@@ -197,11 +197,13 @@ final class IMEventDispatcher {
         case .callReceived:
             d.callEngine?(e, didReceiveCall: str("call_id"), caller: str("caller"),
                           calleeIDs: strs("callee_ids"),
-                          mediaType: str("media_type"), isGroup: flag("is_group"))
+                          mediaType: str("media_type"), isGroup: flag("is_group"),
+                          chatGroupID: str("chat_group_id"), userData: str("user_data"))
         case .callBegin:
             d.callEngine?(e, callDidBegin: str("call_id"), roomID: str("room_id"),
                           mediaType: str("media_type"), isGroup: flag("is_group"),
-                          role: str("role"))
+                          role: str("role"), caller: str("caller"),
+                          chatGroupID: str("chat_group_id"), userData: str("user_data"))
         case .callEnd:
             d.callEngine?(e, callDidEnd: str("call_id"), reason: str("reason"),
                           durationSec: num("duration_sec"), endedBy: str("ended_by"))

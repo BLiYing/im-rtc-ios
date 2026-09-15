@@ -13,6 +13,7 @@
 
 @import Foundation;
 @import IMCallEngine;
+@import IMCallEngineWebRTC;
 
 @interface IMObjCAPICheck : NSObject <IMCallEngineDelegate>
 @end
@@ -55,6 +56,22 @@
 
     // SDK 版本：与握手帧里的 sdk 字段同源。Swift 的全局常量 ObjC 看不见，走类属性。
     NSLog(@"[objc] SDK %@", IMCallEngine.sdkVersion);
+}
+
+// 带媒体的 Engine：ObjC 宿主不写 Swift 桥，直接用这个工厂（§7-2 拍板，HOST_INTEGRATION_DESIGN §3.3）。
+- (void)checkWebRTCFactoryAPI {
+    NSURL *url = [NSURL URLWithString:@"ws://127.0.0.1:8787/v1/ws"];
+    IMCallEngine *withMedia = [IMCallEngine webRTCEngineWithURL:url deviceID:@"objc-demo-media"];
+    withMedia.delegate = self;
+
+    // 带选项发起群通话：群号 / user_data / 振铃超时原样进 call.invite（HOST_INTEGRATION_DESIGN §3.2）。
+    IMCallOptions *options = [[IMCallOptions alloc] initWithIsGroup:YES chatGroupID:@"g-42"
+                                                            userData:@"{}" timeoutSec:45];
+    [withMedia call:@[@"bob", @"carol"] mediaType:@"video" options:options
+    completionHandler:^{}];
+
+    // 主动加入一通正在进行的群通话（call.join，2026-09-15 实现）。
+    [withMedia joinCall:@"call-77a1" completionHandler:^{}];
 }
 
 // device_id 的入参校验（协议 §2.5）。宿主可以不等 login 就自己先验一遍。
@@ -119,9 +136,16 @@
     [engine updateToken:@"refreshed-token" expiresAtMS:expiresAtMS + 43200000];
 }
 
+- (void)callEngine:(IMCallEngine *)engine didReceiveCall:(NSString *)callID caller:(NSString *)caller
+        calleeIDs:(NSArray<NSString *> *)calleeIDs mediaType:(NSString *)mediaType isGroup:(BOOL)isGroup
+      chatGroupID:(NSString *)chatGroupID userData:(NSString *)userData {
+    NSLog(@"[objc] didReceiveCall %@ from=%@ group=%@", callID, caller, chatGroupID);
+}
+
 - (void)callEngine:(IMCallEngine *)engine callDidBegin:(NSString *)callID roomID:(NSString *)roomID
-         mediaType:(NSString *)mediaType isGroup:(BOOL)isGroup role:(NSString *)role {
-    NSLog(@"[objc] callBegin %@ / %@", callID, roomID);
+         mediaType:(NSString *)mediaType isGroup:(BOOL)isGroup role:(NSString *)role
+            caller:(NSString *)caller chatGroupID:(NSString *)chatGroupID userData:(NSString *)userData {
+    NSLog(@"[objc] callBegin %@ / %@ caller=%@ group=%@", callID, roomID, caller, chatGroupID);
 }
 
 - (void)callEngine:(IMCallEngine *)engine callDidEnd:(NSString *)callID reason:(NSString *)reason

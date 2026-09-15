@@ -16,6 +16,9 @@ final class DialerViewController: UIViewController {
     private let userField = DemoUI.field(placeholder: "用户 ID", text: DemoSession.defaultUsername)
     private let calleeField = DemoUI.field(placeholder: "对方 ID", text: DemoSession.defaultCallee)
     private let roomField = DemoUI.field(placeholder: "房间号（留空则新建）", text: "")
+    /// 按 call_id 主动加入一通正在进行的群通话（`IMCallKit.joinCall(_:)`，HOST_INTEGRATION_DESIGN §3.4）。
+    /// **真实宿主怎么知道有通话在进行中不在本协议里**——这里让人手填 call_id 只是为了验证这条路径。
+    private let joinCallField = DemoUI.field(placeholder: "call_id", text: "")
     private let groupLabel = UILabel()
     private let statusLabel = UILabel()
     /// 登录这一步自己的进度与错误。**必须贴着登录按钮**，见 onLogin 的注释。
@@ -147,10 +150,25 @@ final class DialerViewController: UIViewController {
         navigationController?.pushViewController(picker, animated: true)
     }
 
+    /// 群呼时带上 Demo 自己的群号（HOST_INTEGRATION_DESIGN §3.2）：被叫与中途加入的人
+    /// 靠它知道「这通电话属于哪个群」，Kit 的「添加成员」也靠它决定该问谁要候选人
+    /// （见 `DemoInviteProvider`）。真实宿主这里传的是自己 IM 里的群 id。
+    private static let demoChatGroupID = "demo-group"
+
     @objc private func onGroupCall() {
         guard !groupPick.isEmpty, let kit = session.kit else { return }
         session.pendingPeer = "群通话 · \(groupPick.count + 1) 人"
-        kit.controller.placeCall(groupPick, mediaType: "video", isGroup: true)
+        kit.controller.placeCall(groupPick, mediaType: "video", isGroup: true,
+                                 chatGroupID: Self.demoChatGroupID)
+    }
+
+    /// 按 call_id 加入一通正在进行的群通话（草图 §3.4 的「主动加入」）。
+    @objc private func onJoinByCallID() {
+        errorLabel.text = ""
+        let callID = joinCallField.text?.trimmingCharacters(in: .whitespaces) ?? ""
+        guard !callID.isEmpty else { return errorLabel.text = "请先填 call_id" }
+        guard let kit = session.kit else { return errorLabel.text = "还没登录" }
+        kit.joinCall(callID)
     }
 
     @objc private func onJoinMeeting() {
@@ -200,14 +218,20 @@ final class DialerViewController: UIViewController {
         let pick = DemoUI.button("选人 ›", #selector(onPickGroup), self)
         let group = DemoUI.button("发起群通话", #selector(onGroupCall), self)
         let join = DemoUI.button("加入房间", #selector(onJoinMeeting), self)
-        callButtons = [audio, video, pick, group, join]
+        let joinCall = DemoUI.button("加入这通电话", #selector(onJoinByCallID), self)
+        callButtons = [audio, video, pick, group, join, joinCall]
 
         let stack = UIStackView(arrangedSubviews: [
             DemoUI.card("身份", [serverField, DemoUI.note(DemoSession.serverHint),
                                userField, syntheticRow(), statusLabel,
                                loginButton, logoutButton, loginHint]),
             DemoUI.card("单人通话", [calleeField, DemoUI.row([audio, video])]),
-            DemoUI.card("多人通话（最多 8 人）", [DemoUI.row([groupLabel, pick]), group]),
+            DemoUI.card("多人通话（最多 8 人）", [DemoUI.row([groupLabel, pick]), group,
+                                        DemoUI.note("群号固定 \"\(Self.demoChatGroupID)\"（HOST_INTEGRATION_DESIGN §3.2），"
+                                                    + "「添加成员」据此向 DemoInviteProvider 要候选人。")]),
+            DemoUI.card("加入进行中的群通话", [joinCallField, joinCall,
+                                       DemoUI.note("真实宿主靠 webhook call.started 或后台查询知道哪通电话在进行中，"
+                                                   + "这里手填 call_id 只是为了验证 call.join 这条路径。")]),
             DemoUI.card("会议房间", [roomField, join,
                                  DemoUI.note("会议不走振铃，直接进房。把房间号发给另一台设备就能双开。")]),
             errorLabel,

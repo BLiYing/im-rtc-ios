@@ -117,6 +117,15 @@ public struct IMCallViewState: Equatable, Sendable {
     public var peerUID = ""
     /// 发起人 uid，只在被叫侧有值（主叫侧就是自己）。选人页靠它不列发起人：他离场后服务端拉不回来。
     public var callerUID = ""
+    /**
+     宿主自己的群号（HOST_INTEGRATION_DESIGN §3.2），空串 = 不是从一个群发起 / 宿主没传。
+
+     `IMInviteContext` 靠它决定「添加成员」该向宿主的哪个群要候选人。来自 Engine 已经
+     做过回落的值（`callDidBegin` / `didReceiveCall`），Kit 不需要再兜底。
+     */
+    public var chatGroupID = ""
+    /// 宿主经 `call()` 透传的私有字节，Kit 不解析，只转交给 `IMInviteContext`。
+    public var userData = ""
     public var participants: [IMParticipant] = []
     public var selfState = IMSelfState()
     /// 是否收进悬浮小窗。
@@ -176,6 +185,15 @@ public enum IMCallViewAction: Sendable {
     case userRemove(uid: String)
     /// 服务端说本端不在通话里（1407）：藏掉加人入口。
     case inviteDenied
+    /**
+     群号 / user_data 落地（HOST_INTEGRATION_DESIGN §3.2）。**独立于 `callReceived` /
+     `callBegin` 之外单独一次 `apply`**：那两个动作的调用点遍布测试与 Kit 内部，
+     插进去改签名要动几十处调用点；这样加一条新动作，旧的一个字都不用动。
+     `caller` 为空串时不覆盖已经记下的发起人（join_call 流程之外都会带值）。
+     */
+    case callContext(caller: String, chatGroupID: String, userData: String)
+    /// 主动加入一通正在进行的群通话（`IMCallKit.joinCall(_:)`）：进「接通中…」界面。
+    case joinRequested(callID: String, now: TimeInterval)
     case userAudio(uid: String, available: Bool)
     case userVideo(uid: String, available: Bool)
     /// 说话人名单（全量快照）。**`selfUID` 由调用方现给**——本端也在这份名单里，
@@ -332,6 +350,20 @@ public func reduceCallView(_ state: IMCallViewState,
     case .inviteDenied:
         next.canInvite = false
         next.hint = "你已不在通话中，无法添加成员"
+
+    case let .callContext(caller, chatGroupID, userData):
+        if !caller.isEmpty { next.callerUID = caller }
+        next.chatGroupID = chatGroupID
+        next.userData = userData
+
+    case let .joinRequested(callID, now):
+        next = IMCallViewState()
+        next.connection = state.connection
+        next.phase = .connecting
+        next.callID = callID
+        next.isGroup = true
+        next.role = "callee"
+        next.beganAt = now
 
     case let .userAudio(uid, available):
         next = withParticipant(next, uid) { $0.hasAudio = available }

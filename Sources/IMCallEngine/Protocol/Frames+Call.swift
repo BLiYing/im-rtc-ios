@@ -19,6 +19,12 @@ enum CallFrames {
         "timeout_sec": .int(defaultValue: E.defaultTimeoutSec,
                             min: E.minTimeoutSec, max: E.maxTimeoutSec),
         "user_data": .string(),
+        /*
+         宿主自己的群号（HOST_INTEGRATION_DESIGN §3.2，2026-09-15）。opaque、≤64 字节、
+         禁止空白与换行；服务端不解析、不校验群成员关系，只原样带出去。
+         通话期间不可改：invite_more / join 都不带它。
+        */
+        "chat_group_id": .string(),
     ]
 
     /// **主叫此时禁止 room.join**——接听前不进 SFU（§4.1）。
@@ -52,6 +58,8 @@ enum CallFrames {
                             min: E.minTimeoutSec, max: E.maxTimeoutSec),
         "invited_at_ms": .int(),
         "user_data": .string(),
+        /// 群号，同 call.invite（§3.2）。Kit 靠它决定「添加成员」列谁。
+        "chat_group_id": .string(),
     ]
 
     /// 告诉主叫「对方设备开始响铃了」，每个被叫 uid 只发一次。
@@ -81,6 +89,15 @@ enum CallFrames {
         // 通话时长的起点，服务端时钟。
         "connected_at_ms": .int(),
         "accepted_by": .string(),
+        /*
+         发起人、群号、user_data 的回显（HOST_INTEGRATION_DESIGN §3.2/§3.3，2026-09-15）。
+         `call.join` 进来的人没收过 call.incoming，只能从这里知道发起人是谁；
+         中途加入与断线恢复后也靠它拿到群号。为空时状态机回落到本通 call.incoming /
+         call() 选项记下的值（兼容旧服务端），见 `IMCallMachine.handleConnected`。
+        */
+        "caller": .string(),
+        "chat_group_id": .string(),
+        "user_data": .string(),
     ]
 
     /// 本账号另一台设备处理了这通电话。

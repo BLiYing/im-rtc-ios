@@ -45,6 +45,15 @@ public struct IMCallContext: Equatable, Sendable {
     public var connectedAtMS: Int64 = 0
     /// invite.ok 回来之前就按了取消（那时没有 call_id，发不了）。见 `reduceAct` 的 cancel。
     public var cancelPending = false
+    /**
+     发起人 / 群号 / user_data（HOST_INTEGRATION_DESIGN §3.2/§3.3，2026-09-15）。
+
+     主叫侧在 `call()` 时记下；被叫侧在 `call.incoming` 时记下。`call.connected`
+     到手时优先取它上面的值，为空才回落到这三个字段——兼容不带这三个字段的旧服务端。
+     */
+    public var callerUID: String = ""
+    public var chatGroupID: String = ""
+    public var userData: String = ""
 
     public init() {}
 }
@@ -147,18 +156,31 @@ public enum IMCallMachine {
         let calleeIDs = Wire.stringArray(args, "callee_ids")
         let mediaType = Wire.string(args, "media_type") == "video" ? "video" : "audio"
         let isGroup = Wire.bool(args, "is_group")
+        // 群号 / user_data：**原样进 call.invite**（HOST_INTEGRATION_DESIGN §3.2），
+        // 状态机不解析、不校验，门面已经做过本地长度/空白校验。
+        let chatGroupID = Wire.string(args, "chat_group_id")
+        let userData = Wire.string(args, "user_data")
 
         var next = ctx
         next.state = .inviting
         next.role = .caller
         next.mediaType = mediaType
         next.isGroup = isGroup
+        next.chatGroupID = chatGroupID
+        next.userData = userData
 
-        return out(next, send: [IMOutgoingFrame(IMFrameType.callInvite, [
+        var frameData: [String: IMJSON] = [
             "callee_ids": .array(calleeIDs.map { .string($0) }),
             "media_type": .string(mediaType),
             "is_group": .bool(isGroup),
-        ])])
+            "chat_group_id": .string(chatGroupID),
+            "user_data": .string(userData),
+        ]
+        // timeout_sec **只在宿主真传了才带**——不然会把线路默认值 30 覆盖成 Wire.int 的缺省 0
+        // （`IMFrameSender.wireData` 只补默认值，不会再夹一次范围钳制）。
+        if let timeoutSec = args["timeout_sec"] { frameData["timeout_sec"] = timeoutSec }
+
+        return out(next, send: [IMOutgoingFrame(IMFrameType.callInvite, frameData)])
     }
 
     private static func acceptCall(_ ctx: IMCallContext) -> IMMachineOutput<IMCallContext> {

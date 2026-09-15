@@ -185,8 +185,10 @@ final class DemoSession {
                                   media: IMWebRTCAdapter(videoProfile: videoProfile,
                                                          syntheticVideo: syntheticVideo,
                                                          label: username))
-        // 「添加成员」的候选名单是宿主给的：Demo 用与选人页同一份写死的联系人。
+        // 「添加成员」的候选名单是宿主给的：静态名单保留兼容，provider 优先
+        // （HOST_INTEGRATION_DESIGN §3.4，见 `DemoInviteProvider`：分页 + 搜索 + 失败/超时演示）。
         kitConfig.inviteCandidates = DemoSession.demoContacts.map { IMInviteCandidate(uid: $0) }
+        kitConfig.inviteMemberProvider = DemoInviteProvider()
         let kit = IMCallKit(engine: engine, config: kitConfig)
         kit.start()
         self.engine = engine

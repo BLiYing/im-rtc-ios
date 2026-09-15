@@ -85,6 +85,9 @@ import Foundation
     case notCallOwner = 1407
     /// 1408 `already_in_call` —— 自己已在别的通话中
     case alreadyInCall = 1408
+    /// 1409 `invite_denied` —— 宿主的邀请鉴权回调拒绝了 call.invite / call.invite_more / call.join
+    /// （或回调失败且应用配成拒绝，HOST_INTEGRATION_DESIGN §3.2/§3.5，2026-09-15）
+    case inviteDenied = 1409
     /// 1501 `internal` —— 内部错误兜底
     case internalError = 1501
     /// 1502 `sfu_unavailable` —— 无可用 SFU 节点
@@ -182,6 +185,7 @@ extension IMErrorCode {
         .tooManyCallees: Definition(name: "too_many_callees", message: "too many callees", retryable: false, isLocal: false),
         .notCallOwner: Definition(name: "not_call_owner", message: "not call owner", retryable: false, isLocal: false),
         .alreadyInCall: Definition(name: "already_in_call", message: "already in call", retryable: false, isLocal: false),
+        .inviteDenied: Definition(name: "invite_denied", message: "invite denied by host", retryable: false, isLocal: false),
         .internalError: Definition(name: "internal", message: "internal error", retryable: true, isLocal: false),
         .sfuUnavailable: Definition(name: "sfu_unavailable", message: "sfu unavailable", retryable: true, isLocal: false),
         .shuttingDown: Definition(name: "shutting_down", message: "server shutting down", retryable: true, isLocal: false),

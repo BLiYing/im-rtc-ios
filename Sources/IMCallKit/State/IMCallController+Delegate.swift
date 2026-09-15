@@ -26,7 +26,11 @@ extension IMCallController: IMCallEngineDelegate {
         // 这里不实现的话宿主照样收得到（delegate 是宿主自己挂的），故留空即可。
     }
 
-    /// 加人的两条失败分支（交互稿 §05）：满员出提示；本端已不在通话里（1407）把入口藏掉。别的错误码由宿主处理。
+    /**
+     加人 / 加入的几条失败分支：满员出提示；本端已不在通话里（1407）把入口藏掉；
+     宿主拒绝（1409，HOST_INTEGRATION_DESIGN §3.4）按「正在加人」还是「正在加入」分两句文案。
+     别的错误码由宿主处理。
+     */
     public func callEngine(_ engine: IMCallEngine, didFailWithError error: NSError) {
         switch error.code {
         case IMErrorCode.roomFull.rawValue:
@@ -35,6 +39,22 @@ extension IMCallController: IMCallEngineDelegate {
         case IMErrorCode.notCallOwner.rawValue:
             apply(.inviteDenied)
             revokeLastInvite()
+        case IMErrorCode.inviteDenied.rawValue:
+            if joiningCallID != nil {
+                // 紧跟着会来一条 callDidEnd(reason:"error")（call.join 在 callFailFrames 里）；
+                // 把它改写成本地伪原因 join_denied，好显示专门那句文案而不是笼统的「已结束」。
+                pendingJoinDenial = true
+            } else {
+                apply(.hint("对方暂时无法被邀请"))
+                revokeLastInvite()
+            }
+        case IMErrorCode.invalidState.rawValue, IMErrorCode.notLoggedIn.rawValue:
+            // Engine 本地就拒掉的加入（状态不对 / 没登录）不会再有 callDidEnd：自己收回「接通中…」，
+            // 否则界面卡死，之后在通话里加人被 1409 拒绝也会被错当成「加入失败」。不在加入中时照旧不处理。
+            guard joiningCallID != nil else { break }
+            joiningCallID = nil
+            pendingJoinDenial = false
+            apply(.dismiss)
         default:
             break
         }
@@ -43,11 +63,15 @@ extension IMCallController: IMCallEngineDelegate {
     // MARK: 来电与拨出
 
     public func callEngine(_ engine: IMCallEngine, didReceiveCall callID: String,
-                           caller: String, calleeIDs: [String], mediaType: String, isGroup: Bool) {
+                           caller: String, calleeIDs: [String], mediaType: String, isGroup: Bool,
+                           chatGroupID: String, userData: String) {
         // 名单里含自己，摆格子之前先去掉——「自己」不是远端成员。
         let others = calleeIDs.filter { $0 != engine.uid }
         apply(.callReceived(callID: callID, caller: caller, calleeIDs: others,
                             mediaType: mediaType, isGroup: isGroup))
+        // 群号 / user_data 落地到界面状态（HOST_INTEGRATION_DESIGN §3.2）：「添加成员」靠
+        // chatGroupID 决定问谁要候选人。独立成一次 apply——见 `IMCallViewAction.callContext`。
+        apply(.callContext(caller: caller, chatGroupID: chatGroupID, userData: userData))
     }
 
     /// 通话中有人打进来，服务端已经替我们回了忙线——**只提示，不动当前通话**。
@@ -57,14 +81,22 @@ extension IMCallController: IMCallEngineDelegate {
     }
 
     public func callEngine(_ engine: IMCallEngine, callDidBegin callID: String, roomID: String,
-                           mediaType: String, isGroup: Bool, role: String) {
+                           mediaType: String, isGroup: Bool, role: String,
+                           caller: String, chatGroupID: String, userData: String) {
         apply(.callBegin(callID: callID, roomID: roomID, mediaType: mediaType,
                          isGroup: isGroup, role: role, now: Date().timeIntervalSince1970))
+        joiningCallID = nil // 拿到 callBegin 说明这次加入/接通成功了，见 `joinCall(_:)`。
+        apply(.callContext(caller: caller, chatGroupID: chatGroupID, userData: userData))
     }
 
     public func callEngine(_ engine: IMCallEngine, callDidEnd callID: String, reason: String,
                            durationSec: Int, endedBy: String) {
-        apply(.callEnd(reason: reason, durationSec: durationSec))
+        // 见 didFailWithError 的 1409 分支：加入被拒时把这条终局改写成专门的文案。
+        let effectiveReason = (pendingJoinDenial && reason == IMCallEndReason.error.wireValue)
+            ? "join_denied" : reason
+        pendingJoinDenial = false
+        joiningCallID = nil
+        apply(.callEnd(reason: effectiveReason, durationSec: durationSec))
     }
 
     // 四个便利事件只在 1v1 抛，随后必有 callDidEnd——所以这里只做提示，**不改阶段**。

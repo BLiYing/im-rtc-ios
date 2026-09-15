@@ -39,10 +39,22 @@ public let IMCallKitVersion = IMCallEngineVersion
     /// 允许收进悬浮球（草图 §04）。关掉则通话页没有「小窗」按钮。
     @objc public var floatingWindow: Bool = true
     /**
-     群通话里「添加成员」的候选名单（交互稿 §05）。**名单是宿主给的**——Kit 不内置联系人系统
-     （CONVENTIONS §11）。不给就退化成 uid 输入框。
+     群通话里「添加成员」的候选名单（静态兜底，保留兼容，交互稿 §05）。**名单是宿主给的**——
+     Kit 不内置联系人系统（CONVENTIONS §11）。优先级见 `inviteMemberProvider`。
      */
     @objc public var inviteCandidates: [IMInviteCandidate] = []
+
+    /**
+     按通话向宿主要候选人的钩子（HOST_INTEGRATION_DESIGN §3.4，2026-09-15）——取代静态
+     `inviteCandidates`，支持分页搜索、按群号区分名单。**强引用**：见 `IMCallController.inviteMemberProvider`。
+
+     **取名单优先级**：宿主接管选人页（`presentInvitePicker`）> 这个 provider >
+     静态 `inviteCandidates`（保留兼容）> 空态「没有可邀请的成员」。
+     */
+    @objc public var inviteMemberProvider: IMInviteMemberProvider?
+
+    /// uid 输入框默认关，打开后只出现在候选名单为空的空态里，只给 Demo 用（§3.4）。
+    @objc public var allowsManualUIDInput = false
 
     /// uid → 本机该显示的名字与头像（见 `IMProfileResolving`）。
     ///
@@ -73,12 +85,25 @@ public let IMCallKitVersion = IMCallEngineVersion
         self.config = config
         self.controller = IMCallController(engine: engine)
         self.controller.inviteCandidates = config.inviteCandidates
+        self.controller.inviteMemberProvider = config.inviteMemberProvider
+        self.controller.allowsManualUIDInput = config.allowsManualUIDInput
         self.controller.profileResolver = config.profileResolver
         super.init()
     }
 
     /// 状态中枢。宿主想自己画一部分界面时也能读它。
     public let controller: IMCallController
+
+    /**
+     joinCall 主动加入一通正在进行的群通话（HOST_INTEGRATION_DESIGN §3.4）。
+
+     进「接通中…」界面；被拒（1409 等）按错误码提示并收起——见
+     `IMCallController.joinCall(_:)` 与 `IMCallController+Delegate.swift` 的
+     `didFailWithError`。
+     */
+    @objc public func joinCall(_ callID: String) {
+        controller.joinCall(callID)
+    }
 
     #if canImport(UIKit)
     private lazy var callWindow = IMCallWindow(controller: controller, config: config)

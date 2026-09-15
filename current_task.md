@@ -7,39 +7,25 @@
 
 ## 当前焦点
 
-**2026-09-15：群通话里的任何人都能加人（服务端同日放开）。未提交；单测已跑，真机未验。**
-`imCanShowInvite` 去掉 `role == "caller"`；`IMCallViewState.callerUID`（被叫侧记发起人）→ `IMInvitePickerViewController` 不列发起人（离场后服务端拉不回来）；1407 提示改「你已不在通话中，无法添加成员」。
-真机验：被叫接通后右上角有 👤+，加人后对方响铃接通。
+**2026-09-15：宿主对接 M1 → M2 → M8（本仓部分）已实现，未提交；`./scripts/test.sh` 全绿（10 步，含新增单测），真机未验。**
+依据 `../im-rtc-server/docs/design/HOST_INTEGRATION_DESIGN.md` §3.2-§3.4、`RTC_PROTOCOL.md` 对应章节；服务端与一致性向量由另一人同步在改，**本仓这轮没碰 server 仓**（含向量 / CLIENT_PARITY / guide）。
 
-**2026-09-15：红键等不到结束事件时引擎也收场（`forceEnd`）+ 卡顿探针。已提交 `c7590f1`，两笔小账随后单独一笔；`./scripts/test.sh` 全绿（10 步，声明 240 = 执行 239 + 跳过 1）。10:03~10:13 与 Android alice、Web bob 真机联测通过（见下一步）；Android / Web 同形状已在各自仓落地。**
-起因 09-13 14:53~14:58 frank（Android alice 群呼）：接听后 room.join 晚 28.6 秒才上线路，其间按红键，call.hangup 一帧没到服务端；
-看门狗只收了界面，Engine 留在通话与房间里，其余三端一直看得见他。上一件（开摄像头刷新）已提交 `e1e6220`、三端验完。
-
-- `IMCallEngine.forceEnd()`（`IMCallEngine+ForceEnd.swift`）：读 `IMContextMirror` 挑结束帧，`IMSignalConnection.fire` 直发、**不经帧循环**；
-  本地收场走 `IMFrameLoop.forceEnd(callID:roomID:)`（先比对，防吞掉新来的一通）。帧怎么挑见纯函数 `IMEngineMachine.forceEnd`。
-- Kit：看门狗到点调 `forceEnd`；按红键记 `[Kit] 按下红键`；Kit 已 idle 时 `callEnd` 不再弹结束画面（14:58:21 那 1.5 秒闪屏）。
-- 防回魂：房间机 idle 下 `room.join.ok` 补发 `room.leave`、其余房间帧丢弃（服务端 join 只验房票不查成员）；房间 idle 时丢迟到的候选 / SDP。
-- **join 为何卡 28 秒没定位**，只加诊断：`IMStallProbe`（`执行通道卡顿` / `执行通道卡顿恢复`，lane = main / concurrency_pool / frame_loop）、`请求往返慢`（≥ 2s）。
-- `mediaEvents()` 拆到 `IMCallEngine+MediaEvents.swift`（主文件体量）。CLIENT_PARITY 加 `[^forceend]` 行（iOS 🟡，其余 ⬜）。
+- **M1**（Engine）：`call.invite`/`call.incoming`/`call.connected` 补 `chat_group_id`（三帧都有）/`user_data`/`caller`（后两个只在 connected 新增）；`IMCallContext` 加 `callerUID`/`chatGroupID`/`userData`，`handleConnected` 三者「connected 为空就回落到 incoming / call() 记下的值」（`CallStateMachine+Recv.swift`）。新增 `IMCallOptions`（`Facade/IMCallOptions.swift`）、`call(_:mediaType:options:)` 与 `joinCall(_:)`（`Facade/IMCallEngine+HostIntegration.swift`，本地校验 chatGroupID ≤64 字节+无空白、userData ≤4096 字节，不合规与「名单里有自己」同一个出口）；`IMCallEngineDelegate` 的 `didReceiveCall`/`callDidBegin` **直接改签名**（不留旧 selector，设计 §3.3）；`IMErrorCode.inviteDenied = 1409`；`IMCallEngineWebRTC` 补 ObjC 工厂 `+[IMCallEngine webRTCEngineWithURL:deviceID:]`（`IMCallEngine+WebRTCFactory.swift`）。三条新一致性向量全绿，另加 `Tests/IMCallEngineTests/HostIntegrationTests.swift`（回落分支 / 本地校验 / 发到线路的字段，共 10 条用例）。
+- **M2**（Kit）：新增 `IMInviteContext` / `IMInviteCandidate`（扩 `avatarURL`/`subtitle`/`selectable`/`unselectableReason`）/ `IMInviteMemberProvider`（`Sources/IMCallKit/State/IMInviteMemberProvider.swift`）；`IMCallKitConfig.inviteMemberProvider`（**强引用**）、`allowsManualUIDInput`（默认 false）；`IMInvitePickerViewController` 整体重写：300ms 搜索防抖、代际计数作废旧结果、滚到底翻页、加载中/失败(带重试)/超时(10s) 三态、已在通话中与 `selectable=false` 都置灰、最多选 `slotsLeft` 个；`IMCallOverlayViewController.onInvite` 先过 `canStartInvite()`（本端状态 + 宿主 `canInvite`），再问 `presentInvitePicker`（宿主接管选人页），否则弹 Kit 自带选人页；`IMCallKit.joinCall(_:)`（`IMCallController+Invite.swift`）；1409 两种文案——加人「对方暂时无法被邀请」（只 hint，不影响当前通话）、加入「无法加入该通话」（`didFailWithError` 记 `pendingJoinDenial`，随后 `callDidEnd(reason:"error")` 被改写成 Kit 本地伪原因 `"join_denied"`，从不上线路）。`Tests/IMCallKitTests/InviteMemberProviderTests.swift` 覆盖（8 条用例）。
+- **M8（本仓部分）**：即上面的 `joinCall` 与 1409；服务端 `call.join` 由另一人实现，未联调。
+- **Demo**：`DemoInviteProvider`（16 个真实账号在前 + 44 个假成员凑分页；搜索词 `fail` 模拟失败、`slow` 模拟超时不回调）；`DialerViewController` 群呼固定带 `chatGroupID: "demo-group"`，新增「加入这通电话」按 call_id 入口；`IMObjCAPICheck.m` 补 `webRTCEngineWithURL:deviceID:` / `IMCallOptions` / `joinCall:` 与两个改了签名的 delegate 方法的调用。
 
 ## 下一步
 
-**真机验收（报通话时间）**：
-1. ~~`forceEnd` 真机~~（09-15 已验）：正常挂断 10:03:28 按下 → 90ms 服务端受理、无 `强制收场`；故障注入拒掉 frank 的 hangup（10:05:12）→ 10:05:15 看门狗 `强制收场` 补发被受理，他端同刻看到离开。
-2. 复现 09-13 **没复现**：10:12 通话中杀进程 → ⌘R → 恢复窗口过期后 10:12:50 再邀请 → 横幅接听 18ms 进房，无卡顿日志。再撞上就看 `执行通道卡顿` 的 lane 与 `请求往返慢`。
-   **恢复窗口 30 秒内再邀请**，服务端当他还在通话里、不响铃——等「掉线超过恢复窗口」再邀。
-3. ~~两笔小账~~（09-15 已修，三端同形状，真机未验）：本地收场时长改从本端抛 `onCallBegin` 那一刻算（`IMEngineContext.callStartedAtMS`，10:05 那次会从 124 秒变成约 6 秒）；
-   invite.ok 回来之前按取消先挂起（`IMCallContext.cancelPending`），invite.ok 一到立刻补发 cancel，不再多一条 1401。
-4. **19:14 那条**（服务端判掉线后本端卡 `connecting`、红键点不掉）：看门狗现在会 `forceEnd`，碰到再验。
-4. 更早没验：九宫格正方形填满、横幅接听键是听筒、群视频来电页点开摄像头看得见自己。
-5. 自动隐藏判据（已合入 main `f1055d3`，1v1 视频）：接通后控制条完整停 3 秒再淡出；挂断后结束画面标题栏不淡掉。
-6. 跨端老批次（含本端「后置摄像头镜像」）清单见 `../im-rtc-server/current_task.md`「跨端待验」。
+**真机验收（未做）**：
+1. Demo 双端联调 M1/M2：两台设备群呼带 `chatGroupID`，被叫 `onCallReceived`/`onCallBegin` 拿到群号；中途在另一台设备上 `joinCall` 进房；选人页翻页、搜索 `fail`/`slow`、已在通话置灰。
+2. 1409 的两种文案没连过真服务端——邀请鉴权回调是可选能力、默认关（HOST_INTEGRATION_DESIGN §3.5），等服务端那侧配上再对一遍错误路径。
+3. IMProgram / 容信真实接入是后续期（M3-M7），不在本轮范围。
 
-**待办**：
-- `forceEnd` 三端对齐（Android 看门狗同样只收界面，Web 没有看门狗），形状见 CLIENT_PARITY `[^forceend]`；服务端 `room.join` 可考虑查通话成员作为第二道防线。
-- 静默失败点清单（P0×3 / P1×7 / P2×8）：`../im-rtc-server/docs/ops/silent-failure/ios.md`，逐条状态只在那里。未修头两条：麦克风推流失败被 `try?` 吞掉（接通了一个字都没发出去）、权限卡 continuation 可永久挂起。
-- `Vectors.swift` 找向量仍是「同级没有就往上逐级找」，会捡到上层旧克隆（web 已修同类问题）。
-- `CLIENT_PARITY.md` 真机验完再改，验之前停 🟡。
+**待办 / 已知限制**：
+- `IMCallController.swift`（571 行）与 `IMCallOverlayViewController.swift`（596 行）逼近 600 行体量红线（`check-file-size.sh` 只是 WARN），下次改动前先规划再拆一次。
+- `IMInviteMemberProvider` 目前只有 Demo 一个实现验证过；`presentInvitePicker` 接管路径没有真实宿主跑过。
+- 旧的 forceEnd / 卡顿探针 / 09-13 复现 / 「任何人都能加人」几条已验完并合入 main，移出本节，历史见 `git log` 与 archive。
 
 ## 已知坑 / 限制
 
@@ -51,6 +37,8 @@
   （`There is no XCFramework found …`），越清越坏。平时用 ⇧⌘K；真要清先退 Xcode 两个一起清：
   `osascript -e 'quit app "Xcode"'; sleep 3; rm -rf ~/Library/Developer/Xcode/DerivedData ~/Library/Caches/org.swift.swiftpm/artifacts`。已踩了就把缓存 zip 挪走（别删）再 `xcodebuild -resolvePackageDependencies`。
 - **Kit 界面代码 macOS 上编不到**（`#if canImport(UIKit)`）：`swift test` 绿不算数，只有 `test.sh` 第 10 步编 Demo、碰 `WebRTC.xcframework`。macOS 也要编的 Controller 文件不能引用 `IMKitTheme`（时长常量放 `IMCallViewRules.swift`）。
+  **2026-09-15 踩了一次**：`swift build`/`swift test` 在这台机器上把整个 `#if canImport(UIKit)` 块当空文件——文件里就算有明显的未导入符号（缺一行 `import IMCallEngine`）也**不会报错**，`swift build --target IMCallKit` 照样绿；只有 `xcodebuild`（test.sh 第 10 步）才会真的编到这些文件。改 Kit 的 UI 文件后**必须跑一次完整 `test.sh`**，光看 `swift build`/`swift test` 的绿没有意义。
+- **`join_denied` 不是协议 reason**：`IMCallController` 在 `IMCallKit.joinCall(_:)` 被 1409 拒绝时，把随后到来的 `callDidEnd(reason:"error")` 本地改写成这个伪原因，只用来在结束画面显示「无法加入该通话」，从不上线路、也不在 `IMCallEndReason` 里——四端一致性向量不认识它，改这块时别把它当成协议的一部分去对齐其他端。
 - **「人先进来、轨道后到」是常态**：摆格子时做的动作（层上报、尺寸、订阅）要能在轨道到达时再做一遍，别让去重表吃掉补做（`report(_:layer:hasVideo:)`）。
 - **通话中关摄像头停的是采集、不是轨道**：重开失败只记日志（按钮开着、格子一直底色）；Kit 每点一次开一个 `Task` 调 `setMuted`，没严格排队；
   `stopCapture()` 在 async 上下文会解析到 async 重载，同步停走 `IMWebRTCAdapter.halt`；本端画布关着时隐藏，靠 `IMVideoRegistry.firstFrameArrived` 揭示。

@@ -27,16 +27,6 @@ public protocol IMCallControllerObserver: AnyObject {
     func callController(_ controller: IMCallController, didChange state: IMCallViewState)
 }
 
-/// 「添加成员」的候选人。**名单是宿主给的**——Kit 不内置联系人系统（CONVENTIONS §11）。
-@objc public final class IMInviteCandidate: NSObject {
-    @objc public let uid: String
-    @objc public let name: String
-    @objc public init(uid: String, name: String = "") {
-        self.uid = uid
-        self.name = name.isEmpty ? uid : name
-    }
-}
-
 /// Kit 的状态中枢。**回调都在主线程**（Engine 已经切好了）。
 public final class IMCallController: NSObject {
     public private(set) var state = IMCallViewState() {
@@ -49,8 +39,15 @@ public final class IMCallController: NSObject {
 
     /// 正在显示的权限说明 / 被拒卡；nil = 没有。变化也走 `broadcast()`。
     public private(set) var promptCard: IMPromptCard?
-    /// 「添加成员」的候选名单，由 `IMCallKitConfig.inviteCandidates` 灌进来。
+    /// 「添加成员」的候选名单（静态兜底，保留兼容），由 `IMCallKitConfig.inviteCandidates` 灌进来。
+    /// **取名单优先级**（§3.4）：宿主接管选人页 > `inviteMemberProvider` > 这份静态名单 > 空态。
     public var inviteCandidates: [IMInviteCandidate] = []
+    /// 按通话要候选人的钩子（HOST_INTEGRATION_DESIGN §3.4）。**强引用**——与 `profileResolver`
+    /// 不同，provider 多半是宿主专为通话场景造的一次性对象，Kit 需要保它活到通话结束。
+    /// 由 `IMCallKitConfig.inviteMemberProvider` 灌进来。
+    public var inviteMemberProvider: IMInviteMemberProvider?
+    /// uid 输入框默认关（§3.4）：打开后只出现在候选名单为空的空态里，只给 Demo 用。
+    public var allowsManualUIDInput = false
     /// 身份解析器，由 `IMCallKitConfig.profileResolver` 灌进来。**弱引用**：
     /// 宿主多半让自己的某个长生命周期对象来实现它，Kit 不该延长它的寿命。
     public weak var profileResolver: IMProfileResolving?
@@ -92,6 +89,11 @@ public final class IMCallController: NSObject {
     private var cameraPausedByBackground = false
     /// 最后一批邀请出去的 uid。加人被拒时用它把占位格收回来。
     private var lastInvited: [String] = []
+    /// 正在 `joinCall(_:)` 加入的那通电话；拒绝时（1409 等）区分「加人被拒」与「加入被拒」两种文案。
+    /// 见 `IMCallController+Delegate.swift` 的 `didFailWithError`。
+    var joiningCallID: String?
+    /// 加入被 1409 拒绝：下一条 `callDidEnd` 要把 reason 改写成本地伪原因 `join_denied`。
+    var pendingJoinDenial = false
     /// 权限门。系统探针默认走 AVFoundation，测试可换。
     lazy var permissionGate = makePermissionGate(systemProbe: IMSystemPermissionProbe())
 
@@ -115,8 +117,15 @@ public final class IMCallController: NSObject {
 
     // MARK: - 界面能做的动作
 
-    /// placeCall 拨出。**先过权限门再发 invite**（交互稿 §01）。
-    public func placeCall(_ calleeIDs: [String], mediaType: String, isGroup: Bool = false) {
+    /**
+     placeCall 拨出。**先过权限门再发 invite**（交互稿 §01）。
+
+     `chatGroupID` / `userData` / `timeoutSec` 原样转给 `IMCallOptions`
+     （HOST_INTEGRATION_DESIGN §3.2）：宿主发起「群内通话」时带上自己的群号，
+     被叫与中途加入的人才知道这通电话属于哪个群。`timeoutSec` 为 0 时用协议默认值。
+     */
+    public func placeCall(_ calleeIDs: [String], mediaType: String, isGroup: Bool = false,
+                          chatGroupID: String = "", userData: String = "", timeoutSec: Int = 0) {
         apply(.callPlaced(calleeIDs: calleeIDs, mediaType: mediaType, isGroup: isGroup))
         Task {
             let outcome = await permissionGate.ensure(
@@ -134,7 +143,9 @@ public final class IMCallController: NSObject {
             }
             // 群通话默认关着摄像头：权限照问（交互稿 §01），摄像头不开。
             await startPreviewIfWanted()
-            await engine.call(calleeIDs, mediaType: mediaType, isGroup: isGroup)
+            let options = IMCallOptions(isGroup: isGroup, chatGroupID: chatGroupID,
+                                        userData: userData, timeoutSec: timeoutSec)
+            await engine.call(calleeIDs, mediaType: mediaType, options: options)
         }
     }
 
@@ -377,7 +388,7 @@ public final class IMCallController: NSObject {
     }
 
     /// settle 把权限门的结局翻成「要不要继续」。走不下去时执行 `onBlocked`。
-    private func settle(_ outcome: IMPermissionOutcome,
+    func settle(_ outcome: IMPermissionOutcome,
                         onBlocked: @escaping @MainActor () -> Void) async -> Bool {
         switch outcome {
         case .ok:

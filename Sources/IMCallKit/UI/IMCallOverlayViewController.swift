@@ -246,7 +246,24 @@ public final class IMCallOverlayViewController: UIViewController {
     @objc private func onReject() { controller.reject() }
     @objc private func onSpeaker() { controller.toggleSpeaker() }
     @objc private func onSwitchCamera() { controller.switchCamera() }
+    /**
+     加人入口（草图 §05）。**取名单优先级见 `IMInvitePickerViewController`**：这里只决定
+     「弹不弹、弹谁的」——宿主的权限规则（`canInvite`）先过一道，宿主接管了选人页
+     （`presentInvitePicker`）就不弹 Kit 自己那个。
+     */
     @objc private func onInvite() {
+        guard controller.canStartInvite() else {
+            controller.apply(.hint("没有权限添加成员"))
+            return
+        }
+        if let provider = controller.inviteMemberProvider,
+           provider.presentInvitePicker?(for: controller.inviteContext, from: self,
+                                          completion: { [weak controller] uids in
+               guard !uids.isEmpty else { return }
+               controller?.inviteMore(uids)
+           }) == true {
+            return
+        }
         let picker = IMInvitePickerViewController(controller: controller)
         present(UINavigationController(rootViewController: picker), animated: true)
     }

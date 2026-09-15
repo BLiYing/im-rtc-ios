@@ -94,6 +94,16 @@ public func imInviteSlotsLeft(for state: IMCallViewState) -> Int {
     max(IMMaxCallParticipants - 1 - state.participants.count, 0)
 }
 
+/**
+ imJoinCallAllowed 报告此刻能不能开始「主动加入」：**只有界面空闲、或停在上一通的结束画面时才行**。
+
+ 已经在一场里时 Engine 只会本地回 2005、不会有 `callDidEnd`；而加入流程第一步就把界面切成「接通中…」——
+ 放行的话，正在进行的那通电话的界面被盖掉、再也收不回来（2026-09-15 代码审查，三端同一个坑）。
+ */
+public func imJoinCallAllowed(from phase: IMCallPhase) -> Bool {
+    phase == .idle || phase == .ended
+}
+
 /// 通话主界面的三种版式（规范 §03 / §04）。
 public enum IMCallLayout: String, Sendable {
     /// 语音通话、拨出中：96 头像 + 名字 + 状态。
@@ -160,6 +170,13 @@ public func imEndReasonText(_ reason: String, role: String, durationSec: Int) ->
         return "房间已解散"
     case "kicked":
         return "已被移出"
+    /*
+     `join_denied` 不是协议里的 reason（协议 §6 那张表没有它）——它是 Kit 本地的伪原因，
+     只在 `IMCallController.joinCall(_:)` 被 1409 拒绝时使用，从不上线路、从不来自服务端。
+     真实的服务端结局折到这条分支之外那个 `default`，与四端共用的原因表不冲突。
+    */
+    case "join_denied":
+        return "无法加入该通话"
     default:
         return "已结束"
     }

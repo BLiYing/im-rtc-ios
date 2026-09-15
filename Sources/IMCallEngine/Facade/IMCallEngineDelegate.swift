@@ -66,18 +66,36 @@ import Foundation
 
     // MARK: - 来电与拨出
 
-    /// 收到邀请（被叫侧）。
-    ///
-    /// `calleeIDs` 是**这通电话邀了谁**（不含主叫，含自己）。群通话的界面靠它把还没接的人
-    /// 先摆成占位格——否则主叫那边是四格、被叫这边只有两格，同一通电话两种样子。
+    /**
+     收到邀请（被叫侧）。
+
+     `calleeIDs` 是**这通电话邀了谁**（不含主叫，含自己）。群通话的界面靠它把还没接的人
+     先摆成占位格——否则主叫那边是四格、被叫这边只有两格，同一通电话两种样子。
+
+     `chatGroupID` 是宿主自己的群号（HOST_INTEGRATION_DESIGN §3.2），空串 = 不是从
+     一个群发起、或宿主没传。`userData` 是宿主经 `call()` 透传下来的私有字节，SDK 不解析。
+
+     - Note: **回调签名直接改、不留旧 selector**（2026-09-15）：三个 SDK 都还没有宿主接入、
+       没打过版本，此时改最便宜；留一个几乎同名的 optional 方法，宿主实现旧的那个会
+       **静默收不到**，比编译报错更糟（设计 §3.3）。
+     */
     @objc optional func callEngine(_ engine: IMCallEngine, didReceiveCall callID: String,
                                    caller: String, calleeIDs: [String],
-                                   mediaType: String, isGroup: Bool)
+                                   mediaType: String, isGroup: Bool,
+                                   chatGroupID: String, userData: String)
 
-    /// 通话接通，**主被叫都抛**。此刻 Engine 已自动进房，但**不会自动推流**——
-    /// 推不推、推麦克风还是也推摄像头，是界面的决定。
+    /**
+     通话接通，**主被叫都抛**。此刻 Engine 已自动进房，但**不会自动推流**——
+     推不推、推麦克风还是也推摄像头，是界面的决定。
+
+     `caller` 是发起人：`call.join` 进来的人没收过 `didReceiveCall`，只能从这里知道。
+     `chatGroupID` / `userData` 取 `call.connected` 里的值，为空时 Engine 已经回落到
+     本通 `didReceiveCall` / `call()` 选项记下的值（HOST_INTEGRATION_DESIGN §3.3），
+     宿主不需要自己再兜底。
+     */
     @objc optional func callEngine(_ engine: IMCallEngine, callDidBegin callID: String,
-                                   roomID: String, mediaType: String, isGroup: Bool, role: String)
+                                   roomID: String, mediaType: String, isGroup: Bool, role: String,
+                                   caller: String, chatGroupID: String, userData: String)
 
     /// 通话结束。**所有结束分支的唯一出口**（不变量 I6）。
     ///
