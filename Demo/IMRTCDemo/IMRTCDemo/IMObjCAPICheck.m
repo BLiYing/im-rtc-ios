@@ -108,6 +108,16 @@
         [self->_engine publishMicrophoneWithCompletionHandler:^(NSString *cid, NSError *err) {}];
         [self->_engine startLocalPreviewWithCompletionHandler:^(NSString *cid, NSError *err) {}];
         [self->_engine stopLocalPreview];
+
+        // 按类型的媒体开关（腾讯 TUICallEngine 同名，2026-09-15）：
+        // open 没发布就发布、发布过就取消静音；close 只静音不 unpublish，没发布过是空操作。
+        [self->_engine openMicrophoneWithCompletionHandler:^(NSError * _Nullable err) {}];
+        [self->_engine closeMicrophoneWithCompletionHandler:^{}];
+        [self->_engine openCameraWithCompletionHandler:^(NSError * _Nullable err) {}];
+        [self->_engine closeCameraWithCompletionHandler:^{}];
+
+        // 终态销毁（2026-09-15）：logout + 撤观察者 + 断 delegate，之后这台 Engine 不能再用。
+        [self->_engine destroyWithCompletionHandler:^{}];
     }];
 }
 
@@ -148,17 +158,24 @@
     NSLog(@"[objc] callBegin %@ / %@ caller=%@ group=%@", callID, roomID, caller, chatGroupID);
 }
 
-- (void)callEngine:(IMCallEngine *)engine callDidEnd:(NSString *)callID reason:(NSString *)reason
+// reason 2026-09-15 从 NSString 改成 IMCallEndReason（四端命名对齐，@objc optional
+// 静默失效陷阱：旧签名 `reason:(NSString *)` 不会编译报错，只会收不到这条回调）。
+- (void)callEngine:(IMCallEngine *)engine callDidEnd:(NSString *)callID reason:(IMCallEndReason)reason
        durationSec:(NSInteger)durationSec endedBy:(NSString *)endedBy {
-    NSLog(@"[objc] callEnd %@ reason=%@ %ld秒", callID, reason, (long)durationSec);
+    NSLog(@"[objc] callEnd %@ reason=%ld %ld秒", callID, (long)reason, (long)durationSec);
 }
 
 - (void)callEngine:(IMCallEngine *)engine user:(NSString *)uid audioAvailable:(BOOL)available {
     NSLog(@"[objc] %@ 麦克风 %d", uid, available);
 }
 
-- (void)callEngine:(IMCallEngine *)engine activeSpeakersDidChange:(NSArray<NSDictionary<NSString *, id> *> *)speakers {
+// 元素类型 2026-09-15 从 NSDictionary 改成强类型 IMSpeaker / IMNetworkQuality（同一个陷阱）。
+- (void)callEngine:(IMCallEngine *)engine activeSpeakersDidChange:(NSArray<IMSpeaker *> *)speakers {
     NSLog(@"[objc] 主讲人 %lu 位", (unsigned long)speakers.count);
+}
+
+- (void)callEngine:(IMCallEngine *)engine networkQualityDidChange:(NSArray<IMNetworkQuality *> *)entries {
+    NSLog(@"[objc] 网络质量上报 %lu 条", (unsigned long)entries.count);
 }
 
 - (void)callEngine:(IMCallEngine *)engine didFailWithError:(NSError *)error {

@@ -7,29 +7,29 @@
 
 ## 当前焦点
 
-**2026-09-15：宿主对接 M1 → M2 → M8（本仓部分）已实现，未提交；`./scripts/test.sh` 全绿（10 步，含新增单测），真机未验。**
-依据 `../im-rtc-server/docs/design/HOST_INTEGRATION_DESIGN.md` §3.2-§3.4、`RTC_PROTOCOL.md` 对应章节；服务端与一致性向量由另一人同步在改，**本仓这轮没碰 server 仓**（含向量 / CLIENT_PARITY / guide）。
+**2026-09-15（第三轮，含协调方复查后一处修正）：四端 API 命名对齐落地，只改本仓，未 commit；`./scripts/test.sh` 全绿（10 步，284 例=283 执行+1 skip）。**
+背景：四端（Web/iOS/Android/桌面 C）核对完命名，按统一规格改；服务端 `/guide` 文档与 `CLIENT_PARITY.md` 由主会话改，本仓这轮**没碰 server 仓**。改动点：
 
-**同日另一轮：IMCallKit 补齐 Objective-C 支持，未提交；`./scripts/test.sh` 全绿（10 步，270 例=269 执行+1 skip）。** `IMCallController`（含 `+Invite` 扩展）与 `IMCallKit.controller` 全部 `@objc` 化；新增 `IMCallController+ObjC.swift`（`IMCallKitPhase` 只读镜像 + `IMCallControllerStateObserver` 通知）与 `IMCallKit.kitVersion`；`IMInviteContext`/`IMInviteCandidate`/`IMCallKitConfig`/`IMInviteMemberProvider`/`IMProfileResolving` 核对下来已经是 `@objc`，未改。`Demo/IMRTCDemo/IMRTCDemo/IMObjCKitAPICheck.m` 逐一调用验证；`Tests/IMCallKitTests/ObjCBridgeTests.swift` 补 7 条单测。
+1. **`IMCallEngineDelegate.callEngine(_:callDidEnd:reason:durationSec:endedBy:)` 的 `reason` 从 `String` 改成 `IMCallEndReason`**（`Sources/IMCallEngine/Facade/IMCallEngineDelegate.swift`）。`IMCallEndReason`（`Protocol/CallEndReason.swift`）补**显式原始值** 0~11（与桌面 C 同值），陌生线路值经 `IMCallEndReason.from(wire:)` 折 `.error`。转换发生在 `IMEventDispatcher.callDelegate`（`case .callEnd`），**`addEventObserver` 的 `IMCallEvent.payload["reason"]` 不变，仍是原始字符串**。Kit 侧 `IMCallController+Delegate.swift` 在这个边界转回 `reason.wireValue`（Kit 内部继续按字符串走 `imEndReasonText` 等，`join_denied` 伪原因不进枚举）。
+2. **`activeSpeakersDidChange`/`networkQualityDidChange` 从 `[[String: Any]]` 改成强类型**：新增 `IMSpeaker`（`uid`/`volume`）与 `IMNetworkQuality`（`uid`/`level`），`@objc public final class : NSObject`，放在新文件 `Sources/IMCallEngine/Facade/IMMediaSnapshot.swift`（查过重名，无冲突）。转换同样在 `IMEventDispatcher`。
+3. **新增 `IMCallEngine.destroy() async`**（`Sources/IMCallEngine/Facade/IMCallEngine+Lifecycle.swift`）：`logout()` + 撤全部 block 观察者（`IMEventDispatcher.removeAllObservers()`）+ 断 delegate；可重复调用。之后 `login`/`publishMicrophone`/`publishCamera`/`startLocalPreview`/`probeMicrophone`/`openMicrophone`/`openCamera` 继续抛 `invalid_state`（`requireMedia()`/`login()` 各加一道 `guardNotDestroyed()`）；其余 fire-and-forget 方法**不额外加判断**，靠 `logout()` 已置空连接后 `IMFrameLoop.sendFrame` 现成的「未登录」本地收场（`not_logged_in` + `onCallEnd`）与 `setMuted`/`updateToken` 本身「找不到目标就什么都不做」的既有语义，这条判断写进了 `IMCallEngine+Lifecycle.swift` 顶部注释。
+4. **新增按类型媒体开关**（腾讯 TUICallEngine 同名，`Sources/IMCallEngine/Facade/IMCallEngine+MediaSwitches.swift`）：`openMicrophone()`/`closeMicrophone()`/`openCamera()`/`closeCamera()`。**记账收在 `publish(_:simulcast:)` 这一个入口**（`IMCallEngine.swift`，按 `info.kind` 写 `publishedMicCID`/`publishedCameraCID`），不管发布是 `publishMicrophone`/`publishCamera` 直接调的还是 `openMicrophone`/`openCamera` 触发的，认的是同一份「引擎里这个类型实际发布了没有」——**协调方复查发现最初版本 open*/publishMicrophone 两边各记一份账，混用会重复发布，已修正**：先 `publishMicrophone` 再 `openMicrophone` 现在能识别出已发布，只 `setMuted`。通话结束/离房/房间关闭（`onCallEnd`/`onRoomLeft`/`onRoomClosed`，Engine init 里挂的内部 block observer）与 `logout()` 都会清零。`closeCamera` 核实过 `IMWebRTCAdapter.setMuted` 对已发布摄像头置 `muted=true` 会真的 `halt` 采集，注释已按实际行为写。`publishMicrophone`/`publishCamera`/`setMuted` 保留作高级接口，Kit 内部未换用（按规格）。`makeConnection` 顺带拆到新文件 `IMCallEngine+Connection.swift`（本轮把 `IMCallEngine.swift` 顶到 607 行触发体量门禁，拆完回落到 558 行）。
 
-- **M1**（Engine）：`call.invite`/`call.incoming`/`call.connected` 补 `chat_group_id`（三帧都有）/`user_data`/`caller`（后两个只在 connected 新增）；`IMCallContext` 加 `callerUID`/`chatGroupID`/`userData`，`handleConnected` 三者「connected 为空就回落到 incoming / call() 记下的值」（`CallStateMachine+Recv.swift`）。新增 `IMCallOptions`（`Facade/IMCallOptions.swift`）、`call(_:mediaType:options:)` 与 `joinCall(_:)`（`Facade/IMCallEngine+HostIntegration.swift`，本地校验 chatGroupID ≤64 字节+无空白、userData ≤4096 字节，不合规与「名单里有自己」同一个出口）；`IMCallEngineDelegate` 的 `didReceiveCall`/`callDidBegin` **直接改签名**（不留旧 selector，设计 §3.3）；`IMErrorCode.inviteDenied = 1409`；`IMCallEngineWebRTC` 补 ObjC 工厂 `+[IMCallEngine webRTCEngineWithURL:deviceID:]`（`IMCallEngine+WebRTCFactory.swift`）。三条新一致性向量全绿，另加 `Tests/IMCallEngineTests/HostIntegrationTests.swift`（回落分支 / 本地校验 / 发到线路的字段，共 10 条用例）。
-- **M2**（Kit）：新增 `IMInviteContext` / `IMInviteCandidate`（扩 `avatarURL`/`subtitle`/`selectable`/`unselectableReason`）/ `IMInviteMemberProvider`（`Sources/IMCallKit/State/IMInviteMemberProvider.swift`）；`IMCallKitConfig.inviteMemberProvider`（**强引用**）、`allowsManualUIDInput`（默认 false）；`IMInvitePickerViewController` 整体重写：300ms 搜索防抖、代际计数作废旧结果、滚到底翻页、加载中/失败(带重试)/超时(10s) 三态、已在通话中与 `selectable=false` 都置灰、最多选 `slotsLeft` 个；`IMCallOverlayViewController.onInvite` 先过 `canStartInvite()`（本端状态 + 宿主 `canInvite`），再问 `presentInvitePicker`（宿主接管选人页），否则弹 Kit 自带选人页；`IMCallKit.joinCall(_:)`（`IMCallController+Invite.swift`）；1409 两种文案——加人「对方暂时无法被邀请」（只 hint，不影响当前通话）、加入「无法加入该通话」（`didFailWithError` 记 `pendingJoinDenial`，随后 `callDidEnd(reason:"error")` 被改写成 Kit 本地伪原因 `"join_denied"`，从不上线路）。`Tests/IMCallKitTests/InviteMemberProviderTests.swift` 覆盖（8 条用例）。
-- **M8（本仓部分）**：即上面的 `joinCall` 与 1409；服务端 `call.join` 由另一人实现，未联调。
-- **Demo**：`DemoInviteProvider`（16 个真实账号在前 + 44 个假成员凑分页；搜索词 `fail` 模拟失败、`slow` 模拟超时不回调）；`DialerViewController` 群呼固定带 `chatGroupID: "demo-group"`，新增「加入这通电话」按 call_id 入口；`IMObjCAPICheck.m` 补 `webRTCEngineWithURL:deviceID:` / `IMCallOptions` / `joinCall:` 与两个改了签名的 delegate 方法的调用。
+**没做 / 偏离规格**：均无偏离；ObjC 状态观察者块形式（上一轮已知限制）、真机联调仍是遗留项，见下。
 
 ## 下一步
 
-**真机验收（未做）**：
-1. Demo 双端联调 M1/M2：两台设备群呼带 `chatGroupID`，被叫 `onCallReceived`/`onCallBegin` 拿到群号；中途在另一台设备上 `joinCall` 进房；选人页翻页、搜索 `fail`/`slow`、已在通话置灰。
-2. 1409 的两种文案没连过真服务端——邀请鉴权回调是可选能力、默认关（HOST_INTEGRATION_DESIGN §3.5），等服务端那侧配上再对一遍错误路径。
+**真机验收（未做，累积项）**：
+1. 本轮四端命名对齐：新签名走一遍真机通话，确认 `callDidEnd`/`activeSpeakersDidChange`/`networkQualityDidChange` 三端（Kit/Demo ObjC/宿主自画）都收得到；`destroy()`、`openMicrophone`/`openCamera` 未在真机走过。
+2. 上一轮 M1/M2：两台设备群呼带 `chatGroupID`、中途 `joinCall` 进房、选人页翻页/搜索/置灰；1409 两种文案没连过真服务端（邀请鉴权回调默认关）。
 3. IMProgram / 容信真实接入是后续期（M3-M7），不在本轮范围。
 
 **待办 / 已知限制**：
-- `IMCallController.swift`（581 行，加了一批 `@objc` 标注后又长了一点；新增的只读查询/观察者已经拆进 `IMCallController+ObjC.swift` 没有继续往这个文件堆）与 `IMCallOverlayViewController.swift`（596 行）逼近 600 行体量红线（`check-file-size.sh` 只是 WARN），下次改动前先规划再拆一次。
+- `IMCallController.swift`（581 行）与 `IMCallOverlayViewController.swift`（596 行）逼近 600 行体量红线（`check-file-size.sh` 只是 WARN），下次改动前先规划再拆一次。
+- `IMCallEngine.swift` 本轮加了 `isDestroyed`/`publishedMicCID`/`publishedCameraCID` 三个字段与 `guardNotDestroyed()`/`requireMedia()` 改动后到 594 行，也在往红线靠，`destroy()`/媒体开关的实现体已经拆到独立的 `+Lifecycle.swift`/`+MediaSwitches.swift`，下次别再往主文件塞。
 - `IMInviteMemberProvider` 目前只有 Demo 一个实现验证过；`presentInvitePicker` 接管路径没有真实宿主跑过。
-- **ObjC 状态观察者只有 delegate 形式，没配 block 形式**（`IMCallControllerStateObserver`，CONVENTIONS §4 的「两种都给」这次没做）：块形式要另起一个 token 对象管生命周期，目前没有真实宿主提出这个需求，先不加。
-- **Kit 在视频通话中摄像头无权限 / 无设备（2001/2002）时没有专门的界面提示**（Web 提示「已用语音继续通话」、Android 降级为「摄像头无权限」状态，iOS 只透传给宿主 delegate）——待补。
-- 旧的 forceEnd / 卡顿探针 / 09-13 复现 / 「任何人都能加人」几条已验完并合入 main，移出本节，历史见 `git log` 与 archive。
+- **ObjC 状态观察者只有 delegate 形式，没配 block 形式**（`IMCallControllerStateObserver`，CONVENTIONS §4 的「两种都给」这次没做）：目前没有真实宿主提出这个需求，先不加。
+- **Kit 在视频通话中摄像头无权限 / 无设备（2001/2002）时没有专门的界面提示**——待补。
 
 ## 已知坑 / 限制
 

@@ -143,6 +143,23 @@ final class ReasonConformanceTests: XCTestCase {
         }
     }
 
+    /// 显式原始值（2026-09-15，四端命名对齐）：与桌面 C 端枚举同值，写死不靠声明顺序，
+    /// 防止谁在中间插一个新 case 导致后面所有值集体错位。
+    func testRawValuesMatchDesktopEnum() {
+        XCTAssertEqual(IMCallEndReason.hangup.rawValue, 0)
+        XCTAssertEqual(IMCallEndReason.cancel.rawValue, 1)
+        XCTAssertEqual(IMCallEndReason.reject.rawValue, 2)
+        XCTAssertEqual(IMCallEndReason.noAnswer.rawValue, 3)
+        XCTAssertEqual(IMCallEndReason.busy.rawValue, 4)
+        XCTAssertEqual(IMCallEndReason.offline.rawValue, 5)
+        XCTAssertEqual(IMCallEndReason.answeredElsewhere.rawValue, 6)
+        XCTAssertEqual(IMCallEndReason.rejectedElsewhere.rawValue, 7)
+        XCTAssertEqual(IMCallEndReason.kicked.rawValue, 8)
+        XCTAssertEqual(IMCallEndReason.roomClosed.rawValue, 9)
+        XCTAssertEqual(IMCallEndReason.network.rawValue, 10)
+        XCTAssertEqual(IMCallEndReason.error.rawValue, 11)
+    }
+
     /// 不认识的 reason 一律折成兜底值——这是「新增 reason 不算破坏兼容」的前提。
     func testUnknownReasonFallsBack() throws {
         let vector = try Vectors.load("reasons.json")

@@ -683,3 +683,14 @@ WebRTC 那部分 macOS 编不进来，**只有第 10 步把关，没真机验**�
   cd ../im-rtc-server && ./scripts/dev.sh                                   # 起服务端
   RTC_LIVE_SERVER=http://127.0.0.1:8787 swift test --filter LiveServerTests # 真服务端联调
   ```
+
+## 2026-09-15：宿主对接 M1/M2/M8（本仓部分）+ Kit 补齐 ObjC 支持
+
+**M1**（Engine）：`call.invite`/`call.incoming`/`call.connected` 补 `chat_group_id`（三帧都有）/`user_data`/`caller`（后两个只在 connected 新增）；`IMCallContext` 加 `callerUID`/`chatGroupID`/`userData`，`handleConnected` 三者「connected 为空就回落到 incoming / call() 记下的值」（`CallStateMachine+Recv.swift`）。新增 `IMCallOptions`（`Facade/IMCallOptions.swift`）、`call(_:mediaType:options:)` 与 `joinCall(_:)`（`Facade/IMCallEngine+HostIntegration.swift`，本地校验 chatGroupID ≤64 字节+无空白、userData ≤4096 字节，不合规与「名单里有自己」同一个出口）；`IMCallEngineDelegate` 的 `didReceiveCall`/`callDidBegin` **直接改签名**（不留旧 selector，设计 §3.3）；`IMErrorCode.inviteDenied = 1409`；`IMCallEngineWebRTC` 补 ObjC 工厂 `+[IMCallEngine webRTCEngineWithURL:deviceID:]`（`IMCallEngine+WebRTCFactory.swift`）。三条新一致性向量全绿，另加 `Tests/IMCallEngineTests/HostIntegrationTests.swift`（回落分支 / 本地校验 / 发到线路的字段，共 10 条用例）。
+**M2**（Kit）：新增 `IMInviteContext` / `IMInviteCandidate`（扩 `avatarURL`/`subtitle`/`selectable`/`unselectableReason`）/ `IMInviteMemberProvider`（`Sources/IMCallKit/State/IMInviteMemberProvider.swift`）；`IMCallKitConfig.inviteMemberProvider`（**强引用**）、`allowsManualUIDInput`（默认 false）；`IMInvitePickerViewController` 整体重写：300ms 搜索防抖、代际计数作废旧结果、滚到底翻页、加载中/失败(带重试)/超时(10s) 三态、已在通话中与 `selectable=false` 都置灰、最多选 `slotsLeft` 个；`IMCallOverlayViewController.onInvite` 先过 `canStartInvite()`（本端状态 + 宿主 `canInvite`），再问 `presentInvitePicker`（宿主接管选人页），否则弹 Kit 自带选人页；`IMCallKit.joinCall(_:)`（`IMCallController+Invite.swift`）；1409 两种文案——加人「对方暂时无法被邀请」（只 hint，不影响当前通话）、加入「无法加入该通话」（`didFailWithError` 记 `pendingJoinDenial`，随后 `callDidEnd(reason:"error")` 被改写成 Kit 本地伪原因 `"join_denied"`，从不上线路）。`Tests/IMCallKitTests/InviteMemberProviderTests.swift` 覆盖（8 条用例）。
+**M8（本仓部分）**：即上面的 `joinCall` 与 1409；服务端 `call.join` 由另一人实现，未联调。
+**Demo**：`DemoInviteProvider`（16 个真实账号在前 + 44 个假成员凑分页；搜索词 `fail` 模拟失败、`slow` 模拟超时不回调）；`DialerViewController` 群呼固定带 `chatGroupID: "demo-group"`，新增「加入这通电话」按 call_id 入口；`IMObjCAPICheck.m` 补 `webRTCEngineWithURL:deviceID:` / `IMCallOptions` / `joinCall:` 与两个改了签名的 delegate 方法的调用。
+
+**同日另一轮：IMCallKit 补齐 Objective-C 支持。** `IMCallController`（含 `+Invite` 扩展）与 `IMCallKit.controller` 全部 `@objc` 化；新增 `IMCallController+ObjC.swift`（`IMCallKitPhase` 只读镜像 + `IMCallControllerStateObserver` 通知）与 `IMCallKit.kitVersion`；`IMInviteContext`/`IMInviteCandidate`/`IMCallKitConfig`/`IMInviteMemberProvider`/`IMProfileResolving` 核对下来已经是 `@objc`，未改。`Demo/IMRTCDemo/IMRTCDemo/IMObjCKitAPICheck.m` 逐一调用验证；`Tests/IMCallKitTests/ObjCBridgeTests.swift` 补 7 条单测。
+
+**真机验收（未做，留到下一轮）**：Demo 双端联调 M1/M2（群呼带 chatGroupID、中途 joinCall 进房、选人页翻页/搜索/置灰）；1409 两种文案没连过真服务端（邀请鉴权回调默认关，等服务端配上再对一遍）；IMProgram / 容信真实接入是 M3-M7，不在本轮范围。

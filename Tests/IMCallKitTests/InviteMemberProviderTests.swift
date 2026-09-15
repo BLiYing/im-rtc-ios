@@ -100,7 +100,7 @@ final class InviteMemberProviderTests: XCTestCase {
         XCTAssertEqual(controller.state.role, "callee")
     }
 
-    /// 1409 拒绝加入：`didFailWithError` 记一次「正在加入」，随后 `callDidEnd(reason:"error")`
+    /// 1409 拒绝加入：`didFailWithError` 记一次「正在加入」，随后 `callDidEnd(reason: .error)`
     /// 被改写成本地伪原因 `join_denied`，界面显示专门那句文案而不是笼统的「已结束」。
     func testJoinDeniedShowsDedicatedReasonThenEnds() {
         let controller = makeController()
@@ -109,7 +109,7 @@ final class InviteMemberProviderTests: XCTestCase {
 
         let error = NSError(domain: IMRTCErrorDomain, code: IMErrorCode.inviteDenied.rawValue, userInfo: nil)
         controller.callEngine(engine, didFailWithError: error)
-        controller.callEngine(engine, callDidEnd: "call-77a1", reason: "error", durationSec: 0, endedBy: "")
+        controller.callEngine(engine, callDidEnd: "call-77a1", reason: .error, durationSec: 0, endedBy: "")
 
         XCTAssertEqual(controller.state.phase, .ended)
         XCTAssertEqual(controller.state.endReason, "join_denied")

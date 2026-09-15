@@ -117,6 +117,14 @@ final class IMEventDispatcher {
         mu.unlock()
     }
 
+    /// removeAllObservers 一次性清空全部 block 观察者。**给 `IMCallEngine.destroy()` 用**：
+    /// 终态销毁要连带撤掉宿主挂的每一个观察者，不能指望宿主自己记得手动一个个 remove。
+    func removeAllObservers() {
+        mu.lock()
+        observers.removeAll()
+        mu.unlock()
+    }
+
     /// emit 分发一条状态机事件。**无法识别的回调名会被丢掉并记一条日志**——
     /// 那说明状态机新加了一个回调而这里忘了接，是我们自己的实现 bug。
     func emit(_ event: IMEmittedEvent) {
@@ -205,7 +213,9 @@ final class IMEventDispatcher {
                           role: str("role"), caller: str("caller"),
                           chatGroupID: str("chat_group_id"), userData: str("user_data"))
         case .callEnd:
-            d.callEngine?(e, callDidEnd: str("call_id"), reason: str("reason"),
+            // 线路上仍是 snake_case 字符串；折成强类型是给宿主看的，`IMCallEvent.payload` 不变。
+            d.callEngine?(e, callDidEnd: str("call_id"),
+                          reason: IMCallEndReason.from(wire: str("reason")),
                           durationSec: num("duration_sec"), endedBy: str("ended_by"))
 
         case .callCancelled:
@@ -237,9 +247,9 @@ final class IMEventDispatcher {
             d.callEngine?(e, user: str("uid"), videoAvailable: flag("available"))
 
         case .activeSpeakers:
-            d.callEngine?(e, activeSpeakersDidChange: rows("speakers"))
+            d.callEngine?(e, activeSpeakersDidChange: rows("speakers").map(Self.speaker))
         case .networkQuality:
-            d.callEngine?(e, networkQualityDidChange: rows("entries"))
+            d.callEngine?(e, networkQualityDidChange: rows("entries").map(Self.networkQuality))
         case .firstVideoFrame:
             d.callEngine?(e, didReceiveFirstVideoFrame: str("uid"), trackID: str("track_id"))
 
@@ -292,6 +302,18 @@ final class IMEventDispatcher {
         case let .array(items): return items.map(plain)
         case let .object(fields): return fields.mapValues(plain)
         }
+    }
+
+    /// speaker 把一条主讲人快照的字典行折成强类型（`rows("speakers")` 的元素）。
+    private static func speaker(_ row: [String: Any]) -> IMSpeaker {
+        IMSpeaker(uid: row["uid"] as? String ?? "",
+                  volume: (row["volume"] as? NSNumber)?.intValue ?? 0)
+    }
+
+    /// networkQuality 把一条网络质量快照的字典行折成强类型（`rows("entries")` 的元素）。
+    private static func networkQuality(_ row: [String: Any]) -> IMNetworkQuality {
+        IMNetworkQuality(uid: row["uid"] as? String ?? "",
+                         level: (row["level"] as? NSNumber)?.intValue ?? 0)
     }
 
     /// nsError 把错误事件桥成 `NSError`——公开面必须 ObjC 可用（CONVENTIONS §4）。

@@ -41,7 +41,7 @@ extension IMCallController: IMCallEngineDelegate {
             revokeLastInvite()
         case IMErrorCode.inviteDenied.rawValue:
             if joiningCallID != nil {
-                // 紧跟着会来一条 callDidEnd(reason:"error")（call.join 在 callFailFrames 里）；
+                // 紧跟着会来一条 callDidEnd(reason: .error)（call.join 在 callFailFrames 里）；
                 // 把它改写成本地伪原因 join_denied，好显示专门那句文案而不是笼统的「已结束」。
                 pendingJoinDenial = true
             } else {
@@ -89,11 +89,12 @@ extension IMCallController: IMCallEngineDelegate {
         apply(.callContext(caller: caller, chatGroupID: chatGroupID, userData: userData))
     }
 
-    public func callEngine(_ engine: IMCallEngine, callDidEnd callID: String, reason: String,
+    public func callEngine(_ engine: IMCallEngine, callDidEnd callID: String, reason: IMCallEndReason,
                            durationSec: Int, endedBy: String) {
         // 见 didFailWithError 的 1409 分支：加入被拒时把这条终局改写成专门的文案。
-        let effectiveReason = (pendingJoinDenial && reason == IMCallEndReason.error.wireValue)
-            ? "join_denied" : reason
+        // Kit 内部继续按线路字符串（`imEndReasonText` 等）走，`join_denied` 是 Kit 本地的伪原因，
+        // 不在 IMCallEndReason 里，所以在这个边界上转成 String 而不是让伪原因混进枚举。
+        let effectiveReason = (pendingJoinDenial && reason == .error) ? "join_denied" : reason.wireValue
         pendingJoinDenial = false
         joiningCallID = nil
         apply(.callEnd(reason: effectiveReason, durationSec: durationSec))
@@ -141,15 +142,11 @@ extension IMCallController: IMCallEngineDelegate {
         apply(.userVideo(uid: uid, available: available))
     }
 
-    public func callEngine(_ engine: IMCallEngine, activeSpeakersDidChange speakers: [[String: Any]]) {
-        apply(.activeSpeakers(speakers.map {
-            (uid: $0["uid"] as? String ?? "", volume: ($0["volume"] as? NSNumber)?.intValue ?? 0)
-        }, selfUID: engine.uid))
+    public func callEngine(_ engine: IMCallEngine, activeSpeakersDidChange speakers: [IMSpeaker]) {
+        apply(.activeSpeakers(speakers.map { (uid: $0.uid, volume: $0.volume) }, selfUID: engine.uid))
     }
 
-    public func callEngine(_ engine: IMCallEngine, networkQualityDidChange entries: [[String: Any]]) {
-        apply(.networkQuality(entries.map {
-            (uid: $0["uid"] as? String ?? "", level: ($0["level"] as? NSNumber)?.intValue ?? 0)
-        }))
+    public func callEngine(_ engine: IMCallEngine, networkQualityDidChange entries: [IMNetworkQuality]) {
+        apply(.networkQuality(entries.map { (uid: $0.uid, level: $0.level) }))
     }
 }

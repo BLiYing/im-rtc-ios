@@ -662,6 +662,353 @@ final class FacadeTests: XCTestCase {
         XCTAssertEqual(h.events.count(.connected), 1, "另一个观察者不受影响")
     }
 
+    // MARK: - callDidEnd / activeSpeakersDidChange / networkQualityDidChange 的强类型（2026-09-15）
+
+    private final class TypedSpy: NSObject, IMCallEngineDelegate {
+        let lock = NSLock()
+        var endedReason: IMCallEndReason?
+        var speakers: [IMSpeaker] = []
+        var quality: [IMNetworkQuality] = []
+        func callEngine(_ engine: IMCallEngine, callDidEnd callID: String, reason: IMCallEndReason,
+                        durationSec: Int, endedBy: String) {
+            lock.lock(); endedReason = reason; lock.unlock()
+        }
+        func callEngine(_ engine: IMCallEngine, activeSpeakersDidChange speakers: [IMSpeaker]) {
+            lock.lock(); self.speakers = speakers; lock.unlock()
+        }
+        func callEngine(_ engine: IMCallEngine, networkQualityDidChange entries: [IMNetworkQuality]) {
+            lock.lock(); self.quality = entries; lock.unlock()
+        }
+    }
+
+    /// `callDidEnd` 的 `reason` 折成强类型：认识的线路值精确映射，**不认识的一律折成 `.error`**——
+    /// 直接喂 `dispatcher`，不需要真的走完一通电话。
+    func testCallEndReasonIsTypedAndUnknownFallsBackToError() async throws {
+        let h = makeEngine()
+        let spy = TypedSpy()
+        h.engine.delegate = spy
+
+        h.engine.dispatcher.emit(IMEmittedEvent("onCallEnd", [
+            "call_id": .string("c-1"), "reason": .string("busy"),
+            "duration_sec": .int(0), "ended_by": .string(""),
+        ]))
+        try await settle(2)
+        spy.lock.lock(); XCTAssertEqual(spy.endedReason, .busy); spy.lock.unlock()
+
+        h.engine.dispatcher.emit(IMEmittedEvent("onCallEnd", [
+            "call_id": .string("c-2"), "reason": .string("something_new_in_2027"),
+            "duration_sec": .int(0), "ended_by": .string(""),
+        ]))
+        try await settle(2)
+        spy.lock.lock(); XCTAssertEqual(spy.endedReason, .error, "不认识的线路值要折成 .error，不能崩")
+        spy.lock.unlock()
+    }
+
+    /// `activeSpeakersDidChange` / `networkQualityDidChange` 的元素折成强类型，
+    /// 字段与线路上的 `uid`/`volume`/`level` 一一对应。
+    func testActiveSpeakersAndNetworkQualityAreTyped() async throws {
+        let h = makeEngine()
+        let spy = TypedSpy()
+        h.engine.delegate = spy
+
+        h.engine.dispatcher.emit(IMEmittedEvent("onActiveSpeakers", [
+            "speakers": .array([.object(["uid": .string("alice"), "volume": .int(80)])]),
+        ]))
+        h.engine.dispatcher.emit(IMEmittedEvent("onNetworkQuality", [
+            "entries": .array([.object(["uid": .string("bob"), "level": .int(3)])]),
+        ]))
+        try await settle(2)
+
+        spy.lock.lock()
+        XCTAssertEqual(spy.speakers.map(\.uid), ["alice"])
+        XCTAssertEqual(spy.speakers.map(\.volume), [80])
+        XCTAssertEqual(spy.quality.map(\.uid), ["bob"])
+        XCTAssertEqual(spy.quality.map(\.level), [3])
+        spy.lock.unlock()
+    }
+
+    // MARK: - destroy（2026-09-15：终态销毁）
+
+    /// destroy 断开 delegate、撤掉全部 block 观察者——之后再有内部事件也不该送到宿主手里。
+    func testDestroyDisconnectsDelegateAndObservers() async throws {
+        let h = makeEngine()
+        let spy = TypedSpy()
+        h.engine.delegate = spy
+        let countBefore = h.events.names().count
+
+        await h.engine.destroy()
+        XCTAssertNil(h.engine.delegate, "destroy 之后 delegate 要断开")
+
+        // emitLocalError 是门面内部方法（@testable），借它验证「撤观察者」真的生效，
+        // 不用等一整套信令握手。
+        h.engine.emitLocalError(.internalError)
+        try await settle(2)
+        XCTAssertEqual(h.events.names().count, countBefore, "撤观察者之后不该再收到任何事件")
+    }
+
+    /// destroy 之后是终态：不能借同一个实例复活，`login` 继续抛 `invalid_state`。
+    func testLoginAfterDestroyThrowsInvalidState() async throws {
+        let h = makeEngine()
+        await h.engine.destroy()
+
+        do {
+            try await h.engine.login("token-2")
+            XCTFail("destroy 之后不该还能登录")
+        } catch let error as IMRTCError {
+            XCTAssertEqual(error.code, .invalidState)
+        }
+    }
+
+    /// destroy 之后 `publishMicrophone` 这类经 `requireMedia()` 的方法同样抛 `invalid_state`，
+    /// 与「没有媒体适配器」共用一条错误面。
+    func testPublishAfterDestroyThrowsInvalidState() async throws {
+        let h = makeEngine()
+        _ = try await login(h)
+        await h.engine.destroy()
+
+        do {
+            _ = try await h.engine.publishMicrophone()
+            XCTFail("destroy 之后不该还能推流")
+        } catch let error as IMRTCError {
+            XCTAssertEqual(error.code, .invalidState)
+        }
+    }
+
+    /// 可重复调用：第二次 destroy 不该崩，也不该改变已经断开的状态。
+    func testDestroyIsIdempotent() async throws {
+        let h = makeEngine()
+        _ = try await login(h)
+        await h.engine.destroy()
+        await h.engine.destroy()
+        XCTAssertNil(h.engine.delegate)
+    }
+
+    // MARK: - openMicrophone / closeMicrophone / openCamera / closeCamera（2026-09-15）
+
+    /// 没有媒体适配器时，跟 `publishMicrophone` 一样以 2005 失败，不是崩或静默忽略。
+    func testOpenMicrophoneWithoutMediaAdapterThrowsInvalidState() async throws {
+        let box = SocketBox()
+        let engine = IMCallEngine(url: URL(string: "ws://test/v1/ws")!, deviceID: "d-1")
+        engine.webSocketFactory = { _ in
+            let socket = FakeWebSocket()
+            box.set(socket)
+            return socket
+        }
+        async let done: Void = engine.login("token-1")
+        let ws = try await waitForSocket(box)
+        ws.open()
+        let hello = try await waitForFrame(ws, ofType: IMFrameType.hello)
+        ws.receive(helloOKFrame(reqID: hello.reqID))
+        try await done
+
+        do {
+            try await engine.openMicrophone()
+            XCTFail("没有媒体适配器时不该开麦成功")
+        } catch let error as IMRTCError {
+            XCTAssertEqual(error.code, .invalidState)
+        }
+    }
+
+    /// 第一次 `openMicrophone` 真的发布；已经发布过的第二次只取消静音，不重新 acquire/publish
+    /// （协议 §3.2：反复开关走 unpublish 会触发重协商风暴）。
+    func testOpenMicrophonePublishesOnceThenOnlyUnmutes() async throws {
+        let h = makeEngine()
+        let ws = try await login(h)
+        try await joinRoom(h, ws)
+
+        async let opening: Void = h.engine.openMicrophone()
+        let publish = try await waitForFrame(ws, ofType: IMFrameType.roomPublish)
+        ws.receive("""
+        {"type":"room.publish.ok","req_id":"\(publish.reqID)","ts":1,\
+        "data":{"cid":"mic-1","track_id":"t-1"}}
+        """)
+        let offer = try await waitForFrame(ws, ofType: IMFrameType.roomOffer)
+        ws.receive("""
+        {"type":"room.answer","req_id":"\(offer.reqID)","ts":1,\
+        "data":{"pc":"pub","sdp":"v=0 answer"}}
+        """)
+        try await opening
+        try await settle(4)
+
+        XCTAssertTrue(h.media.calls().contains("acquireMic"), "第一次要真的发布")
+        let acquireCountBefore = h.media.calls().filter { $0 == "acquireMic" }.count
+
+        // 已经发布过：这一次走 setMuted，同样要等 room.mute.ok，不能顺序写。
+        async let reopening: Void = h.engine.openMicrophone()
+        let mute = try await waitForFrame(ws, ofType: IMFrameType.roomMute)
+        ws.receive("""
+        {"type":"room.mute.ok","req_id":"\(mute.reqID)","ts":1,"data":{}}
+        """)
+        try await reopening
+        try await settle(2)
+
+        XCTAssertEqual(h.media.calls().filter { $0 == "acquireMic" }.count, acquireCountBefore,
+                       "已经发布过就不该再 acquire 一次")
+        XCTAssertTrue(h.media.calls().contains("setMuted(mic-1,false)"), "第二次只是取消静音")
+    }
+
+    /// 混用：先用 `publishMicrophone`（高级接口）发布，再调 `openMicrophone`（便利接口）。
+    /// 两条入口认的是同一份「发布过没有」，`openMicrophone` 必须认得出已经发布过，
+    /// 只取消静音，**不能再发布一路**——这条是本仓自己的账，不看是谁触发的发布。
+    func testOpenMicrophoneAfterPublishMicrophoneOnlyUnmutes() async throws {
+        let h = makeEngine()
+        let ws = try await login(h)
+        try await joinRoom(h, ws)
+        try await publishMic(h, ws)
+
+        XCTAssertEqual(h.media.calls().filter { $0 == "acquireMic" }.count, 1,
+                       "publishMicrophone 已经发布过一次")
+
+        async let opening: Void = h.engine.openMicrophone()
+        let mute = try await waitForFrame(ws, ofType: IMFrameType.roomMute)
+        ws.receive("""
+        {"type":"room.mute.ok","req_id":"\(mute.reqID)","ts":1,"data":{}}
+        """)
+        try await opening
+        try await settle(2)
+
+        XCTAssertEqual(h.media.calls().filter { $0 == "acquireMic" }.count, 1,
+                       "openMicrophone 不该再发布一路")
+        XCTAssertEqual(ws.frames().filter { $0.type == IMFrameType.roomPublish }.count, 1,
+                       "全程只该有 publishMicrophone 那一次 room.publish")
+        XCTAssertTrue(h.media.calls().contains("setMuted(mic-1,false)"), "只应该取消静音")
+    }
+
+    /// `closeMicrophone` 对已发布的轨道只静音、不 unpublish；没发布过就什么都不做。
+    func testCloseMicrophoneMutesWithoutUnpublishAndNoOpsWhenNotPublished() async throws {
+        let h = makeEngine()
+
+        // 没发布过：空操作，媒体层一次都不该被碰。
+        await h.engine.closeMicrophone()
+        XCTAssertEqual(h.media.calls(), [], "没发布过就什么都不该碰")
+
+        let ws = try await login(h)
+        try await joinRoom(h, ws)
+        async let opening: Void = h.engine.openMicrophone()
+        let publish = try await waitForFrame(ws, ofType: IMFrameType.roomPublish)
+        ws.receive("""
+        {"type":"room.publish.ok","req_id":"\(publish.reqID)","ts":1,\
+        "data":{"cid":"mic-1","track_id":"t-1"}}
+        """)
+        let offer = try await waitForFrame(ws, ofType: IMFrameType.roomOffer)
+        ws.receive("""
+        {"type":"room.answer","req_id":"\(offer.reqID)","ts":1,\
+        "data":{"pc":"pub","sdp":"v=0 answer"}}
+        """)
+        try await opening
+        try await settle(4)
+
+        // `setMuted` 会等 `room.mute.ok`——跟 `testSetMutedTouchesBothMediaAndSignaling` 同一个
+        // 理由，必须并发地发起再应答，顺序写会白等满请求超时。
+        async let closing: Void = h.engine.closeMicrophone()
+        let mute = try await waitForFrame(ws, ofType: IMFrameType.roomMute)
+        ws.receive("""
+        {"type":"room.mute.ok","req_id":"\(mute.reqID)","ts":1,"data":{}}
+        """)
+        await closing
+        try await settle(2)
+
+        XCTAssertEqual(mute.data["muted"]?.boolValue, true)
+        XCTAssertTrue(h.media.isMuted("mic-1"))
+        XCTAssertNil(ws.frames().first(where: { $0.type == IMFrameType.roomUnpublish }),
+                     "close 不是 unpublish")
+    }
+
+    /// `openCamera` 与 `openMicrophone` 同一个道理：第一次真发布，第二次只取消静音。
+    func testOpenCameraPublishesOnceThenOnlyUnmutes() async throws {
+        let h = makeEngine()
+        let ws = try await login(h)
+        try await joinRoom(h, ws)
+
+        async let opening: Void = h.engine.openCamera()
+        let publish = try await waitForFrame(ws, ofType: IMFrameType.roomPublish)
+        ws.receive("""
+        {"type":"room.publish.ok","req_id":"\(publish.reqID)","ts":1,\
+        "data":{"cid":"cam-1","track_id":"t-1"}}
+        """)
+        let offer = try await waitForFrame(ws, ofType: IMFrameType.roomOffer)
+        ws.receive("""
+        {"type":"room.answer","req_id":"\(offer.reqID)","ts":1,\
+        "data":{"pc":"pub","sdp":"v=0 answer"}}
+        """)
+        try await opening
+        try await settle(4)
+
+        XCTAssertTrue(h.media.calls().contains(where: { $0.hasPrefix("acquireCam") }))
+        let acquireCountBefore = h.media.calls().filter { $0.hasPrefix("acquireCam") }.count
+
+        async let reopening: Void = h.engine.openCamera()
+        let mute = try await waitForFrame(ws, ofType: IMFrameType.roomMute)
+        ws.receive("""
+        {"type":"room.mute.ok","req_id":"\(mute.reqID)","ts":1,"data":{}}
+        """)
+        try await reopening
+        try await settle(2)
+
+        XCTAssertEqual(h.media.calls().filter { $0.hasPrefix("acquireCam") }.count,
+                       acquireCountBefore, "已经发布过就不该再 acquire 一次")
+        XCTAssertTrue(h.media.calls().contains("setMuted(cam-1,false)"))
+    }
+
+    /// `closeCamera` 没发布过是空操作。
+    func testCloseCameraNoOpsWhenNotPublished() async throws {
+        let h = makeEngine()
+        await h.engine.closeCamera()
+        XCTAssertEqual(h.media.calls(), [])
+    }
+
+    /// 通话结束之后，`openMicrophone`/`openCamera` 的「已发布」记账要归零——
+    /// 否则下一通电话会把上一通的 cid 当成还发布着，`setMuted` 一个不存在的 track
+    /// 等于什么都没发生（真机上就是「按钮开着但对端听不见」）。
+    func testMediaSwitchBookkeepingResetsAfterCallEnd() async throws {
+        let h = makeEngine()
+        let ws = try await login(h)
+        try await joinRoom(h, ws)
+
+        async let opening: Void = h.engine.openMicrophone()
+        let publish = try await waitForFrame(ws, ofType: IMFrameType.roomPublish)
+        ws.receive("""
+        {"type":"room.publish.ok","req_id":"\(publish.reqID)","ts":1,\
+        "data":{"cid":"mic-1","track_id":"t-1"}}
+        """)
+        let offer = try await waitForFrame(ws, ofType: IMFrameType.roomOffer)
+        ws.receive("""
+        {"type":"room.answer","req_id":"\(offer.reqID)","ts":1,\
+        "data":{"pc":"pub","sdp":"v=0 answer"}}
+        """)
+        try await opening
+        try await settle(4)
+
+        // 模拟这一场结束（不需要真的走完挂断信令，直接喂 onCallEnd 即可——记账靠的是
+        // 这个事件名，不是通话状态机本身）。
+        h.engine.dispatcher.emit(IMEmittedEvent("onCallEnd", [
+            "call_id": .string("c-1"), "reason": .string("hangup"),
+            "duration_sec": .int(3), "ended_by": .string(""),
+        ]))
+        try await settle(2)
+
+        // 记账归零之后再 open 一次：状态机仍是 joined（这里没走真的挂断信令），
+        // 所以还是要走一遍完整的 publish/offer round trip——断言的是「有没有重新 acquire」，
+        // 不是「这一次网络流程长什么样」。
+        let acquireCountBefore = h.media.calls().filter { $0 == "acquireMic" }.count
+        async let reopening: Void = h.engine.openMicrophone()
+        let republish = try await waitForFrame(ws, ofType: IMFrameType.roomPublish)
+        ws.receive("""
+        {"type":"room.publish.ok","req_id":"\(republish.reqID)","ts":1,\
+        "data":{"cid":"mic-1","track_id":"t-2"}}
+        """)
+        let reoffer = try await waitForFrame(ws, ofType: IMFrameType.roomOffer)
+        ws.receive("""
+        {"type":"room.answer","req_id":"\(reoffer.reqID)","ts":1,\
+        "data":{"pc":"pub","sdp":"v=0 answer"}}
+        """)
+        try await reopening
+        try await settle(2)
+
+        XCTAssertGreaterThan(h.media.calls().filter { $0 == "acquireMic" }.count, acquireCountBefore,
+                             "通话结束后记账要归零，下一次 open 得重新发布")
+    }
+
     // MARK: - 辅助
 
     /*

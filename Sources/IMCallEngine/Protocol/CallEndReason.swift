@@ -6,31 +6,34 @@ import Foundation
  **`call.ended` 是唯一终态帧**，reason 是它唯一说明「为什么结束」的字段。
  宿主只监听 onCallEnd 也必须能完整记录一通电话，靠的就是这张表够全。
  */
+/// - Note: **显式原始值**（2026-09-15，四端命名对齐）：与桌面 C 端的枚举同值。
+///   `@objc enum` 桥到 ObjC/桌面时数值就是契约的一部分，不能靠声明顺序隐式决定——
+///   谁在这中间插一个新 case 到中间，后面所有值就集体错位，四端却各自映射到不同的东西。
 @objc public enum IMCallEndReason: Int, Sendable, CaseIterable {
     /// 已接通成员主动挂断。
-    case hangup
+    case hangup = 0
     /// 主叫接通前取消。
-    case cancel
+    case cancel = 1
     /// 被叫主动拒接。
-    case reject
+    case reject = 2
     /// 振铃超时无人接听。
-    case noAnswer
+    case noAnswer = 3
     /// 被叫正在另一通电话里。
-    case busy
+    case busy = 4
     /// 被叫全部不在线。
-    case offline
+    case offline = 5
     /// 本账号另一台设备接听了。
-    case answeredElsewhere
+    case answeredElsewhere = 6
     /// 本账号另一台设备拒接了。
-    case rejectedElsewhere
+    case rejectedElsewhere = 7
     /// 被主持人移出。
-    case kicked
+    case kicked = 8
     /// 房间被关闭。
-    case roomClosed
+    case roomClosed = 9
     /// 网络中断且恢复窗口内没接回来。
-    case network
+    case network = 10
     /// 兜底：**收到不认识的 reason 一律折成它**，绝不崩。
-    case error
+    case error = 11
 }
 
 extension IMCallEndReason {

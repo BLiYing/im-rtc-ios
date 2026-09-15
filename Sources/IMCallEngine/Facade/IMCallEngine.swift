@@ -23,8 +23,9 @@ import Foundation
         set { dispatcher.delegate = newValue }
     }
 
-    private let url: URL
-    private let deviceID: String
+    // internal 而不是 private：makeConnection 拆到了 IMCallEngine+Connection.swift。
+    let url: URL
+    let deviceID: String
     let media: IMMediaAdapter?
 
     /// internal 而不是 private：媒体回调的接线拆到了 IMCallEngine+MediaEvents.swift。
@@ -47,7 +48,8 @@ import Foundation
     /// 但 login/logout 会——所以它是可变的。
     private var connection: IMSignalConnection?
     /// 握手拿到的自己的 uid。用来挡「呼叫自己」，也供宿主读。
-    private var myUID = ""
+    /// internal 而不是 private：`onConnected` 的接线拆到了 IMCallEngine+Connection.swift。
+    var myUID = ""
 
     /// 连续这么多次 ICE restart 之后仍判 failed，就认为救不回来了（协议 §7.2）。
     private static let pubIceGiveUp = 3
@@ -56,6 +58,18 @@ import Foundation
     private var pubIceGaveUp = false
     /// internal 而不是 private：帧泵拆到了 IMCallEngine+FramePump.swift。
     let stateQueue = DispatchQueue(label: "com.imrtc.engine.facade")
+
+    /// `destroy()` 后置真、永不复原。归 `stateQueue`。见 `IMCallEngine+Lifecycle.swift`。
+    var isDestroyed = false
+
+    /// 引擎里**这个类型的轨道实际发布了没有**——`publish(_:simulcast:)` 按 `info.kind`
+    /// 统一记账，不管这次发布是 `publishMicrophone`/`publishCamera` 直接调的，还是
+    /// `openMicrophone`/`openCamera` 触发的，两条路径认的是同一份状态（不会重复发布）。
+    /// 不跟 Kit 的 `micCID`/`cameraCID` 共享（Kit 是另一个模块，自己那份是给界面用的）。
+    /// 通话结束/离房/房间关闭（init 里挂的内部 observer）与 `logout()` 都会清零。
+    /// 归 `stateQueue`。见 `IMCallEngine+MediaSwitches.swift`。
+    var publishedMicCID: String?
+    var publishedCameraCID: String?
 
     /// internal 而不是 private：`forceEnd` 拆到了 IMCallEngine+ForceEnd.swift。
     var currentConnection: IMSignalConnection? {
@@ -140,6 +154,17 @@ import Foundation
         self.deviceID = deviceID
         self.media = media
         super.init()
+        // 内部记账：一轮媒体到此为止就把 openMicrophone/openCamera 的 cid 记账清零，
+        // 与 IMFrameLoop.apply 里 media?.close() 的判据（leaveCallbacks）同一张表。
+        // 这是 Engine 自己订的 block 观察者，跟宿主挂的那些互不干扰、也不需要 remove
+        // （生命周期跟 dispatcher 一样长）。
+        _ = dispatcher.addObserver { [weak self] event in
+            guard let self, [.callEnd, .roomLeft, .roomClosed].contains(event.name) else { return }
+            self.stateQueue.sync {
+                self.publishedMicCID = nil
+                self.publishedCameraCID = nil
+            }
+        }
     }
 
     /// 初始化（ObjC 也能用的纯信令形态：登录、振铃、成员、静音通知一个都不少）。
@@ -183,6 +208,9 @@ import Foundation
      **重试**也一起挡掉，用户从此再也登不上——比原来的 bug 还糟。
      */
     @objc public func login(_ token: String) async throws {
+        // destroy() 之后是终态：不允许借同一个实例「复活」，逼宿主换一个新的 Engine
+        // （见 IMCallEngine+Lifecycle.swift）。
+        try guardNotDestroyed()
         // **在开 socket 之前拦**：不拦的话服务端回 1004，而它那句「device_id 只允许
         // [A-Za-z0-9_-]」到不了宿主手里——宿主看到的只有一个 bad_params，
         // 界面上就是「登录失败」四个字。安卓真机上为此查了一轮（见 IMDeviceID）。
@@ -219,6 +247,12 @@ import Foundation
         stallProbe.stop()
         old?.close()
         media?.close()
+        // openMicrophone/openCamera 的记账也要跟着归零——不归零的话，logout 又 login
+        // 回来之后头一次 openMicrophone 会把上一段登录期的 cid 当成还发布着（见 destroy()）。
+        stateQueue.sync {
+            publishedMicCID = nil
+            publishedCameraCID = nil
+        }
         stopFramePump()
         await loop.reset()
     }
@@ -490,9 +524,20 @@ import Foundation
             "source": .string(info.source),
             "simulcast": .bool(simulcast),
         ]))
+        // **两条入口共用同一份账**：不管这次发布是 publishMicrophone/publishCamera 自己调的，
+        // 还是 openMicrophone/openCamera 触发的，都要落到这里——否则先 publishMicrophone
+        // 再 openMicrophone 会因为「open 那边不知道已经发布过」而重复发布一路。
+        stateQueue.sync {
+            switch info.kind {
+            case "audio": publishedMicCID = info.cid
+            case "video": publishedCameraCID = info.cid
+            default: break
+            }
+        }
     }
 
-    private func requireMedia() throws -> IMMediaAdapter {
+    func requireMedia() throws -> IMMediaAdapter {
+        try guardNotDestroyed()
         guard let media else {
             throw IMRTCError(.invalidState,
                              "没有媒体适配器：这台 Engine 只做信令，推流/画面需要传入 IMMediaAdapter")
@@ -500,56 +545,14 @@ import Foundation
         return media
     }
 
-    private func makeConnection(token: String,
-                                inlet: AsyncStream<IMLoopWork>.Continuation) -> IMSignalConnection {
-        var options = IMConnectionOptions(url: url, token: token, deviceID: deviceID)
-        if let webSocketFactory { options.webSocketFactory = webSocketFactory }
-        var events = IMConnectionEvents()
-        /*
-         **握手结果一律从这里进状态机**，`login()` 不自己喂一遍。
-
-         只在 login 里喂的话，自动重连那次握手就没人接——状态机不知道自己重连了
-         （`resumed == false` 时房间与通话不归零、`resumed == true` 时攒下的意图
-         不重放），宿主也收不到第二次 didConnect。Web 端实测的症状是：
-         服务端重启后换票重连其实成功了，界面却一直停在「重连中」。
-         */
-        events.onConnected = { [weak self] hello in
-            guard let self else { return }
-            self.stateQueue.sync { self.myUID = hello.uid }
-            inlet.yield(.connected(sessionID: hello.sessionID, resumed: hello.resumed))
+    /// guardNotDestroyed 是 `login` / `requireMedia`（覆盖 publishMicrophone / publishCamera /
+    /// startLocalPreview / probeMicrophone / openMicrophone / openCamera）共用的门。
+    /// **internal 而不是 private**：`IMCallEngine+Lifecycle.swift` 也要用。
+    func guardNotDestroyed() throws {
+        guard !(stateQueue.sync { isDestroyed }) else {
+            throw IMRTCError(.invalidState, "Engine 已 destroy()：不能再使用，需要重新创建实例")
         }
-        // **进泵，不要各自开 Task**：顺序就是在这里保住的（见 frameInlet）。
-        events.onEvent = { type, data in
-            inlet.yield(.frame(type, data))
-        }
-        events.onDisconnected = { [weak self] code, willReconnect in
-            guard let self else { return }
-            inlet.yield(.disconnected)
-            // 关闭码只有连接层知道，所以这一条由它独占上报（见 IMFrameLoop.dispatch）。
-            self.dispatcher.emitConnectionEvent(.disconnected, [
-                "code": NSNumber(value: code), "will_reconnect": NSNumber(value: willReconnect),
-            ])
-        }
-        events.onKickedOut = { [weak self] reason in
-            guard let self else { return }
-            // 状态机只认「被踢了」这一件事，走泵（与帧同一个顺序）；
-            // **原因是给宿主做处置判断的，由连接层独占上报**——`.takenOver` 要回登录页、
-            // `.authExpired` 是换票重来，处置相反，而状态机不可能知道是哪一种。
-            inlet.yield(.kickedOut)
-            self.dispatcher.emitKickedOut(reason)
-        }
-        events.onSessionUnrecoverable = {
-            inlet.yield(.sessionUnrecoverable)
-        }
-        events.onTokenWillExpire = { [weak self] expiresAtMS in
-            self?.dispatcher.emitTokenWillExpire(expiresAtMS)
-        }
-        events.onError = { [weak self] error in
-            self?.dispatcher.emit(IMEmittedEvent("onError", [
-                "code": .int(Int64(error.code.rawValue)),
-                "name": .string(error.code.name),
-            ]))
-        }
-        return IMSignalConnection(options: options, events: events)
     }
+
+    // makeConnection 拆到了 IMCallEngine+Connection.swift（体量红线，CONVENTIONS §2）。
 }

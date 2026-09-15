@@ -97,12 +97,21 @@ import Foundation
                                    roomID: String, mediaType: String, isGroup: Bool, role: String,
                                    caller: String, chatGroupID: String, userData: String)
 
-    /// 通话结束。**所有结束分支的唯一出口**（不变量 I6）。
-    ///
-    /// `durationSec` 由服务端给，客户端不自己算（不变量 I8）；唯一的例外是
-    /// 重连恢复失败时本地合成的那一条 `network`。
+    /**
+     通话结束。**所有结束分支的唯一出口**（不变量 I6）。
+
+     `durationSec` 由服务端给，客户端不自己算（不变量 I8）；唯一的例外是
+     重连恢复失败时本地合成的那一条 `network`。
+
+     - Note: **`reason` 类型 2026-09-15 从 `String` 改成 `IMCallEndReason`**（四端命名对齐）——
+       线路上仍是 snake_case 字符串，只是到宿主手里之前由 `IMEventDispatcher` 折成强类型；
+       不认识的线路值一律折成 `.error`（`IMCallEndReason.from(wire:)`），绝不把裸字符串
+       透传给宿主。`addEventObserver` 拿到的 `IMCallEvent.payload["reason"]` 不受影响，
+       仍是原始字符串。**这条是 `@objc optional`**：旧实现（`reason: String`）不会编译报错，
+       只会静默收不到——本仓所有实现方都要改到（Kit / Demo / 测试），改完 grep 一遍确认没有残留。
+     */
     @objc optional func callEngine(_ engine: IMCallEngine, callDidEnd callID: String,
-                                   reason: String, durationSec: Int, endedBy: String)
+                                   reason: IMCallEndReason, durationSec: Int, endedBy: String)
 
     /// 主叫取消了呼叫。**便利事件，只在 1v1 抛**，随后必有 `callDidEnd`（不变量 I7）。
     @objc optional func callEngine(_ engine: IMCallEngine, callWasCancelledBy uid: String)
@@ -152,16 +161,28 @@ import Foundation
 
     // MARK: - 媒体与质量
 
-    /// 主讲人变化。服务端判定并节流（300ms）。
-    ///
-    /// **这是全量快照不是增量**：不在名单里的人要被清成「没在说话」，
-    /// 只加不减的话高亮会一直亮着不灭。数组元素形如 `["uid": ..., "volume": 0~100]`。
-    @objc optional func callEngine(_ engine: IMCallEngine,
-                                   activeSpeakersDidChange speakers: [[String: Any]])
+    /**
+     主讲人变化。服务端判定并节流（300ms）。
 
-    /// 各方网络质量。服务端节流 2s。元素形如 `["uid": ..., "level": 0~6]`，0 = 未知。
+     **这是全量快照不是增量**：不在名单里的人要被清成「没在说话」，
+     只加不减的话高亮会一直亮着不灭。
+
+     - Note: 元素类型 2026-09-15 从 `[String: Any]` 改成强类型 `IMSpeaker`（四端命名对齐）——
+       ObjC 宿主原先要自己 `NSDictionary` 取键，拼错键名编译期看不出来。
+       **这条是 `@objc optional`**：旧实现（`[[String: Any]]`）不会编译报错，只会静默收不到。
+     */
     @objc optional func callEngine(_ engine: IMCallEngine,
-                                   networkQualityDidChange entries: [[String: Any]])
+                                   activeSpeakersDidChange speakers: [IMSpeaker])
+
+    /**
+     各方网络质量。服务端节流 2s。`level` 0~6，0 = 未知。
+
+     - Note: 元素类型 2026-09-15 从 `[String: Any]` 改成强类型 `IMNetworkQuality`，
+       与 `activeSpeakersDidChange` 同一条道理、同一个陷阱：**`@objc optional`**，
+       旧实现（`[[String: Any]]`）不会编译报错，只会静默收不到。
+     */
+    @objc optional func callEngine(_ engine: IMCallEngine,
+                                   networkQualityDidChange entries: [IMNetworkQuality])
 
     /// 某人的**第一帧画面真的到了**，UI 用它撤 loading。
     ///
