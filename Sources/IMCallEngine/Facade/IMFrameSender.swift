@@ -34,13 +34,7 @@ actor IMFrameSender {
      */
     func send(_ connection: IMSignalConnection,
               _ frame: IMOutgoingFrame) async throws -> IMRequestResult? {
-        guard let fields = IMFrameRegistry.fields(for: frame.type) else { return nil }
-
-        // **从全默认值起手再覆盖**，不是直接发状态机给的那几个键——
-        // 少一个 `auto_subscribe` 就等于把默认的 true 写成 false，
-        // 人进了房收不到任何流（§2.4 的发送侧默认值陷阱，三端都踩过）。
-        var data = FieldCodec.defaults(fields)
-        for (key, value) in frame.data { data[key] = value }
+        guard var data = Self.wireData(frame) else { return nil }
 
         let pc = frame.data["pc"]?.stringValue ?? ""
         if frame.type == IMFrameType.roomOffer, pc == IMPCRole.pub.wireValue {
@@ -49,6 +43,19 @@ actor IMFrameSender {
             data["sdp"] = .string(try await requireMedia().answerSubOffer(lastSubOfferSDP))
         }
         return try await connection.request(frame.type, data: data)
+    }
+
+    /// wireData 把状态机给的帧补成线路上的 data；未登记的帧返回 nil。
+    ///
+    /// **从全默认值起手再覆盖**，不是直接发状态机给的那几个键——
+    /// 少一个 `auto_subscribe` 就等于把默认的 true 写成 false，
+    /// 人进了房收不到任何流（§2.4 的发送侧默认值陷阱，三端都踩过）。
+    /// `IMCallEngine.forceEnd()` 绕开本 actor 直接发帧时也走这里，同一条规矩只写一处。
+    static func wireData(_ frame: IMOutgoingFrame) -> [String: IMJSON]? {
+        guard let fields = IMFrameRegistry.fields(for: frame.type) else { return nil }
+        var data = FieldCodec.defaults(fields)
+        for (key, value) in frame.data { data[key] = value }
+        return data
     }
 
     /// sendCandidate 发一个本端候选。

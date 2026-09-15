@@ -437,6 +437,49 @@ final class SignalingTests: XCTestCase {
         XCTAssertEqual(reasons.all, [], "一次正常的 logout 被报成了服务端拒绝")
     }
 
+    /// fire：**立刻发、应答配对后丢掉**。应答要是漏进事件流，门面会把 `.ok` 当事件喂给状态机。
+    func testFireSendsNowAndSwallowsTheReply() async throws {
+        final class Seen: @unchecked Sendable {
+            private let lock = NSLock()
+            private var types: [String] = []
+            func add(_ type: String) { lock.lock(); types.append(type); lock.unlock() }
+            var all: [String] { lock.lock(); defer { lock.unlock() }; return types }
+        }
+        let seen = Seen()
+        var events = IMConnectionEvents()
+        events.onEvent = { type, _ in seen.add(type) }
+        let (connection, box) = makeConnection(events: events)
+        let ws = try await handshake(connection, box)
+
+        connection.fire(IMFrameType.callHangup, data: ["call_id": .string("c-1")])
+        let sent = try await waitForFrame(ws, ofType: IMFrameType.callHangup)
+        XCTAssertEqual(sent.data["call_id"]?.stringValue, "c-1")
+        XCTAssertFalse(sent.reqID.isEmpty, "请求帧必须带 req_id，服务端才回得了应答")
+
+        ws.receive("""
+        {"type":"call.hangup.ok","req_id":"\(sent.reqID)","ts":1,"data":{}}
+        """)
+        try await Task.sleep(nanoseconds: 50_000_000)
+        XCTAssertFalse(seen.all.contains("call.hangup.ok"), "应答不许漏进事件流")
+    }
+
+    /// 还没连上时 fire 一帧都不发（握手之前发业务帧会被服务端当成协议错误）。
+    func testFireBeforeConnectedSendsNothing() async throws {
+        let (connection, box) = makeConnection()
+        async let hello = connection.connect()
+        let ws = try await waitForSocket(box)
+
+        connection.fire(IMFrameType.callHangup, data: ["call_id": .string("c-1")])
+        try await Task.sleep(nanoseconds: 50_000_000)
+        XCTAssertTrue(ws.frames().isEmpty)
+
+        ws.open()
+        let frame = try await waitForFrame(ws, ofType: IMFrameType.hello)
+        ws.receive(helloOKFrame(reqID: frame.reqID))
+        _ = try await hello
+        XCTAssertFalse(ws.frames().contains { $0.type == IMFrameType.callHangup })
+    }
+
     // MARK: - 辅助
     /// reconnectThenFailHello 走一遍「连上 → 服务端断开 → 重连那次的握手被错误回掉」。
     ///

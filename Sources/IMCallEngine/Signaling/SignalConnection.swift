@@ -263,6 +263,23 @@ public final class IMSignalConnection {
         }
     }
 
+    /// fire 发一个请求但**不等应答**：应答照常按 req_id 配对后丢掉，不会漏进事件流。
+    ///
+    /// 只给 `IMCallEngine.forceEnd()` 用。它要能从任何线程同步调用、立刻上线路——
+    /// 走 `request` 得先在 Swift 并发里排上号，2026-09-13 那次挂断没发出去，卡的正是那一段。
+    public func fire(_ type: String, data: [String: IMJSON]) {
+        queue.async {
+            guard self.state == .connected else {
+                IMRTCLog.warn("帧没发出去：连接不可用", ["type": type, "state": self.state.rawValue])
+                return
+            }
+            self.dispatchRequest(type, data: data) { result in
+                guard case let .failure(error) = result else { return }
+                IMRTCLog.info("不等应答的请求失败了", ["type": type, "code": String(error.code.rawValue)])
+            }
+        }
+    }
+
     // MARK: - 内部（全部在 queue 上）
 
     private func startConnect(_ continuation: CheckedContinuation<IMHelloOK, Error>) {

@@ -17,7 +17,7 @@ extension IMCallMachine {
                            _ data: [String: IMJSON]) -> IMMachineOutput<IMCallContext> {
         if isForAnotherCall(ctx, data) { return handleForeignCall(ctx, type, data) }
         if type == IMFrameType.callEnded { return handleEnded(ctx, data) }
-        if ctx.state == .idle && type != IMFrameType.callIncoming { return out(ctx) }
+        if ctx.state == .idle && type != IMFrameType.callIncoming { return handleLateFrame(ctx, type, data) }
 
         switch type {
         case IMFrameType.callIncoming:
@@ -92,6 +92,32 @@ extension IMCallMachine {
             "caller": .string(Wire.string(data, "caller")),
             "reason": .string(Wire.string(data, "reason")),
         ])])
+    }
+
+    /**
+     handleLateFrame：idle 下迟到的帧**照旧丢弃**（优先级规则 2），只有两条例外——
+     它们说明服务端那边**还有一通挂着本端的电话**，而本地早就收场了
+     （红键强制收场时请求还在路上，或请求超时回滚之后应答才到）：
+
+     - `call.invite.ok`：邀请在服务端落地了，被叫正在响铃。补发 `call.cancel`，
+       否则被叫一直响到超时，而主叫这边一个界面都没有。
+     - `call.connected`：有人已经接起来了（cancel 来不及，或本端是被叫、accept 已落地）。
+       补发 `call.hangup`，否则服务端一直把本端当成在通话里。
+
+     本地状态不动、不抛回调。补发的帧被拒（比如通话已经结束）只换回一条 onError，无害。
+    */
+    private static func handleLateFrame(_ ctx: IMCallContext, _ type: String,
+                                        _ data: [String: IMJSON]) -> IMMachineOutput<IMCallContext> {
+        let callID = Wire.string(data, "call_id")
+        guard !callID.isEmpty else { return out(ctx) }
+        switch type {
+        case IMEnvelope.okType(IMFrameType.callInvite):
+            return out(ctx, send: [IMOutgoingFrame(IMFrameType.callCancel, ["call_id": .string(callID)])])
+        case IMFrameType.callConnected:
+            return out(ctx, send: [IMOutgoingFrame(IMFrameType.callHangup, ["call_id": .string(callID)])])
+        default:
+            return out(ctx)
+        }
     }
 
     private static func handleIncoming(_ ctx: IMCallContext,

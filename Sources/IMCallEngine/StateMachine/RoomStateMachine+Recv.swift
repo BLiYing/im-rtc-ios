@@ -7,6 +7,7 @@ import Foundation
 extension IMRoomMachine {
     static func reduceRecv(_ ctx: IMRoomContext, _ type: String,
                            _ data: [String: IMJSON]) -> IMMachineOutput<IMRoomContext> {
+        if ctx.state == .idle { return handleLateFrame(ctx, type, data) }
         switch type {
         case IMEnvelope.okType(IMFrameType.roomJoin):
             return handleJoinOK(ctx, data)
@@ -73,6 +74,23 @@ extension IMRoomMachine {
             // 其余的 .ok（subscribe / update_layer / mute）不改状态也不抛回调。
             return out(ctx)
         }
+    }
+
+    /**
+     handleLateFrame：**idle 下迟到的房间帧一律丢弃**，与通话机的第 2 条规则同一个道理——
+     本地已经不在房里，这些帧说的是一个本端不再关心的房间。
+
+     唯一例外是 `room.join.ok`：它说明**服务端已经把我们放进房了**，而本地早就收场了
+     （强制收场时还卡在路上的那条 join，或 join 超时回滚之后才回来的应答）。
+     认领它会把一个没人要的房间捡回来；不理它，服务端就一直挂着这个人——服务端只验房票、
+     不查通话成员。所以补发一条 `room.leave`，本地状态不动。那条 leave 的 `.ok` 回来时
+     同样落在这里被丢掉，不会多抛一次 onRoomLeft。
+    */
+    private static func handleLateFrame(_ ctx: IMRoomContext, _ type: String,
+                                        _ data: [String: IMJSON]) -> IMMachineOutput<IMRoomContext> {
+        let roomID = Wire.string(data, "room_id")
+        guard type == IMEnvelope.okType(IMFrameType.roomJoin), !roomID.isEmpty else { return out(ctx) }
+        return out(ctx, send: [IMOutgoingFrame(IMFrameType.roomLeave, ["room_id": .string(roomID)])])
     }
 
     /// handleJoinOK 用快照把房间一次性搭起来：先成员，再他们的 Track。

@@ -126,6 +126,16 @@ final class ConnectLifecycleTests: XCTestCase {
         ws.receive(helloOKFrame(reqID: hello.reqID))
         try await done
 
+        // 先进房：**不在房里时迟到的房间帧会被房间机丢掉**（见 `IMRoomMachine.handleLateFrame`），
+        // 这条用例守的是帧泵的顺序，不是房间语义。
+        async let joining: Void = engine.joinRoom("r-1", roomToken: "rt-1")
+        let join = try await waitForFrame(ws, ofType: IMFrameType.roomJoin)
+        ws.receive("""
+        {"type":"room.join.ok","req_id":"\(join.reqID)","ts":1,"data":{\
+        "room_id":"r-1","participant_id":"r-1-p1","participants":[],"tracks":[]}}
+        """)
+        await joining
+
         let uids = (0..<60).map { "u-\($0)" }
         for uid in uids {
             ws.receive("""

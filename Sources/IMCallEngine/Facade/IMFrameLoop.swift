@@ -28,10 +28,17 @@ actor IMFrameLoop {
         self.connection = connection
     }
 
+    /// 状态的只读镜像，给进不了 actor 的 `IMCallEngine.forceEnd()` 同步读（见 `IMContextMirror`）。
+    nonisolated let mirror = IMContextMirror()
+
     /// reset 把状态机归零（logout 用）。
     func reset() {
         ctx = IMEngineContext()
+        mirror.set(ctx)
     }
+
+    /// ping 什么都不做：卡顿探针拿它量「帧循环 actor 此刻排不排得上号」（见 `IMStallProbe`）。
+    func ping() {}
 
     /**
      handleIncoming 是**所有下行帧的唯一入口**——事件与应答都走它。
@@ -53,7 +60,23 @@ actor IMFrameLoop {
         pubOffer.reset()
     }
 
+    /// 交给媒体层之前要先看房间还在不在的那几帧。见 `handleIncoming` 开头。
+    private static let mediaFrames: Set<String> = [
+        IMFrameType.roomICECandidate, IMFrameType.roomOffer, IMFrameType.roomAnswer,
+    ]
+
     func handleIncoming(_ type: String, _ data: [String: IMJSON]) async {
+        /*
+         **房间已经不在了，迟到的媒体帧不许把 PeerConnection 重新建起来。**
+
+         媒体层的 `ensurePeers()` 见不到现成的 PC 就现造一对——强制收场、通话结束之后
+         才到的候选或 SDP 要是照常交下去，就会在一个没人要的房间上凭空长出两条 PC，
+         一直挂到下一次关媒体。状态机那一侧由 `IMRoomMachine` 的 idle 分支丢弃。
+        */
+        if ctx.room.state == .idle, Self.mediaFrames.contains(type) {
+            IMRTCLog.debug("房间已不在，丢弃迟到的媒体帧", ["type": type])
+            return
+        }
         if type == IMFrameType.roomICECandidate {
             await addRemoteCandidate(data)
             return
@@ -87,7 +110,37 @@ actor IMFrameLoop {
     /// dispatch 把一个输入喂进状态机，然后抛事件、发帧。
     func dispatch(_ input: IMMachineInput) async {
         let result = IMEngineMachine.reduce(ctx, input)
+        logLocalReject(input, result.emit)
+        await apply(result)
+    }
+
+    /**
+     forceEnd 在本地收掉门面那边已经发过结束帧的那一场（`IMCallEngine.forceEnd()`）。
+
+     **只收门面看到的那一场**：门面读的是镜像，可能比这里晚一拍。这一拍里那通电话要是已经
+     正常结束、甚至又来了一通新的，照着现在的状态收场就会把新来的那通一声不响地吞掉。
+     所以先比对 call_id 与 room_id，对不上就什么都不做。
+
+     结束帧**一般不在这里再发一遍**：门面已经直接交给信令连接了。唯一的例外是拨出中——
+     门面读镜像那一刻 `call.invite.ok` 还没回来、手里没有 call_id，什么都没发出去；
+     这一拍里它回来了（还在 inviting、call_id 已经有了），那就是同一场，cancel 由这里补上。
+     再晚一点回来的（本地已经 idle）由通话机的 idle 分支补（`IMCallMachine.handleLateFrame`）。
+     */
+    func forceEnd(callID: String, roomID: String) async {
+        let inviteLanded = callID.isEmpty && ctx.call.state == .inviting && !ctx.call.callID.isEmpty
+        guard inviteLanded || (ctx.call.callID == callID && ctx.room.roomID == roomID) else {
+            IMRTCLog.info("强制收场落地时那一场已经不在了，跳过本地收场",
+                          ["call_id": callID, "room_id": roomID])
+            return
+        }
+        let ended = IMEngineMachine.forceEnd(ctx)
+        await apply(IMMachineOutput(ended.state, send: inviteLanded ? ended.send : [], emit: ended.emit))
+    }
+
+    /// apply 把一次推进的结果落地：记状态、同步媒体层、抛事件、发帧。
+    private func apply(_ result: IMMachineOutput<IMEngineContext>) async {
         ctx = result.state
+        mirror.set(ctx)
 
         // 每推进一步就把「哪条轨道是谁的」同步给媒体层。**轨道与归属谁先到都可能**，
         // 所以这一步不能只在 track_published 那一支上做（Web 端同一处：`frameLoop.ts`）。
@@ -112,7 +165,6 @@ actor IMFrameLoop {
          于是宿主看到的是 **roomJoined / userEnter 排在 callBegin 前面**——
          它还没被告知有这通电话，就先收到了这通电话房间里的事件。
          */
-        logLocalReject(input, result.emit)
         for event in result.emit {
             /*
              **`onDisconnected` 由连接层独占**，状态机那一份不外发。
@@ -165,17 +217,36 @@ actor IMFrameLoop {
             IMRTCLog.debug("pub 协商进行中，offer 排队", [:])
             return
         }
+        let startedNS = DispatchTime.now().uptimeNanoseconds
         do {
-            guard let reply = try await sender.send(connection, frame) else { return }
+            let reply = try await sender.send(connection, frame)
+            Self.noteSlowRequest(frame.type, sinceNS: startedNS, failed: false)
+            guard let reply else { return }
             // **应答也要喂回状态机**：join.ok / publish.ok 都是状态推进的关键一步。
             await handleIncoming(reply.envelope.type, reply.data)
         } catch {
+            Self.noteSlowRequest(frame.type, sinceNS: startedNS, failed: true)
             // **失败也要放闸**（见 IMPubOfferGate）：这一轮的 answer 不会来了。
             if isPubOffer { pubOffer.abort() }
             // 请求失败不该中断整个事件流：转成 error 事件交给宿主。
             emitError(error)
             await rollback(frame.type)
         }
+    }
+
+    /// 请求往返超过这么久记一条。正常是几十毫秒。
+    private static let slowRequestMS: UInt64 = 2_000
+
+    /**
+     noteSlowRequest 记下「这一帧从交给 sender 到拿回应答」慢得不正常的那几次。
+
+     2026-09-13 14:53 frank 的 room.join 从状态机产出到服务端收到隔了 28.6 秒，而本端一个字都没留下。
+     有了这一条，拿它的 `elapsed_ms` 对服务端的受理时刻，就分得清慢在本端发出之前还是服务端那边。
+     */
+    private static func noteSlowRequest(_ type: String, sinceNS: UInt64, failed: Bool) {
+        let elapsedMS = (DispatchTime.now().uptimeNanoseconds - sinceNS) / 1_000_000
+        guard elapsedMS >= slowRequestMS else { return }
+        IMRTCLog.warn("请求往返慢", ["type": type, "elapsed_ms": String(elapsedMS), "failed": String(failed)])
     }
 
     /// rollback 把「这一帧没送到」翻译成状态机能收场的内部事件。

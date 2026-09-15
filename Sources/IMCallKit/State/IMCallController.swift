@@ -208,6 +208,8 @@ public final class IMCallController: NSObject {
      */
     public func end() {
         let action = imEndAction(for: state)
+        // **按下红键要留一条**：2026-09-13 14:54 那次到底按没按、按的时候在哪个阶段，事后只能靠猜。
+        IMRTCLog.info("[Kit] 按下红键", ["action": action.rawValue, "phase": String(describing: state.phase)])
         armEndWatchdog(reason: imEndWatchdogReason(for: action))
         Task {
             switch action {
@@ -243,6 +245,13 @@ public final class IMCallController: NSObject {
             IMRTCLog.warn("[Kit] 红按钮本地收场：没等到结束事件",
                           ["phase": String(describing: self.state.phase)])
             self.apply(.callEnd(reason: reason, durationSec: 0))
+            /*
+             **界面收了，Engine 也要收。** 只收界面的话，结束帧没发出去时 Engine 还留在通话与房间里：
+             服务端照样当他在场，别人一直看得见他，摄像头麦克风也还开着
+             （2026-09-13 14:54 frank，直到 14:58 整通结束才被带走）。
+             `forceEnd` 不走帧循环，直接把结束帧交给信令连接，并在本地收场。
+            */
+            self.engine.forceEnd()
         }
         endWatchdog = timer
         timer.resume()

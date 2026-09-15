@@ -426,6 +426,8 @@ final class FacadeTests: XCTestCase {
     func testRemoteCandidateReachesMedia() async throws {
         let h = makeEngine()
         let ws = try await login(h)
+        // 候选只属于某个房间：**不在房里时迟到的候选会被丢掉**（见下一条用例），所以先进房。
+        try await joinRoom(h, ws)
 
         ws.receive("""
         {"type":"room.ice_candidate","req_id":"","ts":1,"data":{\
@@ -435,6 +437,100 @@ final class FacadeTests: XCTestCase {
         try await settle()
 
         XCTAssertTrue(h.media.calls().contains { $0.hasPrefix("addRemoteCandidate(sub,") })
+    }
+
+    /**
+     红键看门狗到点 → `forceEnd()`。复现 2026-09-13 14:53 frank 那一刻的形状：
+     `call.connected` 到了、`room.join` 发出去还没回，这时强制收场。
+
+     三件事：结束帧**不等 join 回来**就上线路；本地收场只抛一次 onCallEnd；
+     迟到的 join.ok 不认领、补发 room.leave，迟到的候选不把 PC 建回来。
+     */
+    func testForceEndHangsUpWhileJoinIsInFlight() async throws {
+        let h = makeEngine()
+        let ws = try await login(h)
+        ws.receive("""
+        {"type":"call.incoming","req_id":"","ts":1,"data":{\
+        "call_id":"c-1","room_id":"r-1","caller":"bob","callee_ids":["alice"],\
+        "media_type":"video","is_group":true,"timeout_sec":30,"invited_at_ms":1,"user_data":""}}
+        """)
+        try await settle(4)
+
+        async let accepting: Void = h.engine.accept()
+        let accept = try await waitForFrame(ws, ofType: IMFrameType.callAccept)
+        ws.receive("""
+        {"type":"call.accept.ok","req_id":"\(accept.reqID)","ts":1,"data":{}}
+        """)
+        await accepting
+        ws.receive("""
+        {"type":"call.connected","req_id":"","ts":1,"data":{\
+        "call_id":"c-1","room_id":"r-1","room_token":"rt-1","media_type":"video",\
+        "is_group":true,"connected_at_ms":1,"accepted_by":"alice"}}
+        """)
+        let join = try await waitForFrame(ws, ofType: IMFrameType.roomJoin) // 故意不回
+
+        h.engine.forceEnd()
+
+        let hangup = try await waitForFrame(ws, ofType: IMFrameType.callHangup)
+        XCTAssertEqual(hangup.data["call_id"]?.stringValue, "c-1")
+        try await settle()
+        XCTAssertEqual(h.events.count(.callEnd), 1)
+        XCTAssertEqual(h.events.first(.callEnd)?.payload["reason"] as? String, "hangup")
+        XCTAssertTrue(h.media.calls().contains("close"), "摄像头、麦克风要跟着关")
+
+        // 服务端随后的 call.ended、迟到的 join.ok、迟到的候选，一个都不能把这一场捡回来。
+        ws.receive("""
+        {"type":"call.ended","req_id":"","ts":1,"data":{"call_id":"c-1","room_id":"r-1",\
+        "reason":"hangup","duration_sec":3,"ended_by":"alice"}}
+        """)
+        ws.receive("""
+        {"type":"room.join.ok","req_id":"\(join.reqID)","ts":1,"data":{\
+        "room_id":"r-1","participant_id":"r-1-p6","participants":[],"tracks":[]}}
+        """)
+        let leave = try await waitForFrame(ws, ofType: IMFrameType.roomLeave)
+        XCTAssertEqual(leave.data["room_id"]?.stringValue, "r-1", "服务端已经放他进房了，得退出来")
+        ws.receive("""
+        {"type":"room.leave.ok","req_id":"\(leave.reqID)","ts":1,"data":{}}
+        """)
+        ws.receive("""
+        {"type":"room.ice_candidate","req_id":"","ts":1,"data":{\
+        "pc":"sub","candidate":"candidate:1 1 udp 1 127.0.0.1 7881 typ host",\
+        "sdp_mid":"0","sdp_mline_index":0}}
+        """)
+        try await settle()
+
+        XCTAssertEqual(h.events.count(.callEnd), 1, "服务端那条 call.ended 不能再抛一次")
+        XCTAssertEqual(h.events.count(.roomJoined), 0)
+        XCTAssertEqual(h.events.count(.roomLeft), 0, "补发的 leave 是善后，不是宿主要知道的离房")
+        XCTAssertFalse(h.media.calls().contains { $0.hasPrefix("addRemoteCandidate") })
+    }
+
+    /// 拨出后 `call.invite.ok` 还没回来就强制收场：本地立刻收掉；invite.ok 回来时补发 cancel，
+    /// 被叫才不会一直响到超时。
+    func testForceEndWhileInviteInFlightCancelsOnceTheInviteLands() async throws {
+        let h = makeEngine()
+        let ws = try await login(h)
+
+        async let calling: Void = h.engine.call(["bob"], mediaType: "audio")
+        let invite = try await waitForFrame(ws, ofType: IMFrameType.callInvite) // 故意不回
+
+        h.engine.forceEnd()
+        try await settle()
+        XCTAssertEqual(h.events.count(.callEnd), 1)
+        XCTAssertEqual(h.events.first(.callEnd)?.payload["reason"] as? String, "cancel")
+        XCTAssertFalse(ws.frames().contains { $0.type == IMFrameType.callCancel }, "没有 call_id，此刻发不了")
+
+        ws.receive("""
+        {"type":"call.invite.ok","req_id":"\(invite.reqID)","ts":1,"data":{"call_id":"c-9","room_id":"r-9"}}
+        """)
+        let cancel = try await waitForFrame(ws, ofType: IMFrameType.callCancel)
+        XCTAssertEqual(cancel.data["call_id"]?.stringValue, "c-9")
+        ws.receive("""
+        {"type":"call.cancel.ok","req_id":"\(cancel.reqID)","ts":1,"data":{}}
+        """)
+        await calling
+        try await settle()
+        XCTAssertEqual(h.events.count(.callEnd), 1, "补发 cancel 是善后，不能再抛一次结束")
     }
 
     /// 空候选表示收集结束，**协议要求容忍**（§3.3）——不能当成一个坏候选去报错。

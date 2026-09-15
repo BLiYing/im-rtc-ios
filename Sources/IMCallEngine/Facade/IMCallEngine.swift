@@ -27,11 +27,21 @@ import Foundation
     private let deviceID: String
     let media: IMMediaAdapter?
 
-    private lazy var dispatcher = IMEventDispatcher(engine: self)
+    /// internal 而不是 private：媒体回调的接线拆到了 IMCallEngine+MediaEvents.swift。
+    lazy var dispatcher = IMEventDispatcher(engine: self)
     private lazy var sender = IMFrameSender(media: media)
     lazy var loop = IMFrameLoop(
         sender: sender, dispatcher: dispatcher, media: media,
         connection: { [weak self] in self?.currentConnection })
+    /// 卡顿探针：登录期间盯着主线程、Swift 并发线程池、帧循环三条通道（见 `IMStallProbe`）。
+    private lazy var stallProbe: IMStallProbe = {
+        let loop = self.loop
+        return IMStallProbe(lanes: [
+            .init(name: "main") { done in DispatchQueue.main.async { done() } },
+            .init(name: "concurrency_pool") { done in Task.detached { done() } },
+            .init(name: "frame_loop") { done in Task.detached { await loop.ping(); done() } },
+        ])
+    }()
 
     /// connection 归 `stateQueue`。重连不会换 `IMSignalConnection` 对象，
     /// 但 login/logout 会——所以它是可变的。
@@ -47,7 +57,8 @@ import Foundation
     /// internal 而不是 private：帧泵拆到了 IMCallEngine+FramePump.swift。
     let stateQueue = DispatchQueue(label: "com.imrtc.engine.facade")
 
-    private var currentConnection: IMSignalConnection? {
+    /// internal 而不是 private：`forceEnd` 拆到了 IMCallEngine+ForceEnd.swift。
+    var currentConnection: IMSignalConnection? {
         stateQueue.sync { connection }
     }
 
@@ -57,7 +68,7 @@ import Foundation
      判定与记账在同一次 `sync` 里完成，否则两条信令线程能各自读到 2 再各自加到 3，
      宿主收到两条 2006。
      */
-    private func notePubIceFailure() -> Bool {
+    func notePubIceFailure() -> Bool {
         stateQueue.sync {
             pubIceRestarts += 1
             guard pubIceRestarts >= Self.pubIceGiveUp, !pubIceGaveUp else { return false }
@@ -67,7 +78,7 @@ import Foundation
     }
 
     /// resetPubIceGiveUp 在 pub 通了之后清零——那是新一轮，不该拿旧账凑数。
-    private func resetPubIceGiveUp() {
+    func resetPubIceGiveUp() {
         stateQueue.sync {
             pubIceRestarts = 0
             pubIceGaveUp = false
@@ -75,7 +86,7 @@ import Foundation
     }
 
     /// emitLocalError 抛一条**本地**错误码（协议 §7.2，永不出现在线路上）。
-    private func emitLocalError(_ code: IMErrorCode) {
+    func emitLocalError(_ code: IMErrorCode) {
         dispatcher.emit(IMEmittedEvent("onError", [
             "code": .int(Int64(code.rawValue)),
             "name": .string(code.name),
@@ -195,6 +206,7 @@ import Foundation
             }
             throw error
         }
+        stallProbe.start()
     }
 
     /// logout 关掉连接与媒体，并把状态机归零。
@@ -204,6 +216,7 @@ import Foundation
             connection = nil
             return previous
         }
+        stallProbe.stop()
         old?.close()
         media?.close()
         stopFramePump()
@@ -538,61 +551,5 @@ import Foundation
             ]))
         }
         return IMSignalConnection(options: options, events: events)
-    }
-
-    private func mediaEvents() -> IMMediaAdapterEvents {
-        var events = IMMediaAdapterEvents()
-        events.onLocalCandidate = { [weak self] pc, candidate in
-            guard let self else { return }
-            Task { await self.loop.sendCandidate(pc, candidate) }
-        }
-        events.onConnectionStateChange = { [weak self] pc, state in
-            guard let self else { return }
-            IMRTCLog.debug("PC 状态", ["pc": pc.wireValue, "state": state])
-            /*
-             **ICE 失败不是终点，是该重连的信号。**
-
-             `pub` 那条的 offerer 是本端，只能自己救；`sub` 那条由服务端救（协议 §3.3）。
-             不救的后果：网抖一下（换 Wi-Fi、进电梯、锁屏久了）人就**永久掉出这通通话**，
-             对端格子从此是一块黑，而界面上一切正常、谁也不挂断。
-             真机上抓到过两条 PC 从某一刻起五分钟一轮地失败，再没回到 connected。
-             重启失败还会再进 failed，于是天然形成一个重试节奏。
-
-             **但重试节奏不能没有尽头**（协议 §7.2）：一律自愈、永不上报的话，宿主从头到尾
-             收不到任何信号——上面那段现象会一直挂着，而界面上什么都不会变。
-             连续 pubIceGiveUp 次重启后仍判 failed，抛一次 2006；之后继续重试但不再重复抛。
-            */
-            if pc == .pub, state == "connected" {
-                self.resetPubIceGiveUp()
-            }
-            if pc == .pub, state == "failed" {
-                IMRTCLog.info("上行通路失败，重启 ICE", [:])
-                if self.notePubIceFailure() {
-                    IMRTCLog.warn("上行通路连续重启仍失败，上报宿主", [:])
-                    self.emitLocalError(.mediaNegotiationFailed)
-                }
-                self.media?.restartPubICE()
-                Task { await self.loop.dispatch(.act(op: "restart_pub_ice")) }
-                return
-            }
-            if pc == .sub, state == "failed" {
-                // sub 那条我们救不了（offerer 是服务端，§3.3），只能立即报给宿主。
-                IMRTCLog.warn("下行通路失败，等服务端重启", [:])
-                self.emitLocalError(.mediaNegotiationFailed)
-                return
-            }
-            guard pc == .sub, state == "connected" else { return }
-            Task { await self.loop.dispatch(.internalEvent(name: "media_ready")) }
-        }
-        events.onFirstVideoFrame = { [weak self] trackID in
-            guard let self else { return }
-            Task {
-                let uid = await self.loop.uidOf(trackID)
-                self.dispatcher.emit(IMEmittedEvent("onFirstVideoFrame", [
-                    "uid": .string(uid), "track_id": .string(trackID),
-                ]))
-            }
-        }
-        return events
     }
 }

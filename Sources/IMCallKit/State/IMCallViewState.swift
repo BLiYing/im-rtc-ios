@@ -259,6 +259,12 @@ public func reduceCallView(_ state: IMCallViewState,
         next.selfState = IMSelfState(micOn: true, cameraOn: true, speakerOn: false)
 
     case let .callEnd(reason, durationSec):
+        /*
+         **已经收起来了就不再弹结束画面。** 红键看门狗本地收场、界面收起之后，Engine 的
+         onCallEnd（或服务端迟到的那条）还会再来一次；原先照样进 ended，「通话已结束」
+         又闪 1.5 秒（2026-09-13 14:58:21 frank）。界面上什么都没有时，没有东西可结束。
+        */
+        if state.phase == .idle { return state }
         // **振铃通话的结束出口**（会议走 roomLeft）。还在响铃的来电直接收起，不留结束画面：
         // 被叫这一侧什么都还没做。主叫那一侧要停一下说明原因。
         if state.phase == .incoming {

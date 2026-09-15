@@ -153,6 +153,19 @@ final class CallViewStateTests: XCTestCase {
         XCTAssertFalse(state.isVisible)
     }
 
+    /// 红键看门狗本地收场、界面收起之后，Engine 的 onCallEnd 还会再来一次——**不能再弹结束画面**。
+    func testCallEndAfterDismissIsIgnored() {
+        let state = reduce(IMCallViewState(), [
+            .callBegin(callID: "c-1", roomID: "r-1", mediaType: "video",
+                       isGroup: true, role: "callee", now: 100),
+            .callEnd(reason: "hangup", durationSec: 0),
+            .dismiss,
+            .callEnd(reason: "hangup", durationSec: 5),
+        ])
+        XCTAssertEqual(state, IMCallViewState(),
+                       "2026-09-13 14:58:21：已经收起的界面又闪出 1.5 秒「通话已结束」")
+    }
+
     func testEndingClearsMinimizedSoTheUserSeesTheResult() {
         let state = reduce(IMCallViewState(), [
             .callBegin(callID: "c-1", roomID: "r-1", mediaType: "audio",

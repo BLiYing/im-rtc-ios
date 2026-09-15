@@ -86,6 +86,7 @@
         [self->_engine leaveRoomWithCompletionHandler:^{}];
         [self->_engine acceptWithCompletionHandler:^{}];
         [self->_engine hangupWithCompletionHandler:^{}];
+        [self->_engine forceEnd];
         [self->_engine setMuted:@"mic-1" muted:YES completionHandler:^{}];
         [self->_engine publishMicrophoneWithCompletionHandler:^(NSString *cid, NSError *err) {}];
         [self->_engine startLocalPreviewWithCompletionHandler:^(NSString *cid, NSError *err) {}];

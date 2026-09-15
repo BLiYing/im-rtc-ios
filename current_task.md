@@ -7,26 +7,31 @@
 
 ## 当前焦点
 
-**2026-09-11 夜：开摄像头「画面出来又刷新一下」——本端改成和 Android 同一套（关时换隐藏新画布、开后等首帧才揭示），iOS / Android 两边加诊断日志。已提交 `e1e6220`，本端 19:17 真机不再刷新。**
-上一刀 `e2e9749`（重开时换新画布）已提交。
+**2026-09-15：红键等不到结束事件时引擎也收场（`forceEnd`）+ 卡顿探针。未提交；`./scripts/test.sh` 全绿（10 步，声明 235 = 执行 234 + 跳过 1）。10:03~10:13 与 Android alice、Web bob 真机联测通过（见下一步）；Android / Web 同形状已在各自仓落地。**
+起因 09-13 14:53~14:58 frank（Android alice 群呼）：接听后 room.join 晚 28.6 秒才上线路，其间按红键，call.hangup 一帧没到服务端；
+看门狗只收了界面，Engine 留在通话与房间里，其余三端一直看得见他。上一件（开摄像头刷新）已提交 `e1e6220`、三端验完。
 
-- **本端格子先黑一下 / 露旧帧**：Kit 按 `cameraOn` 同步揭示，而 `resetForReopen` 走 `Task`→`setMuted`→主线程晚一拍；`CAMetalLayer` 留住最后一帧。
-  改法在 `Sources/IMCallEngineWebRTC/IMVideoViews.swift` 的 `IMVideoRegistry`：**关时** `swapCanvas` 换隐藏新画布 + `armGate` 挂首帧探针；**开时** `awaitFirstFrame`，`firstFrameArrived` 才揭示（对应 Android release+init + `onFirstFrameRendered`）。
-- **Android 看 iOS 刷新一下**：根因在 Android 接收端（19:17 真机，见 `../im-rtc-android/current_task.md`）。本仓顺手留下：`MAINTAIN_RESOLUTION`（`IMWebRTCAdapter+Support.swift` 的 `preferResolutionOverFramerate`）、上行采样 `IMUplinkVideoStats.swift`。
-- 统计值转字符串抽成 `Sources/IMCallEngine/Observability/IMStatsFields.swift`（macOS 可测，`StatsFieldsTests`）。公开回调没变。
-- 日志：`本端画面首帧到达`（waitMs + 帧尺寸）· `上行视频采样` · `编码降级偏好=MAINTAIN_RESOLUTION` · `画面尺寸变化`（每视图 ≤ 6 行）。
-- `./scripts/test.sh` 全绿（10 步，声明 215 = 执行 214 + 跳过 1）。WebRTC 部分 macOS 编不进，**只有第 10 步把关，没真机验**。
+- `IMCallEngine.forceEnd()`（`IMCallEngine+ForceEnd.swift`）：读 `IMContextMirror` 挑结束帧，`IMSignalConnection.fire` 直发、**不经帧循环**；
+  本地收场走 `IMFrameLoop.forceEnd(callID:roomID:)`（先比对，防吞掉新来的一通）。帧怎么挑见纯函数 `IMEngineMachine.forceEnd`。
+- Kit：看门狗到点调 `forceEnd`；按红键记 `[Kit] 按下红键`；Kit 已 idle 时 `callEnd` 不再弹结束画面（14:58:21 那 1.5 秒闪屏）。
+- 防回魂：房间机 idle 下 `room.join.ok` 补发 `room.leave`、其余房间帧丢弃（服务端 join 只验房票不查成员）；房间 idle 时丢迟到的候选 / SDP。
+- **join 为何卡 28 秒没定位**，只加诊断：`IMStallProbe`（`执行通道卡顿` / `执行通道卡顿恢复`，lane = main / concurrency_pool / frame_loop）、`请求往返慢`（≥ 2s）。
+- `mediaEvents()` 拆到 `IMCallEngine+MediaEvents.swift`（主文件体量）。CLIENT_PARITY 加 `[^forceend]` 行（iOS 🟡，其余 ⬜）。
 
 ## 下一步
 
 **真机验收（报通话时间）**：
-1. 开摄像头刷新感：本端 19:17、Android 看 iOS 20:04、Web 看 iOS 21:11 都验过不再刷新；iOS 看别人重开摄像头用户确认本来就正常，不用补。
-2. **19:14 另记、没修**：服务端判掉线后本端卡在 `connecting`，call/cancel 被拒 2005、红键点不掉，19:15 才本地收场——疑似没跟上服务端结束通话。
-3. 更早没验：九宫格正方形填满、横幅接听键是听筒、群视频来电页点开摄像头看得见自己。
-4. 自动隐藏判据（已合入 main `f1055d3`，1v1 视频）：接通后控制条完整停 3 秒再淡出；挂断后结束画面标题栏不淡掉。
-5. 跨端老批次（含本端「后置摄像头镜像」）清单见 `../im-rtc-server/current_task.md`「跨端待验」。
+1. ~~`forceEnd` 真机~~（09-15 已验）：正常挂断 10:03:28 按下 → 90ms 服务端受理、无 `强制收场`；故障注入拒掉 frank 的 hangup（10:05:12）→ 10:05:15 看门狗 `强制收场` 补发被受理，他端同刻看到离开。
+2. 复现 09-13 **没复现**：10:12 通话中杀进程 → ⌘R → 恢复窗口过期后 10:12:50 再邀请 → 横幅接听 18ms 进房，无卡顿日志。再撞上就看 `执行通道卡顿` 的 lane 与 `请求往返慢`。
+   **恢复窗口 30 秒内再邀请**，服务端当他还在通话里、不响铃——等「掉线超过恢复窗口」再邀。
+3. 小账（没修）：本地收场时长按整通 `connected_at_ms` 估，中途被拉进来的人偏大（10:05 写 124 秒、实际约 6 秒）；拨出中按取消那帧没有 call_id，宿主多收一条 1401。
+4. **19:14 那条**（服务端判掉线后本端卡 `connecting`、红键点不掉）：看门狗现在会 `forceEnd`，碰到再验。
+4. 更早没验：九宫格正方形填满、横幅接听键是听筒、群视频来电页点开摄像头看得见自己。
+5. 自动隐藏判据（已合入 main `f1055d3`，1v1 视频）：接通后控制条完整停 3 秒再淡出；挂断后结束画面标题栏不淡掉。
+6. 跨端老批次（含本端「后置摄像头镜像」）清单见 `../im-rtc-server/current_task.md`「跨端待验」。
 
 **待办**：
+- `forceEnd` 三端对齐（Android 看门狗同样只收界面，Web 没有看门狗），形状见 CLIENT_PARITY `[^forceend]`；服务端 `room.join` 可考虑查通话成员作为第二道防线。
 - 静默失败点清单（P0×3 / P1×7 / P2×8）：`../im-rtc-server/docs/ops/silent-failure/ios.md`，逐条状态只在那里。未修头两条：麦克风推流失败被 `try?` 吞掉（接通了一个字都没发出去）、权限卡 continuation 可永久挂起。
 - `Vectors.swift` 找向量仍是「同级没有就往上逐级找」，会捡到上层旧克隆（web 已修同类问题）。
 - `CLIENT_PARITY.md` 真机验完再改，验之前停 🟡。
