@@ -10,6 +10,8 @@
 **2026-09-15：宿主对接 M1 → M2 → M8（本仓部分）已实现，未提交；`./scripts/test.sh` 全绿（10 步，含新增单测），真机未验。**
 依据 `../im-rtc-server/docs/design/HOST_INTEGRATION_DESIGN.md` §3.2-§3.4、`RTC_PROTOCOL.md` 对应章节；服务端与一致性向量由另一人同步在改，**本仓这轮没碰 server 仓**（含向量 / CLIENT_PARITY / guide）。
 
+**同日另一轮：IMCallKit 补齐 Objective-C 支持，未提交；`./scripts/test.sh` 全绿（10 步，270 例=269 执行+1 skip）。** `IMCallController`（含 `+Invite` 扩展）与 `IMCallKit.controller` 全部 `@objc` 化；新增 `IMCallController+ObjC.swift`（`IMCallKitPhase` 只读镜像 + `IMCallControllerStateObserver` 通知）与 `IMCallKit.kitVersion`；`IMInviteContext`/`IMInviteCandidate`/`IMCallKitConfig`/`IMInviteMemberProvider`/`IMProfileResolving` 核对下来已经是 `@objc`，未改。`Demo/IMRTCDemo/IMRTCDemo/IMObjCKitAPICheck.m` 逐一调用验证；`Tests/IMCallKitTests/ObjCBridgeTests.swift` 补 7 条单测。
+
 - **M1**（Engine）：`call.invite`/`call.incoming`/`call.connected` 补 `chat_group_id`（三帧都有）/`user_data`/`caller`（后两个只在 connected 新增）；`IMCallContext` 加 `callerUID`/`chatGroupID`/`userData`，`handleConnected` 三者「connected 为空就回落到 incoming / call() 记下的值」（`CallStateMachine+Recv.swift`）。新增 `IMCallOptions`（`Facade/IMCallOptions.swift`）、`call(_:mediaType:options:)` 与 `joinCall(_:)`（`Facade/IMCallEngine+HostIntegration.swift`，本地校验 chatGroupID ≤64 字节+无空白、userData ≤4096 字节，不合规与「名单里有自己」同一个出口）；`IMCallEngineDelegate` 的 `didReceiveCall`/`callDidBegin` **直接改签名**（不留旧 selector，设计 §3.3）；`IMErrorCode.inviteDenied = 1409`；`IMCallEngineWebRTC` 补 ObjC 工厂 `+[IMCallEngine webRTCEngineWithURL:deviceID:]`（`IMCallEngine+WebRTCFactory.swift`）。三条新一致性向量全绿，另加 `Tests/IMCallEngineTests/HostIntegrationTests.swift`（回落分支 / 本地校验 / 发到线路的字段，共 10 条用例）。
 - **M2**（Kit）：新增 `IMInviteContext` / `IMInviteCandidate`（扩 `avatarURL`/`subtitle`/`selectable`/`unselectableReason`）/ `IMInviteMemberProvider`（`Sources/IMCallKit/State/IMInviteMemberProvider.swift`）；`IMCallKitConfig.inviteMemberProvider`（**强引用**）、`allowsManualUIDInput`（默认 false）；`IMInvitePickerViewController` 整体重写：300ms 搜索防抖、代际计数作废旧结果、滚到底翻页、加载中/失败(带重试)/超时(10s) 三态、已在通话中与 `selectable=false` 都置灰、最多选 `slotsLeft` 个；`IMCallOverlayViewController.onInvite` 先过 `canStartInvite()`（本端状态 + 宿主 `canInvite`），再问 `presentInvitePicker`（宿主接管选人页），否则弹 Kit 自带选人页；`IMCallKit.joinCall(_:)`（`IMCallController+Invite.swift`）；1409 两种文案——加人「对方暂时无法被邀请」（只 hint，不影响当前通话）、加入「无法加入该通话」（`didFailWithError` 记 `pendingJoinDenial`，随后 `callDidEnd(reason:"error")` 被改写成 Kit 本地伪原因 `"join_denied"`，从不上线路）。`Tests/IMCallKitTests/InviteMemberProviderTests.swift` 覆盖（8 条用例）。
 - **M8（本仓部分）**：即上面的 `joinCall` 与 1409；服务端 `call.join` 由另一人实现，未联调。
@@ -23,8 +25,10 @@
 3. IMProgram / 容信真实接入是后续期（M3-M7），不在本轮范围。
 
 **待办 / 已知限制**：
-- `IMCallController.swift`（571 行）与 `IMCallOverlayViewController.swift`（596 行）逼近 600 行体量红线（`check-file-size.sh` 只是 WARN），下次改动前先规划再拆一次。
+- `IMCallController.swift`（581 行，加了一批 `@objc` 标注后又长了一点；新增的只读查询/观察者已经拆进 `IMCallController+ObjC.swift` 没有继续往这个文件堆）与 `IMCallOverlayViewController.swift`（596 行）逼近 600 行体量红线（`check-file-size.sh` 只是 WARN），下次改动前先规划再拆一次。
 - `IMInviteMemberProvider` 目前只有 Demo 一个实现验证过；`presentInvitePicker` 接管路径没有真实宿主跑过。
+- **ObjC 状态观察者只有 delegate 形式，没配 block 形式**（`IMCallControllerStateObserver`，CONVENTIONS §4 的「两种都给」这次没做）：块形式要另起一个 token 对象管生命周期，目前没有真实宿主提出这个需求，先不加。
+- **Kit 在视频通话中摄像头无权限 / 无设备（2001/2002）时没有专门的界面提示**（Web 提示「已用语音继续通话」、Android 降级为「摄像头无权限」状态，iOS 只透传给宿主 delegate）——待补。
 - 旧的 forceEnd / 卡顿探针 / 09-13 复现 / 「任何人都能加人」几条已验完并合入 main，移出本节，历史见 `git log` 与 archive。
 
 ## 已知坑 / 限制

@@ -11,7 +11,7 @@ import IMCallEngine
 extension IMCallController {
 
     /// inviteContext 是此刻这通电话的邀请上下文（§3.4「共同语义」），交给 provider 用。
-    public var inviteContext: IMInviteContext {
+    @objc public var inviteContext: IMInviteContext {
         IMInviteContext(
             callID: state.callID, chatGroupID: state.chatGroupID, userData: state.userData,
             callerUID: state.callerUID, mediaType: state.mediaType,
@@ -21,7 +21,7 @@ extension IMCallController {
 
     /// canStartInvite 综合本端此刻在不在通话里（`state.canInvite`）与宿主的权限规则
     /// （`inviteMemberProvider.canInvite(in:)`，默认 true）。
-    public func canStartInvite() -> Bool {
+    @objc public func canStartInvite() -> Bool {
         guard state.canInvite else { return false }
         return inviteMemberProvider?.canInvite?(in: inviteContext) ?? true
     }
@@ -34,7 +34,7 @@ extension IMCallController {
      与 `call()` 被拒同一条路径收场——`onError` 带着错误码到 `IMCallController+Delegate.swift` 的
      `didFailWithError`，紧跟着的 `callDidEnd` 把界面收起，1409 的文案见那边。
      */
-    public func joinCall(_ callID: String) {
+    @objc public func joinCall(_ callID: String) {
         guard imJoinCallAllowed(from: state.phase) else {
             IMRTCLog.warn("[Kit] 正在通话中，忽略 joinCall", ["call_id": callID, "phase": state.phase.rawValue])
             apply(.hint("正在通话中，无法加入"))

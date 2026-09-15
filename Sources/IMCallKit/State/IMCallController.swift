@@ -28,7 +28,7 @@ public protocol IMCallControllerObserver: AnyObject {
 }
 
 /// Kit 的状态中枢。**回调都在主线程**（Engine 已经切好了）。
-public final class IMCallController: NSObject {
+@objc public final class IMCallController: NSObject {
     public private(set) var state = IMCallViewState() {
         didSet {
             guard state != oldValue else { return }
@@ -41,27 +41,31 @@ public final class IMCallController: NSObject {
     public private(set) var promptCard: IMPromptCard?
     /// 「添加成员」的候选名单（静态兜底，保留兼容），由 `IMCallKitConfig.inviteCandidates` 灌进来。
     /// **取名单优先级**（§3.4）：宿主接管选人页 > `inviteMemberProvider` > 这份静态名单 > 空态。
-    public var inviteCandidates: [IMInviteCandidate] = []
+    @objc public var inviteCandidates: [IMInviteCandidate] = []
     /// 按通话要候选人的钩子（HOST_INTEGRATION_DESIGN §3.4）。**强引用**——与 `profileResolver`
     /// 不同，provider 多半是宿主专为通话场景造的一次性对象，Kit 需要保它活到通话结束。
     /// 由 `IMCallKitConfig.inviteMemberProvider` 灌进来。
-    public var inviteMemberProvider: IMInviteMemberProvider?
+    @objc public var inviteMemberProvider: IMInviteMemberProvider?
     /// uid 输入框默认关（§3.4）：打开后只出现在候选名单为空的空态里，只给 Demo 用。
-    public var allowsManualUIDInput = false
+    @objc public var allowsManualUIDInput = false
     /// 身份解析器，由 `IMCallKitConfig.profileResolver` 灌进来。**弱引用**：
     /// 宿主多半让自己的某个长生命周期对象来实现它，Kit 不该延长它的寿命。
-    public weak var profileResolver: IMProfileResolving?
+    @objc public weak var profileResolver: IMProfileResolving?
 
     /// 宿主的身份解析回来了，重画用到这些 uid 的地方。
     ///
     /// **参数目前只用于日志**：一次通话最多 9 个格子，整屏重画比按 uid 精细失效便宜得多，
     /// 也少一类「漏刷某一格」的 bug。签名保留 uids 是为了将来真需要精细化时不破坏调用方。
-    public func reloadProfiles(_ uids: [String]) {
+    @objc public func reloadProfiles(_ uids: [String]) {
         broadcast()
     }
 
     let engine: IMCallEngine
     private let observers = NSHashTable<AnyObject>.weakObjects()
+    /// ObjC 可用的状态观察者（`IMCallControllerStateObserver`，见 `IMCallController+ObjC.swift`）。
+    /// 与 `observers` 分开一张表：`IMCallControllerObserver` 是非 `@objc` 的 Swift 协议，
+    /// ObjC 类型天生实现不了，只能另起一张表、另一套广播。
+    let objcObservers = NSHashTable<AnyObject>.weakObjects()
     /// 本端已发布轨道的 cid。**不进 state**：它不参与渲染。
     var micCID = ""
     /// 本端摄像头轨道的 cid：**可能只是预览、还没发布**（拨出中 / 来电页上起的预览），看 `cameraPublished`。
@@ -76,7 +80,7 @@ public final class IMCallController: NSObject {
     /// 已经为哪个房间发布过。防止同一个房间推两次流。
     private var publishedRoomID = ""
     /// 结束画面停留多久再自动收起。0 = 不自动收。
-    public var endedHoldSeconds: TimeInterval = 1.5
+    @objc public var endedHoldSeconds: TimeInterval = 1.5
     private var dismissTimer: DispatchSourceTimer?
 
     /// 红键按下之后盯着这一屏走没走的那只表。见 `armEndWatchdog`。
@@ -97,7 +101,7 @@ public final class IMCallController: NSObject {
     /// 权限门。系统探针默认走 AVFoundation，测试可换。
     lazy var permissionGate = makePermissionGate(systemProbe: IMSystemPermissionProbe())
 
-    public init(engine: IMCallEngine) {
+    @objc public init(engine: IMCallEngine) {
         self.engine = engine
         super.init()
         engine.delegate = self
@@ -124,7 +128,7 @@ public final class IMCallController: NSObject {
      （HOST_INTEGRATION_DESIGN §3.2）：宿主发起「群内通话」时带上自己的群号，
      被叫与中途加入的人才知道这通电话属于哪个群。`timeoutSec` 为 0 时用协议默认值。
      */
-    public func placeCall(_ calleeIDs: [String], mediaType: String, isGroup: Bool = false,
+    @objc public func placeCall(_ calleeIDs: [String], mediaType: String, isGroup: Bool = false,
                           chatGroupID: String = "", userData: String = "", timeoutSec: Int = 0) {
         apply(.callPlaced(calleeIDs: calleeIDs, mediaType: mediaType, isGroup: isGroup))
         Task {
@@ -149,6 +153,7 @@ public final class IMCallController: NSObject {
         }
     }
 
+    @objc(joinMeetingWithRoomID:roomToken:)
     public func joinMeeting(roomID: String, roomToken: String) {
         Task {
             let outcome = await permissionGate.ensure(
@@ -169,7 +174,7 @@ public final class IMCallController: NSObject {
      来电页上亲手关掉了摄像头才只问麦克风（= 以语音接听，拍板 §11-10）；群通话默认关着进来不算，
      照样问（交互稿 §01）。接不了就拒掉，别让对方一直等。
      */
-    public func accept() {
+    @objc public func accept() {
         let devices = imPermissionDevicesForAnswering(mediaType: state.mediaType,
                                                       cameraOptedOut: state.selfState.cameraOptedOut)
         Task {
@@ -185,10 +190,10 @@ public final class IMCallController: NSObject {
         }
     }
 
-    public func reject() { Task { await engine.reject() } }
+    @objc public func reject() { Task { await engine.reject() } }
 
     /// 前后摄像头翻转。**纯媒体动作，不改视图状态**——镜像由媒体层自己处理。
-    public func switchCamera() {
+    @objc public func switchCamera() {
         Task {
             await engine.switchCamera()
             /*
@@ -203,9 +208,9 @@ public final class IMCallController: NSObject {
     }
 
     /// 当前是不是前置摄像头。**本端预览要不要镜像看它**——后置绝不能镜像。
-    public var isUsingFrontCamera: Bool { engine.isUsingFrontCamera }
+    @objc public var isUsingFrontCamera: Bool { engine.isUsingFrontCamera }
 
-    public func toggleSpeaker() {
+    @objc public func toggleSpeaker() {
         let on = !state.selfState.speakerOn
         apply(.setSpeaker(on))
         engine.setSpeakerOn(on)
@@ -217,7 +222,7 @@ public final class IMCallController: NSObject {
      发出去之后还要**盯着这一屏到底走没走**（`armEndWatchdog`）：认得出该发哪一帧，
      不等于那一帧真的发得出去。
      */
-    public func end() {
+    @objc public func end() {
         let action = imEndAction(for: state)
         // **按下红键要留一条**：2026-09-13 14:54 那次到底按没按、按的时候在哪个阶段，事后只能靠猜。
         IMRTCLog.info("[Kit] 按下红键", ["action": action.rawValue, "phase": String(describing: state.phase)])
@@ -268,7 +273,7 @@ public final class IMCallController: NSObject {
         timer.resume()
     }
 
-    public func toggleMic() {
+    @objc public func toggleMic() {
         let on = !state.selfState.micOn
         apply(.setMic(on))
         guard !micCID.isEmpty else { return }
@@ -276,7 +281,7 @@ public final class IMCallController: NSObject {
     }
 
     /// 开关摄像头。**还没进房时只改界面，不去发布**；禁用态点了要出提示，不能静默（规范 §06）。
-    public func toggleCamera() {
+    @objc public func toggleCamera() {
         if state.selfState.cameraBlocked {
             apply(.hint("没有摄像头权限"))
             return
@@ -328,7 +333,7 @@ public final class IMCallController: NSObject {
     ///
     /// 记下这一批是谁：服务端拒掉（1407 本端不在通话里 / 1202 满员）时不会有 `userDidReject`——
     /// 那条是给「真的响了铃的人」的。不收回占位格的话它们会一直挂着「呼叫中…」，还占着人数。
-    public func inviteMore(_ uids: [String]) {
+    @objc public func inviteMore(_ uids: [String]) {
         guard !uids.isEmpty else { return }
         lastInvited = uids
         apply(.invited(uids: uids))
@@ -345,27 +350,29 @@ public final class IMCallController: NSObject {
     }
 
     /// reportLayer 报某人画面的层上界（协议 §3.5）。格子越小报得越低，直接省带宽。
+    @objc(reportLayer:layer:)
     public func reportLayer(_ uid: String, _ layer: String) {
         Task { await engine.setRemoteLayer(uid, layer: layer) }
     }
 
-    public func setMinimized(_ minimized: Bool) { apply(.setMinimized(minimized)) }
+    @objc public func setMinimized(_ minimized: Bool) { apply(.setMinimized(minimized)) }
     /// setSwapped 互换 1v1 的两块画面。纯本端行为。
-    public func setSwapped(_ swapped: Bool) { apply(.setSwapped(swapped)) }
-    public func dismiss() { apply(.dismiss) }
+    @objc public func setSwapped(_ swapped: Bool) { apply(.setSwapped(swapped)) }
+    @objc public func dismiss() { apply(.dismiss) }
 
     #if canImport(UIKit)
     /// 把某人的远端画面挂到一个视图上；传 nil 卸载。Kit 走的是门面的公开方法，与宿主自画 UI 完全一样。
-    public func attachView(_ uid: String, to view: UIView?) { engine.attachView(uid, to: view) }
+    @objc public func attachView(_ uid: String, to view: UIView?) { engine.attachView(uid, to: view) }
 
     /// 把**本端摄像头**挂到视图上做预览；传 nil 卸载。cid 由 controller 记着，界面不需要知道。
+    @objc(attachLocalPreviewToView:)
     public func attachLocalPreview(to view: UIView?) {
         guard !cameraCID.isEmpty else { return }
         engine.attachLocalView(cameraCID, to: view)
     }
 
     /// 本端有没有摄像头轨道可预览。没有的话格子该显示头像。
-    public var hasLocalCamera: Bool { !cameraCID.isEmpty }
+    @objc public var hasLocalCamera: Bool { !cameraCID.isEmpty }
     #endif
 
     // MARK: - 内部
@@ -374,6 +381,9 @@ public final class IMCallController: NSObject {
     func broadcast() {
         observers.allObjects.forEach {
             ($0 as? IMCallControllerObserver)?.callController(self, didChange: state)
+        }
+        objcObservers.allObjects.forEach {
+            ($0 as? IMCallControllerStateObserver)?.callControllerDidUpdateState(self)
         }
     }
 

@@ -92,7 +92,7 @@ public let IMCallKitVersion = IMCallEngineVersion
     }
 
     /// 状态中枢。宿主想自己画一部分界面时也能读它。
-    public let controller: IMCallController
+    @objc public let controller: IMCallController
 
     /**
      joinCall 主动加入一通正在进行的群通话（HOST_INTEGRATION_DESIGN §3.4）。
@@ -126,4 +126,10 @@ public let IMCallKitVersion = IMCallEngineVersion
         _ = callWindow // 让它订阅上 controller；之后由状态驱动显示与收起
         #endif
     }
+}
+
+extension IMCallKit {
+    /// Kit 版本号（= `IMCallKitVersion`）。全局常量 ObjC 看不见，所以门面上再挂一个
+    /// （同 `IMCallEngine.sdkVersion` 的做法）。
+    @objc public static var kitVersion: String { IMCallKitVersion }
 }
