@@ -67,7 +67,8 @@ public enum IMCallMachine {
             return reduceAct(ctx, op, args)
         case let .recv(type, data):
             return reduceRecv(ctx, type, data)
-        case let .internalEvent(name):
+        case let .internalEvent(name, _):
+            // 通话机不认 args——`publish_failed` / `subscribe_failed` 只关房间机的事（见 IMEngineMachine 的路由）。
             return reduceInternal(ctx, name)
         }
     }

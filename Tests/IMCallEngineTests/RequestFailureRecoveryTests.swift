@@ -65,6 +65,100 @@ final class RequestFailureRecoveryTests: XCTestCase {
         XCTAssertEqual(result.emit.map(\.callback), ["onRoomLeft"])
     }
 
+    // MARK: - publish_failed / subscribe_failed：静默失败审计 §A
+
+    /*
+     这张回滚表原先也不认 `room.publish` / `room.subscribe`。发布被拒的收场在通话里走
+     forceEnd（见 `FacadeTests` 的门面级用例），这里只覆盖**没有通话的会议房**：
+     状态机只摘掉那一条记账，不额外抛回调、不离房。
+     */
+
+    /// 会议房 `room.publish` 被拒：只摘掉那一条 `publishing`，其余记账不动，人还在 joined。
+    func testPublishFailedDropsOnlyThatPublishingEntry() {
+        var ctx = joinedRoom()
+        ctx.publish["cam-1"] = .publishing
+        ctx.publish["mic-1"] = .published
+
+        let result = IMRoomMachine.reduce(ctx, .internalEvent(name: "publish_failed",
+                                                               args: ["cid": .string("cam-1")]))
+
+        XCTAssertEqual(result.state.state, .joined, "没有通话，收场只到摘记账为止，不离房")
+        XCTAssertNil(result.state.publish["cam-1"], "不能永远停在 publishing")
+        XCTAssertEqual(result.state.publish["mic-1"], .published, "已经发布成功的那条不该被碰")
+        XCTAssertTrue(result.emit.isEmpty, "错误已经由帧循环抛过一次，这里不重复抛")
+        XCTAssertTrue(result.send.isEmpty)
+    }
+
+    /// **只认 `publishing`**：不是那个状态时收到（比如已经 published 之后才迟到的失败回执）
+    /// 是空操作，不能把一条已经成功的发布顺手摘掉。
+    func testPublishFailedIsIgnoredWhenNotPublishing() {
+        var ctx = joinedRoom()
+        ctx.publish["mic-1"] = .published
+
+        let result = IMRoomMachine.reduce(ctx, .internalEvent(name: "publish_failed",
+                                                               args: ["cid": .string("mic-1")]))
+
+        XCTAssertEqual(result.state.publish["mic-1"], .published)
+    }
+
+    /// `room.subscribe` 被拒：摘掉 `subscribing` **连同层记账**，重订之后重新发 `room.subscribe`。
+    ///
+    /// 层记账不摘的话不变量 R3 会把重订当成换层，只发 `room.update_layer`，
+    /// 状态机就再也发不出 `room.subscribe` 了。
+    func testSubscribeFailedDropsBookkeepingAndAllowsResubscribe() {
+        var ctx = joinedRoom()
+        let subscribing = IMRoomMachine.reduce(ctx, .act(op: "subscribe", args: [
+            "track_id": .string("t-9"), "max_layer": .string("h"),
+        ]))
+        ctx = subscribing.state
+        XCTAssertEqual(ctx.subscribe["t-9"], .subscribing)
+        XCTAssertEqual(ctx.layers["t-9"], "h")
+
+        let rolled = IMRoomMachine.reduce(ctx, .internalEvent(name: "subscribe_failed",
+                                                               args: ["track_id": .string("t-9")]))
+        XCTAssertNil(rolled.state.subscribe["t-9"])
+        XCTAssertNil(rolled.state.layers["t-9"], "层记账也要摘，否则 R3 会把重订误判成换层")
+        XCTAssertTrue(rolled.emit.isEmpty)
+
+        let again = IMRoomMachine.reduce(rolled.state, .act(op: "subscribe", args: [
+            "track_id": .string("t-9"), "max_layer": .string("h"),
+        ]))
+        XCTAssertEqual(again.send.map(\.type), [IMFrameType.roomSubscribe],
+                       "摘账之后重订必须真的再发一次 room.subscribe，不能被 R3 当成换层")
+    }
+
+    /// 已经 `subscribed` 的那条不受影响——只动 `subscribing` 那一条。
+    func testSubscribeFailedIsIgnoredWhenNotSubscribing() {
+        var ctx = joinedRoom()
+        ctx.subscribe["t-1"] = .subscribed
+        ctx.layers["t-1"] = "m"
+
+        let result = IMRoomMachine.reduce(ctx, .internalEvent(name: "subscribe_failed",
+                                                               args: ["track_id": .string("t-1")]))
+
+        XCTAssertEqual(result.state.subscribe["t-1"], .subscribed)
+        XCTAssertEqual(result.state.layers["t-1"], "m")
+    }
+
+    /// publish_failed / subscribe_failed 要能从 engine 层路由到房间机——
+    /// 漏了这一跳就会被当成通话机的内部事件吞掉（Web 端曾经的坑，见 `ROOM_FAILURES`）。
+    func testEngineRoutesPublishAndSubscribeFailedToRoomMachine() {
+        var ctx = IMEngineContext()
+        ctx.room = joinedRoom()
+        ctx.room.publish["cam-1"] = .publishing
+        ctx.room.subscribe["t-1"] = .subscribing
+
+        let afterPublish = IMEngineMachine.reduce(ctx, .internalEvent(name: "publish_failed",
+                                                                       args: ["cid": .string("cam-1")]))
+        XCTAssertNil(afterPublish.state.room.publish["cam-1"])
+        XCTAssertEqual(afterPublish.state.room.state, .joined, "不该被误路由到通话机导致状态跑偏")
+
+        let afterSubscribe = IMEngineMachine.reduce(afterPublish.state,
+                                                     .internalEvent(name: "subscribe_failed",
+                                                                    args: ["track_id": .string("t-1")]))
+        XCTAssertNil(afterSubscribe.state.room.subscribe["t-1"])
+    }
+
     // MARK: - call_failed：accept / join 被拒也要回 idle
 
     /// `call.accept` 被拒（主叫刚取消，服务端回 1401）**必须抛 onCallEnd 并回 idle**。

@@ -20,12 +20,17 @@ extension IMEngineMachine {
     ///
     /// 时长按服务端给的 `connected_at_ms` 估算，与恢复失败时 I8 的那条例外同一个算法：
     /// 本地已经收场，服务端那条带真值的 `call.ended` 随后会因为 idle 被丢掉，没有更准的值可用。
+    ///
+    /// `reason` 不给就按此刻状态挑（红键）；给了就用它——`room.publish` 被拒时帧循环传 `.error`，
+    /// 那不是用户挂的，写成 hangup/cancel/reject 是撒谎（静默失败审计 §A）。
     public static func forceEnd(_ ctx: IMEngineContext,
-                                nowMS: Int64 = Int64(Date().timeIntervalSince1970 * 1000))
+                                nowMS: Int64 = Int64(Date().timeIntervalSince1970 * 1000),
+                                reason reasonOverride: IMCallEndReason? = nil)
         -> IMMachineOutput<IMEngineContext> {
         if ctx.call.state != .idle {
             let call = ctx.call
-            let (frames, reason) = endFrames(for: call)
+            let (frames, byState) = endFrames(for: call)
+            let reason = reasonOverride ?? byState
             // 从**本端**进来那一刻算（见 `IMEngineContext.callStartedAtMS`）；没记到才退回整通接通时刻。
             let startedAtMS = ctx.callStartedAtMS > 0 ? ctx.callStartedAtMS : call.connectedAtMS
             var next = IMEngineContext()

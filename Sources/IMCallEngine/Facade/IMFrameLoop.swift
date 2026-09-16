@@ -208,7 +208,7 @@ actor IMFrameLoop {
          */
         guard let connection = connection() else {
             emitError(IMRTCError(.notLoggedIn, "\(frame.type)：信令未连接"))
-            await rollback(frame.type)
+            await rollback(frame)
             return
         }
         let isPubOffer = frame.type == IMFrameType.roomOffer
@@ -230,7 +230,7 @@ actor IMFrameLoop {
             if isPubOffer { pubOffer.abort() }
             // 请求失败不该中断整个事件流：转成 error 事件交给宿主。
             emitError(error)
-            await rollback(frame.type)
+            await rollback(frame)
         }
     }
 
@@ -255,7 +255,8 @@ actor IMFrameLoop {
     /// 而之后每一个动作都被不变量本地拒成 2005，宿主只看到一串没头没尾的 2005，
     /// 真正的原因早淹在上一条 error 里了。四端同一张表
     /// （Android 的 `IMCallEngine.onRequestFailed`、Web 的 `frameLoop.rollback`）。
-    private func rollback(_ type: String) async {
+    private func rollback(_ frame: IMOutgoingFrame) async {
+        let type = frame.type
         /*
          **进房失败要把房间状态退回 idle**。
 
@@ -296,6 +297,49 @@ actor IMFrameLoop {
         if Self.callFailFrames.contains(type) {
             await dispatch(.internalEvent(name: "call_failed"))
         }
+        /*
+         **发布被拒：通话里直接收掉整通（reason=error），没有通话才只回滚那一条**（静默失败审计 §A）。
+
+         原先这张表不认 `room.publish`，那条轨道永远停在 `publishing`：`publish.ok` 不来 →
+         pub offer 永远不产出 → 上行从未协商。界面显示已接通、计时器在走、按钮显示没静音，
+         **对方全程听不见看不见，零提示**。留在通话里只报错也不够——Kit 并不展示这类错误，
+         而服务端会拒的几种情形（房间已不在、同一路重复发布、请求超时）重试都救不回来。
+         收场走 forceEnd：挂断帧不排队、onCallEnd 只抛一次，Kit 本来就认它（Web 端同一份推理：`frameLoop.ts`）。
+         */
+        if type == IMFrameType.roomPublish {
+            if ctx.call.state != .idle {
+                IMRTCLog.warn("发布被拒，结束本端通话", ["call_id": ctx.call.callID])
+                await forceEndForPublishFailure()
+                return
+            }
+            await dispatch(.internalEvent(name: "publish_failed", args: ["cid": frame.data["cid"] ?? .string("")]))
+            return
+        }
+        // 订阅被拒只摘记账，不收场：最常见的 1301 是订阅与对方停推赛跑输了，通话本身没事。
+        if type == IMFrameType.roomSubscribe {
+            await dispatch(.internalEvent(name: "subscribe_failed",
+                                          args: ["track_id": frame.data["track_id"] ?? .string("")]))
+        }
+    }
+
+    /**
+     forceEndForPublishFailure 是 `room.publish` 在通话里被拒时的收场路径。
+
+     与门面的 `IMCallEngine.forceEnd()` 同一个形状（结束帧直发、本地立刻收场），但**不经过
+     mirror 也不需要 call_id/room_id 比对**——这里已经在 actor 内部，`ctx` 就是此刻的真实状态，
+     没有跨 actor 的那一拍延迟。`reason` 写死 `.error`：这不是用户按的红键，写成 hangup 是撒谎。
+     */
+    private func forceEndForPublishFailure() async {
+        let ended = IMEngineMachine.forceEnd(ctx, reason: .error)
+        guard !ended.emit.isEmpty else { return }
+        if let connection = connection() {
+            for frame in ended.send {
+                connection.fire(frame.type, data: IMFrameSender.wireData(frame) ?? frame.data)
+            }
+        } else if !ended.send.isEmpty {
+            IMRTCLog.warn("发布被拒收场：没有信令连接，结束帧发不出去，只做本地收场", [:])
+        }
+        await apply(IMMachineOutput(ended.state, send: [], emit: ended.emit))
     }
 
     /// sendCandidate 把本端候选发上去。候选是尽力而为的，失败只报不中断。

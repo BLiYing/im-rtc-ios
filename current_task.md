@@ -7,6 +7,11 @@
 
 ## 当前焦点
 
+**2026-09-16（第三轮，已提交（`git log` 里标题为「call: 发布 / 订阅被拒要收场」那笔），未上真端）：静默失败审计 §A——发布 / 订阅被拒要收场。** `./scripts/test.sh` 10 步全绿（300 例 = 299 + 1 skip）。
+- `IMFrameLoop.rollback` 改收整帧：`room.publish` 被拒且在通话里 → 新私有 `forceEndForPublishFailure()`（`IMEngineMachine.forceEnd(ctx, reason: .error)`，结束帧经 `connection.fire` 直发）；否则 `publish_failed`；`room.subscribe` → `subscribe_failed`。
+- **注意 forceEnd 现在有三个入口**：门面 `IMCallEngine+ForceEnd.swift`、actor 里这一个、状态机纯函数；重构 forceEnd 时别漏。
+- 用例：`RequestFailureRecoveryTests` 5 条、`FacadeTests.testPublishRejected*` 2 条。负向验证：只把 `IMFrameLoop` 两个分支短路，两条门面用例变红。
+
 **2026-09-16（第二轮，已提交 `cbf8c55`，真机验收通过）：来电铃声 + 回铃音，顺带修音频会话时机缺陷。**`./scripts/test.sh` 全绿（10 步，293 例=292 执行+1 skip，含 Demo `BUILD SUCCEEDED`）。
 
 **音频会话时机（治本，没走 Kit 临时切 category 的退路）**：`IMWebRTCAdapter.configureAudioSession()` 原来挂在 `open(_:)`（= `login()`）上，登录一成功就把会话接管成 `.playAndRecord`+`.voiceChat`+active，跟有没有通话无关——宿主背景音乐被掐断（没开 `.mixWithOthers`），响铃期间会话已是通话态、铃声等于没做。查过 iOS 这边没有 Android `IMMediaDriver.drive()`（按 room_token 判「媒体真正启动」）那种集中判断点，媒体是 `IMWebRTCAdapter` 内部按需惰性起（`ensurePeers()`），所以把配置挪到了实际拿麦克风的那一刻：
@@ -42,6 +47,7 @@
 
 ## 下一步
 
+0. **§A 发布被拒收场：用故障注入上真端走一遍**（先 `FAULT_INJECTION=1 ./scripts/dev.sh`）：通话接通后 `curl -X POST $B/v1/dev/faults -d '{"action":"reject","uid":"<本端uid>","frame_type":"room.publish","code":1302}'`，再开一次麦 / 摄像头 → 本端收场、结束原因 error、对端收到挂断。过了把 CLIENT_PARITY 那一行 🟡 转 ✅。代码已提交，真机验收后续再做（2026-09-16 用户定）。
 1. **累积未做的真机验收**（上一轮遗留，与本轮无关但仍待办）：API 命名对齐新签名（`callDidEnd`/`activeSpeakersDidChange`/`networkQualityDidChange`/`destroy()`/`openMicrophone`/`openCamera`）；M1/M2 两台设备群呼带 `chatGroupID`、中途 `joinCall` 进房、选人页翻页/搜索/置灰；`call.incoming.inviter` 与「离场发起人可被重新邀请」两条双端联调；1409 两种文案没连过真服务端。IMProgram / 容信真实接入是后续期（M3-M7）。
 
 **待办 / 已知限制**：

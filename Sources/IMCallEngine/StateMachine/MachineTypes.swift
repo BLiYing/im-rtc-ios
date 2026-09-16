@@ -41,7 +41,8 @@ public enum IMMachineInput: Sendable {
     /// 收到一条下行帧。
     case recv(type: String, data: [String: IMJSON])
     /// engine 内部事件，既不来自信令也不来自宿主（如媒体就绪）。
-    case internalEvent(name: String)
+    /// `args` 只有「哪一条被拒了」这类需要带标识的才有（`publish_failed` 的 cid、`subscribe_failed` 的 track_id）。
+    case internalEvent(name: String, args: [String: IMJSON] = [:])
 }
 
 /// 一次状态转移的产物。

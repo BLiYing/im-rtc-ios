@@ -94,8 +94,8 @@ public enum IMRoomMachine {
             return reduceAct(ctx, op, args)
         case let .recv(type, data):
             return reduceRecv(ctx, type, data)
-        case let .internalEvent(name):
-            return reduceInternal(ctx, name)
+        case let .internalEvent(name, args):
+            return reduceInternal(ctx, name, args)
         }
     }
 
@@ -113,7 +113,8 @@ public enum IMRoomMachine {
     }
 
     private static func reduceInternal(_ ctx: IMRoomContext,
-                                       _ name: String) -> IMMachineOutput<IMRoomContext> {
+                                       _ name: String,
+                                       _ args: [String: IMJSON]) -> IMMachineOutput<IMRoomContext> {
         switch name {
         case "disconnected":
             // 断线**不等于**离房：协议给了 30 秒恢复窗口，房内其他人这时还看得见我们。
@@ -154,9 +155,43 @@ public enum IMRoomMachine {
             guard ctx.state == .leaving else { return out(ctx) }
             return out(cleared(.idle),
                        emit: [IMEmittedEvent("onRoomLeft", ["room_id": .string(ctx.roomID)])])
+        case "publish_failed":
+            return dropFailedPublish(ctx, Wire.string(args, "cid"))
+        case "subscribe_failed":
+            return dropFailedSubscribe(ctx, Wire.string(args, "track_id"))
         default:
             return out(ctx)
         }
+    }
+
+    /**
+     dropFailedPublish：`room.publish` 被拒（或没送到）时把那条 `publishing` 摘掉（静默失败审计 §A）。
+
+     不摘的话它永远停在 `publishing`：`publish.ok` 不会来，pub offer 永远不产出。
+     **通话里走不到这里**——帧循环直接把整通强制收场（reason=error），因为推不上去的那一端
+     对方全程听不见看不见，留在通话里只是一块撒谎的界面。这里只管没有通话的会议房。
+     错误本身由帧循环先抛过了，这里不再重复抛。
+     */
+    private static func dropFailedPublish(_ ctx: IMRoomContext, _ cid: String) -> IMMachineOutput<IMRoomContext> {
+        guard ctx.publish[cid] == .publishing else { return out(ctx) }
+        var next = ctx
+        next.publish.removeValue(forKey: cid)
+        return out(next)
+    }
+
+    /**
+     dropFailedSubscribe：`room.subscribe` 被拒时把那条 `subscribing` 连同层记账摘掉。
+
+     不摘的话不变量 R3 会把之后的每次重订都当成「已经订过、只换层」，
+     只发 `room.update_layer`，**再也发不出 `room.subscribe`**。最常见的来路是 1301：
+     订阅与对方的 `track_unpublished` 赛跑输了，此时摘掉正是实情。
+     */
+    private static func dropFailedSubscribe(_ ctx: IMRoomContext, _ trackID: String) -> IMMachineOutput<IMRoomContext> {
+        guard ctx.subscribe[trackID] == .subscribing else { return out(ctx) }
+        var next = ctx
+        next.subscribe.removeValue(forKey: trackID)
+        next.layers.removeValue(forKey: trackID)
+        return out(next)
     }
 
     /**

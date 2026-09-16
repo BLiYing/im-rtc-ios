@@ -51,8 +51,8 @@ public enum IMEngineMachine {
             result = handleHelloOK(ctx, data, nowMS: nowMS)
         case let .recv(type, data):
             result = routeFrame(ctx, type: type, data: data)
-        case let .internalEvent(name):
-            result = handleInternal(ctx, name, nowMS: nowMS)
+        case let .internalEvent(name, args):
+            result = handleInternal(ctx, name, args, nowMS: nowMS)
         case let .act(op, args):
             result = routeAct(ctx, op: op, args: args)
         }
@@ -141,8 +141,13 @@ public enum IMEngineMachine {
         return IMMachineOutput(next, send: room.send, emit: emit)
     }
 
+    /// roomFailures 是帧循环把「房间帧没送到」翻译成的内部事件，全归房间机。
+    /// 不显式路由的话它们会落到通话机去，被静默丢掉（Web 端 `engineMachine.ts` 同一份注释）。
+    private static let roomFailures: Set<String> = ["join_failed", "leave_failed", "publish_failed", "subscribe_failed"]
+
     private static func handleInternal(_ ctx: IMEngineContext,
                                        _ name: String,
+                                       _ args: [String: IMJSON],
                                        nowMS: Int64) -> IMMachineOutput<IMEngineContext> {
         /*
          **服务端那一侧已经不可能再恢复这条会话了**（§1.4 的恢复窗口过了）。
@@ -170,10 +175,12 @@ public enum IMEngineMachine {
                 IMEmittedEvent("onDisconnected"),
             ])
         }
-        // 进房 / 离房被服务端拒了：两条都只关房间机的事，原样转交。
+        // 房间那几条失败回滚都归房间机；不显式路由的话它们会落到通话机去，被静默丢掉。
         // **leave_failed 少接一条的代价见 IMRoomMachine 那一支**——媒体停不掉、房也再进不去。
-        if name == "join_failed" || name == "leave_failed" {
-            let room = IMRoomMachine.reduce(ctx.room, .internalEvent(name: name))
+        // publish_failed / subscribe_failed 见静默失败审计 §A：`room.publish` 在通话里被拒
+        // 由 `IMFrameLoop.rollback` 直接走强制收场，不会走到这里；走到这里的都是没有通话的会议房。
+        if Self.roomFailures.contains(name) {
+            let room = IMRoomMachine.reduce(ctx.room, .internalEvent(name: name, args: args))
             var next = ctx
             next.room = room.state
             return IMMachineOutput(next, send: room.send, emit: room.emit)

@@ -1070,6 +1070,118 @@ final class FacadeTests: XCTestCase {
         try await settle(4)
     }
 
+    /*
+     静默失败审计 §A：这张回滚表原先不认 `room.publish` / `room.subscribe`。发布被拒之后那条轨道
+     永远停在 `publishing`——`publish.ok` 不来、pub offer 永不产出。界面显示已接通、计时器在走，
+     对方全程听不见看不见，零提示。2026-09-16 拍板：**通话里被拒就结束本端通话**（reason=error）；
+     没有通话的会议房只回滚那一条。
+     */
+
+    /// 通话中 `room.publish` 被拒：原错误码照报，发 `call.hangup`，只抛一次 `onCallEnd{error}`。
+    func testPublishRejectedDuringCallEndsTheCallWithErrorReason() async throws {
+        let h = makeEngine()
+        let ws = try await login(h)
+        ws.receive("""
+        {"type":"call.incoming","req_id":"","ts":1,"data":{\
+        "call_id":"c-1","room_id":"r-1","caller":"bob","callee_ids":["alice"],\
+        "media_type":"audio","is_group":false,"timeout_sec":30,"invited_at_ms":1,"user_data":""}}
+        """)
+        try await settle(4)
+
+        async let accepting: Void = h.engine.accept()
+        let accept = try await waitForFrame(ws, ofType: IMFrameType.callAccept)
+        ws.receive("""
+        {"type":"call.accept.ok","req_id":"\(accept.reqID)","ts":1,"data":{}}
+        """)
+        await accepting
+        ws.receive("""
+        {"type":"call.connected","req_id":"","ts":1,"data":{\
+        "call_id":"c-1","room_id":"r-1","room_token":"rt-1","media_type":"audio",\
+        "is_group":false,"connected_at_ms":1,"accepted_by":"alice"}}
+        """)
+        let join = try await waitForFrame(ws, ofType: IMFrameType.roomJoin)
+        ws.receive("""
+        {"type":"room.join.ok","req_id":"\(join.reqID)","ts":1,"data":{\
+        "room_id":"r-1","participant_id":"r-1-p1","participants":[],"tracks":[]}}
+        """)
+        try await settle(4)
+        let joined = await h.engine.state
+        XCTAssertEqual(joined.room.state, .joined, "先把房间接通，发布被拒才有意义")
+
+        async let publishing = h.engine.publishMicrophone()
+        let publish = try await waitForFrame(ws, ofType: IMFrameType.roomPublish)
+        ws.receive("""
+        {"type":"sys.error","req_id":"\(publish.reqID)","ts":1,\
+        "data":{"code":1302,"name":"publish_denied","msg":"publish denied",\
+        "for_type":"room.publish","retryable":false}}
+        """)
+        _ = try await publishing // 门面这条 §B 的已知缺口——即使被拒也正常 resolve，不是本次要修的
+        let hangup = try await waitForFrame(ws, ofType: IMFrameType.callHangup)
+        XCTAssertEqual(hangup.data["call_id"]?.stringValue, "c-1", "对端还在等，要告诉服务端我走了")
+        try await settle(6)
+
+        XCTAssertEqual(h.events.first(.error)?.payload["code"] as? NSNumber,
+                       NSNumber(value: IMErrorCode.publishDenied.rawValue), "原错误码要照样上报")
+        XCTAssertEqual(h.events.count(.callEnd), 1, "不能留在一通对方听不见的通话里")
+        XCTAssertEqual(h.events.first(.callEnd)?.payload["reason"] as? String, "error",
+                       "这不是用户按的红键，写成 hangup/cancel/reject 都是撒谎")
+
+        let ended = await h.engine.state
+        XCTAssertEqual(ended.call.state, .idle)
+        XCTAssertEqual(ended.room.state, .idle)
+
+        // 服务端随后那条 call.ended 不能再抛第二次。
+        ws.receive("""
+        {"type":"call.ended","req_id":"","ts":1,"data":{"call_id":"c-1","room_id":"r-1",\
+        "reason":"hangup","duration_sec":3,"ended_by":"alice"}}
+        """)
+        try await settle()
+        XCTAssertEqual(h.events.count(.callEnd), 1)
+    }
+
+    /// 会议房（没有通话）`room.publish` 被拒：只摘掉那条 `publishing`，人留在房里，之后还能再发布。
+    func testPublishRejectedInMeetingOnlyDropsThatTrack() async throws {
+        let h = makeEngine()
+        let ws = try await login(h)
+        try await joinRoom(h, ws)
+
+        async let publishing = h.engine.publishCamera()
+        let publish = try await waitForFrame(ws, ofType: IMFrameType.roomPublish)
+        XCTAssertEqual(publish.data["cid"]?.stringValue, "cam-1")
+        ws.receive("""
+        {"type":"sys.error","req_id":"\(publish.reqID)","ts":1,\
+        "data":{"code":1302,"name":"publish_denied","msg":"publish denied",\
+        "for_type":"room.publish","retryable":false}}
+        """)
+        _ = try await publishing
+        try await settle(6)
+
+        let state = await h.engine.state
+        XCTAssertEqual(state.room.state, .joined, "没有通话，收场动作止步于摘记账，不离房")
+        XCTAssertNil(state.room.publish["cam-1"], "不能永远停在 publishing")
+        XCTAssertEqual(h.events.count(.roomLeft), 0)
+        XCTAssertEqual(h.events.count(.callEnd), 0)
+        XCTAssertEqual(h.events.first(.error)?.payload["code"] as? NSNumber,
+                       NSNumber(value: IMErrorCode.publishDenied.rawValue))
+
+        // 摘掉之后必须能重新发布，不能被判重卡住——走完整条正常路径直到 pub answer 落地。
+        async let retrying = h.engine.publishCamera()
+        let republish = try await waitForFrame(ws, ofType: IMFrameType.roomPublish,
+                                               excludingReqID: publish.reqID)
+        XCTAssertEqual(republish.data["cid"]?.stringValue, "cam-1")
+        ws.receive("""
+        {"type":"room.publish.ok","req_id":"\(republish.reqID)","ts":1,\
+        "data":{"cid":"cam-1","track_id":"t-9"}}
+        """)
+        let offer = try await waitForFrame(ws, ofType: IMFrameType.roomOffer)
+        ws.receive("""
+        {"type":"room.answer","req_id":"\(offer.reqID)","ts":1,\
+        "data":{"pc":"pub","sdp":"v=0 answer"}}
+        """)
+        _ = try await retrying
+        try await settle(4)
+    }
+
     private func joinRoom(_ h: Harness, _ ws: FakeWebSocket) async throws {
         async let joining: Void = h.engine.joinRoom("r-1", roomToken: "rt-1")
         let join = try await waitForFrame(ws, ofType: IMFrameType.roomJoin)
@@ -1121,6 +1233,19 @@ final class FacadeTests: XCTestCase {
             try await Task.sleep(nanoseconds: 5_000_000)
         }
         throw IMRTCError(.internalError, "没等到帧 \(type)")
+    }
+
+    /// 同上，但排除一个已知的旧 `req_id`——判重之类的场景里，「这一类帧已经出现过」
+    /// 不代表「新的那一帧已经出现过」，`.last(where:)` 光看类型会立刻命中那条旧的。
+    private func waitForFrame(_ ws: FakeWebSocket, ofType type: String,
+                              excludingReqID: String) async throws -> IMEnvelope {
+        for _ in 0..<400 {
+            if let match = ws.frames().last(where: { $0.type == type && $0.reqID != excludingReqID }) {
+                return match
+            }
+            try await Task.sleep(nanoseconds: 5_000_000)
+        }
+        throw IMRTCError(.internalError, "没等到帧 \(type)（排除 \(excludingReqID)）")
     }
 }
 
