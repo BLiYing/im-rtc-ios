@@ -349,7 +349,7 @@ public final class IMCallOverlayViewController: UIViewController {
         case .lost: banner.apply(text: "连接已断开"); return
         case .ok: break
         }
-        let poor = state.participants.contains { imIsNetworkPoor(level: $0.networkLevel) }
+        let poor = !state.isGroup && state.participants.contains { imIsNetworkPoor(level: $0.networkLevel) } // 只做 1v1
         if poor, !poorNetworkShown {
             poorNetworkShown = true
             banner.apply(text: "对方网络不佳")

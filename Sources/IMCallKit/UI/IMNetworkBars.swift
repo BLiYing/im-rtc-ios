@@ -11,15 +11,12 @@ import UIKit
 public final class IMNetworkBars: UIView {
 
     /**
-     网络质量图标的总开关。**2026-09-09 暂时关掉。**
+     网络质量图标的总开关。
 
-     根因不在 UI：`room.quality` 是一条**死帧**——服务端 `internal/signal/registry.go`
-     注册了它、也能解析，但全仓没有任何地方发它。于是 `onNetworkQuality` 从不触发，
-     `apply(level:)` 从没被调用过，这个图标从来没在真机上出现过。
-
-     服务端开始下发之后把这里改回 `true` 即可，UI 与分档逻辑都是好的。
+     2026-09-09 关掉过：那时 `room.quality` 是死帧，服务端从不发，这个图标从来没出现过。
+     **2026-09-17 服务端开始每 2 s 下发（server `1c9e924`），打开。** 宿主不想要可以关掉。
      */
-    public static var isEnabled = false
+    public static var isEnabled = true
 
     private let bars = (0..<3).map { _ in UIView() }
     private let textLabel = UILabel()
