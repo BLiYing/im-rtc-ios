@@ -305,6 +305,16 @@ final class DemoSession {
         }
     }
 
+    /// 静音来电铃声（2026-09-16）。同一条落盘规矩：以 `kitConfig.ringtoneMuted` 为准，
+    /// 真机验证「来电铃声 + 回铃音」时用来快速切静音，不用重登。
+    var ringtoneMuted: Bool {
+        get { kitConfig.ringtoneMuted }
+        set {
+            kitConfig.ringtoneMuted = newValue
+            UserDefaults.standard.set(newValue, forKey: Self.ringtoneMutedKey)
+        }
+    }
+
     /// 详细日志 = debug 级别（含主讲人 / 网络质量那些周期事件）。**缺省开**：Demo 就是拿来联调的。
     var verboseLog: Bool = UserDefaults.standard.object(forKey: DemoSession.verboseKey) as? Bool ?? true {
         didSet {
@@ -318,12 +328,14 @@ final class DemoSession {
     private static let bannerKey = "im-rtc-demo.bannerFirst"
     private static let floatingKey = "im-rtc-demo.floatingWindow"
     private static let verboseKey = "im-rtc-demo.verboseLog"
+    private static let ringtoneMutedKey = "im-rtc-demo.ringtoneMuted"
 
     /// 启动时把存过的值灌回去。只灌存过的——没存过就留 Kit 的缺省值。
     private func restoreSwitches() {
         let defaults = UserDefaults.standard
         if let saved = defaults.object(forKey: Self.bannerKey) as? Bool { kitConfig.bannerFirst = saved }
         if let saved = defaults.object(forKey: Self.floatingKey) as? Bool { kitConfig.floatingWindow = saved }
+        if let saved = defaults.object(forKey: Self.ringtoneMutedKey) as? Bool { kitConfig.ringtoneMuted = saved }
         IMRTCLog.setLevel(logLevel)
     }
 

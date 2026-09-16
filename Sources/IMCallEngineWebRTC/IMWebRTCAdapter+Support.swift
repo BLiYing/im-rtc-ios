@@ -80,6 +80,14 @@ extension IMWebRTCAdapter {
 
      `.voiceChat` 模式会打开**回声消除与自动增益**——不配的话自己会听到自己的回声，
      而那听起来像"对方设备有问题"，很容易查错方向。
+
+     **调用时机（2026-09-16 改）**：由 `IMWebRTCAdapter.ensureAudioSessionConfigured()`
+     在媒体真正启动的那一刻调（`acquireMicrophone()` / `answerSubOffer(_:)` 两个入口，
+     为什么是这两个见那个方法所在文件的头部注释），**不再**由 `open(_:)`（= 登录）调。
+     `setSpeakerOn(_:)` **不在其中**：它在拨出中就可点，触发配置会掐断正在放的回铃音。旧时机等于「宿主一登录，全 App 音频会话就被接管」——
+     没开 `.mixWithOthers` 会直接掐断宿主的背景音乐，响铃期间会话又已经是通话态，
+     铃声会走听筒、跟通话音量，等于铃声没做。这与 Android `IMAudioRouter.start()`
+     只在拿到 `room_token`（`IMMediaDriver.drive` 的判据）才调用是同一条时间线。
      */
     func configureAudioSession() {
         let session = RTCAudioSession.sharedInstance()
@@ -91,6 +99,28 @@ extension IMWebRTCAdapter {
         } catch {
             // 配不上不该让通话直接失败：多数情况下仍能出声，只是路由不理想。
             IMRTCLog.warn("音频会话配置失败", ["err": String(describing: error)])
+        }
+    }
+
+    /**
+     releaseAudioSession 媒体停止时把会话放开，与 `configureAudioSession()` 成对。
+
+     **必须带 `notifyOthersOnDeactivation`**：不带的话别的 App（宿主自己的背景音乐、
+     或者用户切出去正放着的别的音频）不会收到「可以恢复了」的通知，会一直静音到
+     它自己下次主动检查。`RTCAudioSession.setActive(_:error:)` 没有带 options 的重载，
+     所以这里取它的 `.session`（就是同一个 `AVAudioSession.sharedInstance()`）来传这个参数——
+     **仍然在 `lockForConfiguration`/`unlockForConfiguration` 里做**，不是绕开
+     `RTCAudioSession` 直接改（那样才会跟 libwebrtc 自己的会话管理打架，见 `setSpeakerOn` 的注释）。
+     */
+    static func releaseAudioSession() {
+        let session = RTCAudioSession.sharedInstance()
+        session.lockForConfiguration()
+        defer { session.unlockForConfiguration() }
+        do {
+            try session.session.setActive(false, options: [.notifyOthersOnDeactivation])
+        } catch {
+            // 放不开不该往上抛：通话已经结束了，顶多是路由状态留了一会儿没归位。
+            IMRTCLog.warn("音频会话释放失败", ["err": String(describing: error)])
         }
     }
 

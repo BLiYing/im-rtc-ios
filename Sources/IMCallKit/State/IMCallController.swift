@@ -1,6 +1,7 @@
 import Foundation
 #if canImport(UIKit)
 import UIKit
+import AVFoundation
 #endif
 import IMCallEngine
 
@@ -51,6 +52,8 @@ public protocol IMCallControllerObserver: AnyObject {
     /// 身份解析器，由 `IMCallKitConfig.profileResolver` 灌进来。**弱引用**：
     /// 宿主多半让自己的某个长生命周期对象来实现它，Kit 不该延长它的寿命。
     @objc public weak var profileResolver: IMProfileResolving?
+    /// Kit 的配置（2026-09-16 新增）；铃声三个字段要现用现读，见 IMCallController+Ringtone.swift。
+    @objc public var config = IMCallKitConfig()
 
     /// 宿主的身份解析回来了，重画用到这些 uid 的地方。
     ///
@@ -93,6 +96,10 @@ public protocol IMCallControllerObserver: AnyObject {
     private var cameraPausedByBackground = false
     /// 最后一批邀请出去的 uid。加人被拒时用它把占位格收回来。
     private var lastInvited: [String] = []
+    #if canImport(UIKit)
+    var ringtonePlayer: AVAudioPlayer? // 起停逻辑见 IMCallController+Ringtone.swift。
+    var ringtoneKind: IMRingtoneKind = .none
+    #endif
     /// 正在 `joinCall(_:)` 加入的那通电话；拒绝时（1409 等）区分「加人被拒」与「加入被拒」两种文案。
     /// 见 `IMCallController+Delegate.swift` 的 `didFailWithError`。
     var joiningCallID: String?
@@ -114,6 +121,9 @@ public protocol IMCallControllerObserver: AnyObject {
         endWatchdog?.cancel()
         hintTimer?.cancel()
         settleTimers.values.forEach { $0.cancel() }
+        #if canImport(UIKit)
+        ringtonePlayer?.stop() // 同一条规矩：持有方释放时要停（2026-09-16 新增）。
+        #endif
     }
 
     public func addObserver(_ observer: IMCallControllerObserver) { observers.add(observer) }
@@ -414,6 +424,9 @@ public protocol IMCallControllerObserver: AnyObject {
 
     /// onStateChanged 处理「状态变了之后要做的事」：结束态自动收起、归零清账、进房后推流、终局计时。
     private func onStateChanged(from before: IMCallViewState) {
+        #if canImport(UIKit)
+        updateRingtone() // 铃声起停的唯一挂载点（2026-09-16 新增），见 IMCallController+Ringtone.swift。
+        #endif
         dismissTimer?.cancel()
         dismissTimer = nil
         /*

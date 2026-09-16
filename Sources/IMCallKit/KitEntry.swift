@@ -63,6 +63,18 @@ public let IMCallKitVersion = IMCallEngineVersion
     ///
     @objc public weak var profileResolver: IMProfileResolving?
 
+    /**
+     来电铃声 / 回铃音（2026-09-16，交互稿「来电铃声 + 回铃音」）。**每次响铃/回铃前现读**，
+     与 `bannerFirst` / `floatingWindow` 同一类——宿主运行时改了立刻生效，不是 init 时的快照
+     （不同于 `inviteCandidates` 那种一次性名单）。`nil` = 用包内置的默认音（`Bundle.module`
+     里的 `im_ringtone.mp3` / `im_ringback.mp3`）。播放逻辑见 `IMCallController+Ringtone.swift`。
+     */
+    @objc public var incomingRingtone: URL?
+    /// 回铃音（拨出中）。同上。
+    @objc public var ringbackTone: URL?
+    /// 静音铃声/回铃音（不影响通话本身的音频）。默认关。
+    @objc public var ringtoneMuted: Bool = false
+
     @objc public override init() {
         super.init()
     }
@@ -88,6 +100,9 @@ public let IMCallKitVersion = IMCallEngineVersion
         self.controller.inviteMemberProvider = config.inviteMemberProvider
         self.controller.allowsManualUIDInput = config.allowsManualUIDInput
         self.controller.profileResolver = config.profileResolver
+        // **存的是同一个 config 实例，不是拷贝字段**：铃声那三个字段要「现用现读」
+        // （见 IMCallKitConfig 的注释），controller 里随时 `config.incomingRingtone` 都是最新值。
+        self.controller.config = config
         super.init()
     }
 

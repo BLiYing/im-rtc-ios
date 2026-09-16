@@ -723,4 +723,30 @@ WebRTC 那部分 macOS 编不进来，**只有第 10 步把关，没真机验**�
 - `IMCallEngine.swift` 本轮加了 `isDestroyed`/`publishedMicCID`/`publishedCameraCID` 三个字段与 `guardNotDestroyed()`/`requireMedia()` 改动后到 594 行，也在往红线靠，`destroy()`/媒体开关的实现体已经拆到独立的 `+Lifecycle.swift`/`+MediaSwitches.swift`，下次别再往主文件塞。
 - `IMInviteMemberProvider` 目前只有 Demo 一个实现验证过；`presentInvitePicker` 接管路径没有真实宿主跑过。
 - **ObjC 状态观察者只有 delegate 形式，没配 block 形式**（`IMCallControllerStateObserver`，CONVENTIONS §4 的「两种都给」这次没做）：目前没有真实宿主提出这个需求，先不加。
+
+## 2026-09-16（第一轮）：`call.incoming.inviter` + 离场发起人可被重新邀请
+
+2026-09-16 傍晚从 current_task.md 移出（当时未提交），原文照录。
+
+### 当时的「当前焦点」
+
+**① 协议新增 `call.incoming.inviter`，来电界面显示「把你加进来的那个人」。**
+线路字段 = 这次邀请是谁发的（首次邀请 = 主叫；`invite_more` 加进来的 = 发那条加人请求的人），**空串回落 `caller`，回落只在
+`CallStateMachine+Recv.handleIncoming` 一处**，不进 `IMCallContext`（只有来电那一刻用得到）。
+- 回调：`didReceiveCall` 直接加 `inviter:`（在 `caller:` 之后，**不留旧 selector**，理由见 delegate 注释），`IMEventDispatcher` 透传；`IMObjCAPICheck.m` 同步改签名。
+- Kit：新增 `IMCallViewState.inviterUID` 与 `callReceived(inviter:)`（**带默认值**，几十个旧调用点一个字没改），reducer 里为空回落 caller；
+  `IMIncomingBanner.apply(caller:)` 改名 `apply(inviter:)`，两个调用点走 `IMCallWindow.incomingDisplayUID`（inviterUID 为空才退回第一个格子）。
+  **九宫格摆格子、`callerUID`、选人页仍用 caller**，没动。
+- 测试：Kit `testIncomingUsesInviterAndFallsBackToCaller`、引擎 `testIncomingCarriesInviterWithCallerFallback`；
+  跑了 `swift test --filter 'CallViewStateTests|HostIntegrationFallbackTests'`（17 + 4 条过）与单独编 Demo `BUILD SUCCEEDED`，当时 `test.sh` 全量没跑（次日随本节一起跑绿）。
+
+**② 离场的发起人可以被重新邀请。** 服务端去掉了 `invite_more` 对发起人的 `bad_params`（见 server current_task）。本仓：
+- `IMInvitePickerViewController` 去掉 `isCallerWhoLeft` 与「暂时无法邀请」，手输 uid 也不再排除发起人；离场的人（含发起人）照常可选。
+- `IMCallViewAction.callReceived` 加带默认值的 `selfUID`（`IMCallController+Delegate` 传 `engine.uid`）：发起人就是自己时不给自己摆格子。
+  横幅显示 `participants.first`，被重新邀请的发起人看到的是通话里某个被叫。注释跟改：`IMCallEngine.inviteMore`、`IMCallViewState.callerUID`。
+- 测试：`CallViewStateTests.testReinvitedCallerGetsNoTileForSelf`；跑了 `swift test --filter CallViewStateTests`（16 条过）+ 单独编 Demo `BUILD SUCCEEDED`，当时 `test.sh` 全量没跑。
+
+**同日已提交 `dba64cb`**：选人页列出全部成员、搜索框钉顶 / 邀请按钮钉底、行改 `IMInviteCandidateCell`（首字母头像 + 两行；`avatarURL` 仍不取图）。
+
+**次日验证**：2026-09-16 稍晚随「铃声 + 音频会话」那一轮一起跑了 `./scripts/test.sh` 全量（10 步全绿，292 例 + 1 skip），确认①②两条改动没有被破坏，但**真机双端联调仍未做**（见下面「下一步」）。
 - **Kit 在视频通话中摄像头无权限 / 无设备（2001/2002）时没有专门的界面提示**——待补。

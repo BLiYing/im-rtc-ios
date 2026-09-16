@@ -213,3 +213,32 @@ public func imNetworkBarsLit(level: Int) -> Int {
 
 /// imIsNetworkPoor：要不要出「对方网络不佳」的提示（3 以上）。
 public func imIsNetworkPoor(level: Int) -> Bool { level >= 3 }
+
+/// 此刻该放哪种铃声（还是不放）。三端同名同值，逐字一致——见 `ringtoneFor`。
+public enum IMRingtoneKind: String, Sendable {
+    case none, incoming, ringback
+}
+
+/**
+ ringtoneFor 决定此刻该不该放铃声、放哪一种（播放动作在 `IMCallController+Ringtone.swift`）。
+
+ **纯函数，不带 UIKit**：与本文件其余判据放在一起，才能在 macOS 上 `swift test` 覆盖到——
+ Kit 的 UI/播放器代码全包在 `#if canImport(UIKit)` 里，这台机器编不到那一半。
+
+ `muted` 优先于一切：宿主/用户静音了什么都不放。会议没有振铃（`meetingJoined` 直接进
+ `connecting`，从没经过 `incoming`/`outgoing`），`isMeeting` 这里仍显式判一道，意图更明确、
+ 不依赖「反正 phase 也到不了那两档」这种隐含前提。
+
+ **停铃按 phase 收敛，不按事件特判**：`.callEnd` 在 `phase == .incoming` 时直接重置回
+ `idle`、不经过 `.ended`（`IMCallViewState.swift` 的 `reduceCallView`），二者 default 分支
+ 都落在 `.none`，同一条规则天然盖住两条路径。
+ */
+public func ringtoneFor(_ state: IMCallViewState, muted: Bool) -> IMRingtoneKind {
+    if muted { return .none }
+    if state.isMeeting { return .none }
+    switch state.phase {
+    case .incoming: return .incoming
+    case .outgoing: return .ringback
+    default: return .none
+    }
+}

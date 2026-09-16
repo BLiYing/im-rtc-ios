@@ -1,45 +1,69 @@
 # Current Task — im-rtc-ios（Swift Engine + Kit + Demo）
 
-> **活快照**：就地覆盖、不追加。历史见 `git log` 与 [current_task.archive.md](current_task.archive.md)（末节「2026-09-15（第三轮）：四端 API 命名对齐」）。
+> **活快照**：就地覆盖、不追加。历史见 `git log` 与 [current_task.archive.md](current_task.archive.md)（末节「2026-09-16（第一轮）：`call.incoming.inviter` + 离场发起人可被重新邀请」）。
 > 规范 [CONVENTIONS.md](CONVENTIONS.md) · 分期 server `docs/design/RTC_CALL_DESIGN.md` §10 ·
 > 界面以设计稿 **v3.1** 为准：`../im-rtc-server/docs/design/sketches/RTC_CALL_UI_SPEC.html` / `RTC_CALL_UX_FLOWS.html`。
 > ✅ 状态只写在 `../im-rtc-server/docs/CLIENT_PARITY.md`。
 
 ## 当前焦点
 
-**2026-09-16（未提交，两件事）：① 协议新增 `call.incoming.inviter`，来电界面显示「把你加进来的那个人」。**
-线路字段 = 这次邀请是谁发的（首次邀请 = 主叫；`invite_more` 加进来的 = 发那条加人请求的人），**空串回落 `caller`，回落只在
-`CallStateMachine+Recv.handleIncoming` 一处**，不进 `IMCallContext`（只有来电那一刻用得到）。
-- 回调：`didReceiveCall` 直接加 `inviter:`（在 `caller:` 之后，**不留旧 selector**，理由见 delegate 注释），`IMEventDispatcher` 透传；`IMObjCAPICheck.m` 同步改签名。
-- Kit：新增 `IMCallViewState.inviterUID` 与 `callReceived(inviter:)`（**带默认值**，几十个旧调用点一个字没改），reducer 里为空回落 caller；
-  `IMIncomingBanner.apply(caller:)` 改名 `apply(inviter:)`，两个调用点走 `IMCallWindow.incomingDisplayUID`（inviterUID 为空才退回第一个格子）。
-  **九宫格摆格子、`callerUID`、选人页仍用 caller**，没动。
-- 测试：Kit `testIncomingUsesInviterAndFallsBackToCaller`、引擎 `testIncomingCarriesInviterWithCallerFallback`；
-  跑了 `swift test --filter 'CallViewStateTests|HostIntegrationFallbackTests'`（17 + 4 条过）与单独编 Demo `BUILD SUCCEEDED`，**`test.sh` 全量没跑**。
+**2026-09-16（第二轮，未提交）：来电铃声 + 回铃音，顺带修音频会话时机缺陷。**`./scripts/test.sh` 全绿（10 步，293 例=292 执行+1 skip，含 Demo `BUILD SUCCEEDED`）。
 
-**② 离场的发起人可以被重新邀请。** 服务端去掉了 `invite_more` 对发起人的 `bad_params`（见 server current_task）。本仓：
-- `IMInvitePickerViewController` 去掉 `isCallerWhoLeft` 与「暂时无法邀请」，手输 uid 也不再排除发起人；离场的人（含发起人）照常可选。
-- `IMCallViewAction.callReceived` 加带默认值的 `selfUID`（`IMCallController+Delegate` 传 `engine.uid`）：发起人就是自己时不给自己摆格子。
-  横幅显示 `participants.first`，被重新邀请的发起人看到的是通话里某个被叫。注释跟改：`IMCallEngine.inviteMore`、`IMCallViewState.callerUID`。
-- 测试：`CallViewStateTests.testReinvitedCallerGetsNoTileForSelf`；跑了 `swift test --filter CallViewStateTests`（16 条过）+ 单独编 Demo `BUILD SUCCEEDED`，`test.sh` 全量没跑。
+**音频会话时机（治本，没走 Kit 临时切 category 的退路）**：`IMWebRTCAdapter.configureAudioSession()` 原来挂在 `open(_:)`（= `login()`）上，登录一成功就把会话接管成 `.playAndRecord`+`.voiceChat`+active，跟有没有通话无关——宿主背景音乐被掐断（没开 `.mixWithOthers`），响铃期间会话已是通话态、铃声等于没做。查过 iOS 这边没有 Android `IMMediaDriver.drive()`（按 room_token 判「媒体真正启动」）那种集中判断点，媒体是 `IMWebRTCAdapter` 内部按需惰性起（`ensurePeers()`），所以把配置挪到了实际拿麦克风的那一刻：
+- `IMWebRTCAdapter.open(_:)` 只接线 events，不再碰会话。
+- `acquireMicrophone()` 开头调新方法 `ensureAudioSessionConfigured()`（`audioSessionActive` 标记只配一次，归 `lock`）。
+- `answerSubOffer(_:)` 也调它——**这条是收听远端音频那一路**：服务端推 `room.offer(pc=sub)` 后，状态机在同一次 reduce 里就产出应答帧、整条链路跑在 Engine 帧循环里，
+  跟 Kit 什么时候起 `Task` 调 `acquireMicrophone()` **没有任何先后约束**，下行 offer 完全可能先到。漏了它的症状是「接通了但听不到对方」，
+  而且是这次挪动**新引入**的窗口（旧实现会话在 `login()` 就配好了，永远碰不到）。
+- `setSpeakerOn(_:)` **只记选择、不配置会话**（整个方法已搬进 `+AudioSession.swift`）。它一度也是触发入口，理由是 Kit 在「进房即可发布」那一刻先同步调它、再另起 `Task` 异步走到 `acquireMicrophone()`，
+  会话没配好时 `overrideOutputAudioPort` 会静默失效。但 `/code-review` 抓到：**那颗扬声器按钮在拨出中（`.outgoing`）就能点**
+  （`IMCallOverlayViewController.renderControls` 里 `.outgoing` 落在带 `speakerButton` 的两个分支上；`.incoming` 是 `top = []`，所以只有主叫的回铃音暴露），
+  那时回铃音正放着，由它去配置会话等于当场把回铃音掐断或拽到通话路由上——**正好把这次要修的毛病又犯一遍**。
+  改成：记进 `desiredSpeakerOn`，已配置就立即应用，没配置就等上面两个入口配好后由 `ensureAudioSessionConfigured()` 补应用，意向不丢。
+  **残留限制**：响铃期间点它只决定「接通后用哪路」，不改回铃音本身的外放与否（回铃音是 Kit 的 `AVAudioPlayer` 放的，不归 adapter 管）；按钮亮灭仍跟 `state.selfState.speakerOn`，界面不自相矛盾。
+- `close()` 收场对称补上：配置过的话调新方法 `IMWebRTCAdapter+Support.releaseAudioSession()`（`RTCAudioSession.session.setActive(false, options: [.notifyOthersOnDeactivation])`，仍在 `lockForConfiguration` 里做，不绕开 `RTCAudioSession`）；没配置过（只起过预览、mic 从没 acquire 就被挂断）不动会话。
+- 没有证据显示这次挪动会破坏 libwebrtc 音频单元的初始化时序：`ensurePeers()`/工厂本来就是惰性建的，配置时机只是从「远早于 PC 创建」挪到「紧邻 PC/轨道创建之前」，方向是更贴近而不是更冒险；`xcodebuild` 编译通过，但**时序是否真的安全只能靠真机听感验证**，见下面「必须真机验证」。
 
-**同日已提交 `dba64cb`**：选人页列出全部成员、搜索框钉顶 / 邀请按钮钉底、行改 `IMInviteCandidateCell`（首字母头像 + 两行；`avatarURL` 仍不取图）。
+**铃声实现**：
+- 素材 `Sources/IMCallKit/Resources/im_ringtone.mp3` / `im_ringback.mp3`，`Package.swift` 给 `IMCallKit` target 加 `resources: [.process("Resources")]`。
+- 纯判据 `ringtoneFor(_ state: IMCallViewState, muted: Bool) -> IMRingtoneKind`（`IMCallViewRules.swift`，不带 UIKit，`swift test` 覆盖得到）：`muted`/`isMeeting` → `.none`；`incoming` → `.incoming`；`outgoing` → `.ringback`；其余 → `.none`。停铃按 phase 收敛，不按事件特判（`.callEnd` 在 `incoming` 时直接回 `idle`、不经过 `ended`，两者 default 分支都落 `.none`）。
+- 播放层 `Sources/IMCallKit/State/IMCallController+Ringtone.swift`（新文件，`#if canImport(UIKit)`，`AVAudioPlayer`，`numberOfLoops = -1`）；挂载点是 `IMCallController.onStateChanged(from:)`（`state` 的 `didSet` 已去重），**没有**挂 `IMCallControllerObserver.callController(_:didChange:)`（`broadcast()` 在 state 没变时也会被调，会重复触发）。
+- `IMCallKitConfig` 加 `incomingRingtone: URL?` / `ringbackTone: URL?`（nil = 内置）/ `ringtoneMuted: Bool = false`；`IMCallController` 新增 `config` 引用（`IMCallKit.init` 换成真实例，语义同 `bannerFirst`——现用现读，不是 init 快照）。
+- Demo：`DemoSession.ringtoneMuted` 落 `UserDefaults`（同 `bannerFirst`/`floatingWindow` 写法），`SettingsViewController` 加「静音来电铃声」开关，供真机对照验证。
+- 测试：`Tests/IMCallKitTests/RingtoneRulesTests.swift`（6 条，覆盖 incoming/outgoing/会议/muted/其余阶段/两条停铃路径）。
+
+**体量**：改完 `IMWebRTCAdapter.swift` 584 行、`IMCallController.swift` 594 行，都在 600 红线内（`setSpeakerOn` 搬走后主文件又降了 13 行）。
+腾行数靠**拆文件**：新建 `Sources/IMCallEngineWebRTC/IMWebRTCAdapter+AudioSession.swift`（58 行）放 `ensureAudioSessionConfigured()`。
+**旧注释一个字都没动**——第一版曾为腾额度精简过两个文件里跟本轮无关的旧注释（`RTCPeerConnection` 报废必崩、`lock` 数据竞争、跨 await 代际、
+`setSpeakerOn` 不绕开 `RTCAudioSession`、`acquireMicrophone` 的 cid、`close()` 代际，以及 `IMCallController` 顶部三段），
+已用 `git show HEAD:` 逐字复原并核对过 diff：两个文件加起来只剩两行删除（`lock` 去掉 `private`、搬走的那句 `configureAudioSession()`），其余全是新增。
+**下次再碰这两个文件，腾体量一律拆文件，不许动注释**——那些注释记的是已经付过代价的坑。
+（`ringtonePlayer` / `ringtoneKind` 是存储属性，Swift 不允许扩展加存储属性，只能留在主体里，逻辑都在 `+Ringtone.swift`。）
 
 ## 下一步
 
-1. 用户真机自测（服务端先重启）：发起人挂断后被邀请回来能响铃、接听、说话，来电横幅不出现自己的格子；**键盘弹起时底部邀请按钮会不会被挡**仍没专门验过。
-   自测过了跑 `./scripts/test.sh` 再提交。
-2. **真机验收（累积项，未做）**：API 命名对齐新签名（`callDidEnd` / `activeSpeakersDidChange` / `networkQualityDidChange` 在 Kit / Demo ObjC / 自画 UI 都收得到，`destroy()`、`openMicrophone` / `openCamera`）；
-   M1/M2 两台设备群呼带 `chatGroupID`、中途 `joinCall` 进房、选人页翻页/搜索/置灰；1409 两种文案没连过真服务端。IMProgram / 容信真实接入是后续期（M3-M7）。
+1. **必须真机验证（这一轮新增，最关键）**：
+   - 来电铃声在**响铃阶段**能听到、且**不是**通话音质/路由（不应该走听筒、不应该跟通话音量走）；接听/拒接/取消后铃声/回铃音立即停。
+   - 回铃音在**拨出中**响，对方接听那一刻停，转成通话。
+   - **音频会话挪动的核心验证**：确认接听/拨通后**通话本身的音频质量正常**——双向说话清楚、无回声（`.voiceChat` 生效）、无异常延迟或断续；反复打好几通电话（尤其第二通、第三通）确认 `audioSessionActive` 标记的复位没有导致会话配置漏掉或重复报错。
+   - **宿主背景音乐场景**：宿主 App 播着音乐时登录 SDK（不打电话），确认音乐不受影响（这是这次修复要解决的原问题）；来电响铃时确认音乐是被跟着响铃「混音/让路」还是被打断，与 Kit 的铃声一起听感是否正常。
+   - 通话结束后确认音频会话被正确释放（`releaseAudioSession()`）：挂断后如果宿主之前有背景音乐在放，看它是否能恢复播放（`notifyOthersOnDeactivation` 生效与否只能真机听）。
+   - 视频通话：响铃阶段开着摄像头预览时（`startRingingPreviewIfAllowed`/`startPreviewIfWanted`）确认铃声不受摄像头预览影响（预览走的是 `ensurePeers()`，不触发音频会话，理论上互不干扰，但要真机确认一遍）。
+   - Demo 的「静音来电铃声」开关：切换后重新收到来电，确认响铃真的消音；切回来确认又能响。
+   - 宿主传自定义 `incomingRingtone`/`ringbackTone`（`URL?`）时能被使用（Demo 当前没有 UI 演示自定义铃声，如果要验这条得手动改 Demo 代码指一个文件测一次）。
+2. **累积未做的真机验收**（上一轮遗留，与本轮无关但仍待办）：API 命名对齐新签名（`callDidEnd`/`activeSpeakersDidChange`/`networkQualityDidChange`/`destroy()`/`openMicrophone`/`openCamera`）；M1/M2 两台设备群呼带 `chatGroupID`、中途 `joinCall` 进房、选人页翻页/搜索/置灰；`call.incoming.inviter` 与「离场发起人可被重新邀请」两条双端联调；1409 两种文案没连过真服务端。IMProgram / 容信真实接入是后续期（M3-M7）。
 
 **待办 / 已知限制**：
-- `IMCallController.swift`（581 行）、`IMCallOverlayViewController.swift`（596 行）、`IMCallEngine.swift`（594 行）都逼近 600 行红线，下次改动前先规划再拆；`destroy()` / 媒体开关已拆到 `+Lifecycle.swift` / `+MediaSwitches.swift`，别再往主文件塞。
+- `IMWebRTCAdapter.swift`（594 行）、`IMCallController.swift`（597 行）、`IMCallOverlayViewController.swift`（596 行）、`IMCallEngine.swift`（558 行）、`SignalConnection.swift`（594 行）都逼近或已经很接近 600 行红线（`check-file-size.sh` 目前是 WARN，没超）——下次往这几个文件加东西之前先规划怎么拆。
+- **这一轮没做振动**（来电时手机震动），需要时另开一轮引 AudioToolbox / CoreHaptics。
+- 宿主自定义铃声（`incomingRingtone`/`ringbackTone`）目前只有代码路径，没有 Demo UI 演示，也没有真机验证过传自定义文件能正常播放。
 - `IMInviteMemberProvider` 只有 Demo 一个实现验证过；`presentInvitePicker` 接管路径没有真实宿主跑过。
 - **ObjC 状态观察者只有 delegate 形式，没配 block 形式**（`IMCallControllerStateObserver`，CONVENTIONS §4 的「两种都给」没做）：没有宿主提需求，先不加。
 - **Kit 在视频通话中摄像头无权限 / 无设备（2001/2002）时没有专门的界面提示**——待补。
 
 ## 已知坑 / 限制
 
+- **音频会话不再在 `login()` 时配置**（2026-09-16 改）：如果以后发现某条路径「应该出声却没出声」，先确认是不是漏了 `ensureAudioSessionConfigured()` 这一环（目前挂在 `acquireMicrophone()` / `setSpeakerOn(_:)` 两处），**别把老经验（会话在登录后就绪）当成还成立的前提**。
 - **simulcast 没生效，换包暂缓**（2026-09-09 拍板，**别重查**）：`stasel/WebRTC 152.0.0` 没有 `RTCVideoEncoderFactorySimulcast`，三个 encoding 进得了 SDP 但只跑第一个（h），SFU 降层对 iOS 无效。
   选定候选 `webrtc-sdk/Specs 150.7871.01`（`RTC*` 原名、product 同名、0 处改名）；checksum、逐类兼容核对、换包三件事、M152→M150 与 H.264/VP8 取舍、兜底 M144，全在 archive 末节「已知坑」第一条。
   **`IMVideoProfile.simulcastLayers` 的 h,m,l 顺序只能随换包一起改**，单独改成 l 在前 = 当场发 1/4 分辨率。真换包时同步 `CLIENT_PARITY.md` §3 里程碑表。
@@ -47,8 +71,7 @@
 - **别单独 `rm -rf DerivedData`**：Xcode 开着时只删掉 `SourcePackages/`，SwiftPM 命中 `~/Library/Caches/org.swift.swiftpm/artifacts/` 里的 44MB WebRTC zip 就跳过下载然后 `fatalError`
   （`There is no XCFramework found …`），越清越坏。平时用 ⇧⌘K；真要清先退 Xcode 两个一起清：
   `osascript -e 'quit app "Xcode"'; sleep 3; rm -rf ~/Library/Developer/Xcode/DerivedData ~/Library/Caches/org.swift.swiftpm/artifacts`。已踩了就把缓存 zip 挪走（别删）再 `xcodebuild -resolvePackageDependencies`。
-- **Kit 界面代码 macOS 上编不到**（`#if canImport(UIKit)`）：`swift test` 绿不算数，只有 `test.sh` 第 10 步编 Demo、碰 `WebRTC.xcframework`。macOS 也要编的 Controller 文件不能引用 `IMKitTheme`（时长常量放 `IMCallViewRules.swift`）。
-  **2026-09-15 踩了一次**：`swift build`/`swift test` 在这台机器上把整个 `#if canImport(UIKit)` 块当空文件——文件里就算有明显的未导入符号（缺一行 `import IMCallEngine`）也**不会报错**，`swift build --target IMCallKit` 照样绿；只有 `xcodebuild`（test.sh 第 10 步）才会真的编到这些文件。改 Kit 的 UI 文件后**必须跑一次完整 `test.sh`**，光看 `swift build`/`swift test` 的绿没有意义。
+- **Kit 界面代码 macOS 上编不到**（`#if canImport(UIKit)`）：`swift test` 绿不算数，只有 `test.sh` 第 10 步编 Demo、碰 `WebRTC.xcframework`。macOS 也要编的 Controller 文件不能引用 `IMKitTheme`（时长常量放 `IMCallViewRules.swift`）；铃声播放层（`IMCallController+Ringtone.swift`）同理全包在 `#if canImport(UIKit)`，改它之后必须跑一次完整 `test.sh`。
 - **`join_denied` 不是协议 reason**：`IMCallController` 在 `IMCallKit.joinCall(_:)` 被 1409 拒绝时，把随后到来的 `callDidEnd(reason:"error")` 本地改写成这个伪原因，只用来在结束画面显示「无法加入该通话」，从不上线路、也不在 `IMCallEndReason` 里——四端一致性向量不认识它，改这块时别把它当成协议的一部分去对齐其他端。
 - **「人先进来、轨道后到」是常态**：摆格子时做的动作（层上报、尺寸、订阅）要能在轨道到达时再做一遍，别让去重表吃掉补做（`report(_:layer:hasVideo:)`）。
 - **通话中关摄像头停的是采集、不是轨道**：重开失败只记日志（按钮开着、格子一直底色）；Kit 每点一次开一个 `Task` 调 `setMuted`，没严格排队；
@@ -79,7 +102,7 @@
   ./scripts/test.sh                # 唯一测试入口（10 步，末步为 iOS 编 Demo）
   BUILD_ONLY=1 ./scripts/test.sh   # 只编译
   SKIP_DEMO_BUILD=1 ./scripts/test.sh   # 跳过 xcodebuild（快，但验不到 Kit 的 UI）
-  swift test --filter KitRulesTests     # 只跑纯逻辑用例
+  swift test --filter RingtoneRulesTests   # 只跑铃声判据用例
   cd ../im-rtc-server && ./scripts/dev.sh                                   # 起服务端
   RTC_LIVE_SERVER=http://127.0.0.1:8787 swift test --filter LiveServerTests # 真服务端联调
   ```

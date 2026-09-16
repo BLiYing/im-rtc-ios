@@ -64,7 +64,8 @@ let package = Package(
         // Kit 依赖 Engine，**绝不反向**（CONVENTIONS §1）。
         // 分成两个 target 而不是一个带 UI 的大 target：跨 module 的边界
         // 让「Kit 只能看见 Engine 的 public 面」每次编译都被检查一遍。
-        .target(name: "IMCallKit", dependencies: ["IMCallEngine"]),
+        .target(name: "IMCallKit", dependencies: ["IMCallEngine"],
+                resources: [.process("Resources")]),
         /*
          媒体实现。**iOS-only**：libwebrtc 的 ObjC API 与渲染视图都只在 iOS 上有，
          整个 target 的源码包在 `#if canImport(UIKit) && canImport(WebRTC)` 里，

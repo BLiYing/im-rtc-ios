@@ -52,7 +52,7 @@ public final class IMWebRTCAdapter: NSObject, IMMediaAdapter, @unchecked Sendabl
      `usingFrontCamera` 都在锁外面读写，而 `close()` 由状态机那条线程调、
      `startLocalPreview()` / `switchCamera()` 由界面那条线程调，是实打实的数据竞争。
      */
-    private let lock = NSLock()
+    let lock = NSLock()
 
     /**
      采集代际。`close()` 与进房前的 `stopLocalPreview()` 每次 +1。
@@ -85,6 +85,8 @@ public final class IMWebRTCAdapter: NSObject, IMMediaAdapter, @unchecked Sendabl
     private var syntheticCapturer: IMSyntheticVideoCapturer?
     /// 下一个上行 offer 要不要带 ICE restart。见 `restartPubICE()`。
     private var pubICERestartPending = false
+    var audioSessionActive = false // 见 IMWebRTCAdapter+AudioSession.swift。
+    var desiredSpeakerOn = false // 同上：会话还没配好时先记下来，配好再补应用。
 
     /// - Parameters:
     ///   - videoProfile: 画质档位，默认 720p。
@@ -107,9 +109,9 @@ public final class IMWebRTCAdapter: NSObject, IMMediaAdapter, @unchecked Sendabl
 
     // MARK: - IMMediaAdapter
 
+    /// open 接线事件出口。**不配音频会话**（2026-09-16 改）——理由见 `ensureAudioSessionConfigured()` 顶部注释。
     public func open(_ events: IMMediaAdapterEvents) {
         self.events = events
-        configureAudioSession()
     }
 
     /// ensurePeers 拿一对可用的 PC；上一对被 close 过就现造一对并接好回调。
@@ -145,8 +147,10 @@ public final class IMWebRTCAdapter: NSObject, IMMediaAdapter, @unchecked Sendabl
      `MediaStreamTrack.id`，只能先拿轨道再读它的 id；ObjC 版的
      `audioTrackWithTrackId:` 可以直接指定。服务端认的是 msid 的第二段
      （协议 §3.2），而那一段就是 track id，所以指定它即可。
+     **2026-09-16 新增**：开头调 `ensureAudioSessionConfigured()`，理由见该方法顶部注释。
      */
     public func acquireMicrophone() async throws -> IMLocalTrackInfo {
+        ensureAudioSessionConfigured()
         let cid = "mic-\(UUID().uuidString.prefix(8))"
         let source = ensurePeers().factory.audioSource(with: RTCMediaConstraints(
             mandatoryConstraints: nil, optionalConstraints: nil))
@@ -351,7 +355,9 @@ public final class IMWebRTCAdapter: NSObject, IMMediaAdapter, @unchecked Sendabl
     }
 
     /// answerSubOffer 应答服务端下发的下行 offer。**sub 的 offerer 恒为服务端**。
+    /// **2026-09-16 新增**：开头也调 `ensureAudioSessionConfigured()`——服务端推下行 offer 与 Kit 调 `acquireMicrophone` 是两条独立异步路径，前者可能先到，理由见该方法顶部注释。
     public func answerSubOffer(_ sdp: String) async throws -> String {
+        ensureAudioSessionConfigured()
         try await ensurePeers().setRemoteDescription(
             RTCSessionDescription(type: .offer, sdp: sdp), for: .sub)
         let constraints = RTCMediaConstraints(mandatoryConstraints: nil, optionalConstraints: nil)
@@ -410,19 +416,6 @@ public final class IMWebRTCAdapter: NSObject, IMMediaAdapter, @unchecked Sendabl
             camera.startCapture(with: choice.device, format: choice.format, fps: choice.fps)
         } catch {
             IMRTCLog.warn("重新打开摄像头失败", ["err": String(describing: error)])
-        }
-    }
-
-    /// setSpeakerOn 切扬声器。走 `RTCAudioSession` 而不是直接碰 `AVAudioSession`——
-    /// libwebrtc 自己也在管这个 session，绕开它会两边打架。
-    public func setSpeakerOn(_ on: Bool) {
-        let session = RTCAudioSession.sharedInstance()
-        session.lockForConfiguration()
-        defer { session.unlockForConfiguration() }
-        do {
-            try session.overrideOutputAudioPort(on ? .speaker : .none)
-        } catch {
-            IMRTCLog.warn("切换扬声器失败", ["on": String(on), "err": String(describing: error)])
         }
     }
 
@@ -514,6 +507,7 @@ public final class IMWebRTCAdapter: NSObject, IMMediaAdapter, @unchecked Sendabl
     ///
     /// 代际 +1 是给还挂在 await 上的采集流程看的：它们醒来会发现自己这一轮已经作废
     /// （见 `captureGeneration`），从而不会把摄像头留在那儿亮着。
+    /// **2026-09-16 新增**：顺带释放音频会话（配置过才释放），理由见 `ensureAudioSessionConfigured()` 顶部注释。
     public func close() {
         lock.lock()
         captureGeneration += 1
@@ -521,6 +515,7 @@ public final class IMWebRTCAdapter: NSObject, IMMediaAdapter, @unchecked Sendabl
         let synthetic = syntheticCapturer
         // **关掉就丢掉**：RTCPeerConnection 不能复用，下一通电话由 ensurePeers 现造一对。
         let oldPeers = peers
+        let wasAudioSessionActive = audioSessionActive
         capturer = nil
         syntheticCapturer = nil
         videoSource = nil
@@ -529,6 +524,8 @@ public final class IMWebRTCAdapter: NSObject, IMMediaAdapter, @unchecked Sendabl
         capturePaused = false
         localTracks = [:]
         peers = nil
+        audioSessionActive = false
+        desiredSpeakerOn = false
         lock.unlock()
 
         // 真正的关闭动作放在锁外面：不把 libwebrtc 的调用圈进自己的锁里。
@@ -536,6 +533,7 @@ public final class IMWebRTCAdapter: NSObject, IMMediaAdapter, @unchecked Sendabl
         registry.removeAll()
         uplinkVideoStats.cancel()
         oldPeers?.close()
+        if wasAudioSessionActive { Self.releaseAudioSession() }
     }
 
     // MARK: - 内部
