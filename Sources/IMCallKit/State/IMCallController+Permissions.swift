@@ -38,6 +38,19 @@ final class IMSystemPermissionProbe: IMDevicePermissionProbe, @unchecked Sendabl
     #endif
 }
 
+/**
+ imCameraFailureActions：通话里**媒体层起不来摄像头**（开摄像头 / 进房推流 / 本端预览抛错）该落到界面上的几步。
+
+ 原先三处 catch 只置 `cameraBlocked`：按钮悄悄变成禁用态，没有一句话说明——模拟器上打视频电话，
+ 用户只看到按钮灰了。Web / Android 都会说一句（`blockedCopy` / 「摄像头不可用」），这里补上同一句文案。
+ 不是 2001 / 2002 的错误也要把按钮熄掉：乐观点亮的按钮不熄，用户以为自己出镜了，对端什么也没收到。
+ 权限门自己拦下的那条（`settle` 的 `.cameraBlocked`）不走这里：门上已经出过说明卡。
+ */
+func imCameraFailureActions(_ error: Error) -> [IMCallViewAction] {
+    guard let failure = classifyPermissionError(error) else { return [.setCamera(false)] }
+    return [.cameraBlocked, .hint(imPermissionBlocked(.camera, failure).title)]
+}
+
 /// classifyPermissionError 把 Engine 抛的 2001 / 2002 归成被拒 / 无设备；别的错误不是权限问题。
 func classifyPermissionError(_ error: Error) -> IMPermissionFailure? {
     guard let rtc = error as? IMRTCError else { return nil }
@@ -126,7 +139,8 @@ extension IMCallController {
             await MainActor.run {
                 guard epoch == self.previewEpoch else { return }
                 self.previewStarting = false
-                if classifyPermissionError(error) != nil { self.apply(.cameraBlocked) }
+                // 别的错误不熄按钮：来电页上熄按钮等于「以语音接听」，而接听时推流还会再试一次。
+                if classifyPermissionError(error) != nil { imCameraFailureActions(error).forEach(self.apply) }
             }
         }
     }

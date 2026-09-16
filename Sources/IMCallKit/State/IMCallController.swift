@@ -333,7 +333,7 @@ public protocol IMCallControllerObserver: AnyObject {
                 IMRTCLog.warn("[Kit] 开摄像头失败", ["err": String(describing: error)])
                 await MainActor.run {
                     self.apply(.setCamera(false))
-                    if classifyPermissionError(error) != nil { self.apply(.cameraBlocked) }
+                    imCameraFailureActions(error).forEach(self.apply)
                 }
             }
         }
@@ -543,7 +543,7 @@ public protocol IMCallControllerObserver: AnyObject {
                 cameraPublished = true
             } catch {
                 IMRTCLog.warn("[Kit] 摄像头推流失败，本通只有声音", ["err": String(describing: error)])
-                if classifyPermissionError(error) != nil { await MainActor.run { self.apply(.cameraBlocked) } }
+                await MainActor.run { imCameraFailureActions(error).forEach(self.apply) }
             }
         }
         // 发布是异步的，**这期间用户完全可能已经点过静音或关摄像头**——补一遍，否则界面显示「已静音」而对方照样听得见。

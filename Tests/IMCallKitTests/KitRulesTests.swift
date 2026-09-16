@@ -1,5 +1,6 @@
 import XCTest
 @testable import IMCallKit
+import IMCallEngine
 
 /**
  设计稿 v3 落地的那几条纯逻辑：小窗四角算术、头像哈希、权限三段式、版式选择。
@@ -341,5 +342,35 @@ final class EndedScreenTests: XCTestCase {
         }
         XCTAssertEqual(imEndReasonText("什么鬼", role: "caller", durationSec: 0), "已结束",
                        "未知值兜底成「已结束」，不显示原始英文")
+    }
+}
+
+/// 通话里摄像头起不来要说一句话，不能只把按钮悄悄变灰（server `/guide/kit#hints`）。
+final class CameraFailureTests: XCTestCase {
+
+    private func run(_ error: Error) -> IMCallViewState {
+        var state = IMCallViewState()
+        state = reduceCallView(state, .setCamera(true))
+        return imCameraFailureActions(error).reduce(state, reduceCallView)
+    }
+
+    func testNoDeviceBlocksAndSaysSo() {
+        let state = run(IMRTCError(.deviceNotFound, "没有可用的摄像头"))
+        XCTAssertTrue(state.selfState.cameraBlocked)
+        XCTAssertFalse(state.selfState.cameraOn)
+        XCTAssertEqual(state.hint, "找不到可用的摄像头，已用语音继续通话")
+    }
+
+    func testDeniedBlocksAndSaysSo() {
+        let state = run(IMRTCError(.devicePermissionDenied, "摄像头权限被拒"))
+        XCTAssertTrue(state.selfState.cameraBlocked)
+        XCTAssertEqual(state.hint, "没有摄像头权限，已用语音继续通话")
+    }
+
+    func testOtherErrorOnlyTurnsButtonOff() {
+        let state = run(IMRTCError(.internalError, "boom"))
+        XCTAssertFalse(state.selfState.cameraOn, "乐观点亮的按钮要熄掉")
+        XCTAssertFalse(state.selfState.cameraBlocked, "不是权限问题，下次还能再点")
+        XCTAssertEqual(state.hint, "")
     }
 }
