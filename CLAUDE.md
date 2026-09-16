@@ -55,7 +55,7 @@ Demo 依赖的是本地源码还是公网发布的 SDK：
 | 打开 | 档位 | 包依赖来源 | 用途 |
 |---|---|---|---|
 | **`IMRTCDemo.xcworkspace`** | 源码档 | 本仓根目录（本地包覆盖同名远端包） | **日常开发默认用这个**——改了 `Sources/` 下的代码立刻在 Demo 里见效 |
-| **`IMRTCDemo.xcodeproj`**（单独打开） | 公网包档 | `github.com/BLiYing/im-rtc-ios.git`（`branch = main`，tag `1.0.0` 推上去后改成 `exactVersion 1.0.0`） | 验证第三方按公开仓库集成时的真实体验；要联网，且落后于本地未推送的提交 |
+| **`IMRTCDemo.xcodeproj`**（单独打开） | 公网包档 | `github.com/BLiYing/im-rtc-ios.git`（`exactVersion 1.0.0`，发新版时跟着改） | 验证第三方按公开仓库集成时的真实体验；要联网，只看得到已推送并打了 tag 的代码 |
 
 `xcodeproj` 的包依赖本身写的就是公网 URL（`XCRemoteSwiftPackageReference`）；`xcworkspace` 是
 把这个 `xcodeproj` 和本仓根目录（含 `Package.swift`）一起放进工作区，Xcode 发现本地目录名
