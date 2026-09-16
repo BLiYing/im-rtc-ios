@@ -141,6 +141,14 @@ extension IMCallMachine {
         next.userData = Wire.string(data, "user_data")
 
         /*
+         inviter 是**这次邀请是谁发的**：首次邀请就是主叫，`call.invite_more` 加进来的人
+         是发那条加人请求的那个。旧服务端不带这个字段，**空串回落 caller，回落只在这一处**。
+         不进 IMCallContext：只有来电那一刻用得到，接通之后没人再问它。
+        */
+        let rawInviter = Wire.string(data, "inviter")
+        let inviter = rawInviter.isEmpty ? next.callerUID : rawInviter
+
+        /*
          **callee_ids 要原样带给宿主。** 群通话里被叫这一侧原先只知道主叫是谁，
          界面上就只能画「已经进来的人」；主叫那边是四格（含还没接的占位格），
          被叫这边是两格，同一通电话两种样子。这条信息服务端一直在发（§4.2 的
@@ -152,6 +160,7 @@ extension IMCallMachine {
         return out(next, emit: [IMEmittedEvent("onCallReceived", [
             "call_id": .string(next.callID),
             "caller": .string(next.callerUID),
+            "inviter": .string(inviter),
             "callee_ids": .array(Wire.stringArray(data, "callee_ids").map { .string($0) }),
             "media_type": .string(mediaType),
             "is_group": .bool(next.isGroup),

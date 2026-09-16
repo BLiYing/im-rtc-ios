@@ -63,12 +63,13 @@ extension IMCallController: IMCallEngineDelegate {
     // MARK: 来电与拨出
 
     public func callEngine(_ engine: IMCallEngine, didReceiveCall callID: String,
-                           caller: String, calleeIDs: [String], mediaType: String, isGroup: Bool,
+                           caller: String, inviter: String, calleeIDs: [String],
+                           mediaType: String, isGroup: Bool,
                            chatGroupID: String, userData: String) {
         // 名单里含自己，摆格子之前先去掉——「自己」不是远端成员。
         let others = calleeIDs.filter { $0 != engine.uid }
-        apply(.callReceived(callID: callID, caller: caller, calleeIDs: others,
-                            mediaType: mediaType, isGroup: isGroup))
+        apply(.callReceived(callID: callID, caller: caller, inviter: inviter, calleeIDs: others,
+                            mediaType: mediaType, isGroup: isGroup, selfUID: engine.uid))
         // 群号 / user_data 落地到界面状态（HOST_INTEGRATION_DESIGN §3.2）：「添加成员」靠
         // chatGroupID 决定问谁要候选人。独立成一次 apply——见 `IMCallViewAction.callContext`。
         apply(.callContext(caller: caller, chatGroupID: chatGroupID, userData: userData))

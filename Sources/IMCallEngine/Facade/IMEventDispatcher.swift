@@ -204,7 +204,7 @@ final class IMEventDispatcher {
 
         case .callReceived:
             d.callEngine?(e, didReceiveCall: str("call_id"), caller: str("caller"),
-                          calleeIDs: strs("callee_ids"),
+                          inviter: str("inviter"), calleeIDs: strs("callee_ids"),
                           mediaType: str("media_type"), isGroup: flag("is_group"),
                           chatGroupID: str("chat_group_id"), userData: str("user_data"))
         case .callBegin:

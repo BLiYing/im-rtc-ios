@@ -75,12 +75,16 @@ import Foundation
      `chatGroupID` 是宿主自己的群号（HOST_INTEGRATION_DESIGN §3.2），空串 = 不是从
      一个群发起、或宿主没传。`userData` 是宿主经 `call()` 透传下来的私有字节，SDK 不解析。
 
+     `caller` 与 `inviter` **不是一回事**：`caller` 恒为这通电话的发起人，`inviter` 是
+     **把你加进来的那个人**。首次邀请两者相同；群通话里被通话中的其他人 `inviteMore`
+     进来时不同。**来电界面该显示的是 `inviter`**（旧服务端不带它，Engine 已回落成 `caller`）。
+
      - Note: **回调签名直接改、不留旧 selector**（2026-09-15）：三个 SDK 都还没有宿主接入、
        没打过版本，此时改最便宜；留一个几乎同名的 optional 方法，宿主实现旧的那个会
        **静默收不到**，比编译报错更糟（设计 §3.3）。
      */
     @objc optional func callEngine(_ engine: IMCallEngine, didReceiveCall callID: String,
-                                   caller: String, calleeIDs: [String],
+                                   caller: String, inviter: String, calleeIDs: [String],
                                    mediaType: String, isGroup: Bool,
                                    chatGroupID: String, userData: String)
 

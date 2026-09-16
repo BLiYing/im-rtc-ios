@@ -7,20 +7,28 @@
 
 ## 当前焦点
 
-**2026-09-16：群通话「添加成员」选人页（用户自测通过，已提交）。** 提交前按用户要求没跑全量；只单独 `xcodebuild` 编了 Demo（含 Kit UI）→ `BUILD SUCCEEDED`，单测没跑。
-上一轮四端 API 命名对齐已提交 `c74d1be`，细节在 archive 末节。
+**2026-09-16（未提交，两件事）：① 协议新增 `call.incoming.inviter`，来电界面显示「把你加进来的那个人」。**
+线路字段 = 这次邀请是谁发的（首次邀请 = 主叫；`invite_more` 加进来的 = 发那条加人请求的人），**空串回落 `caller`，回落只在
+`CallStateMachine+Recv.handleIncoming` 一处**，不进 `IMCallContext`（只有来电那一刻用得到）。
+- 回调：`didReceiveCall` 直接加 `inviter:`（在 `caller:` 之后，**不留旧 selector**，理由见 delegate 注释），`IMEventDispatcher` 透传；`IMObjCAPICheck.m` 同步改签名。
+- Kit：新增 `IMCallViewState.inviterUID` 与 `callReceived(inviter:)`（**带默认值**，几十个旧调用点一个字没改），reducer 里为空回落 caller；
+  `IMIncomingBanner.apply(caller:)` 改名 `apply(inviter:)`，两个调用点走 `IMCallWindow.incomingDisplayUID`（inviterUID 为空才退回第一个格子）。
+  **九宫格摆格子、`callerUID`、选人页仍用 caller**，没动。
+- 测试：Kit `testIncomingUsesInviterAndFallsBackToCaller`、引擎 `testIncomingCarriesInviterWithCallerFallback`；
+  跑了 `swift test --filter 'CallViewStateTests|HostIntegrationFallbackTests'`（17 + 4 条过）与单独编 Demo `BUILD SUCCEEDED`，**`test.sh` 全量没跑**。
 
-- **布局**（09-15 夜）：`IMInvitePickerViewController` 从 `UITableViewController` 改成 `UIViewController` + 内嵌 `UITableView`：搜索框钉顶（safeArea +8，高 36）、
-  邀请按钮钉底（safeArea −16，高 44）、列表夹在中间单独滚。`UISearchBar` 自带放大镜，iOS 不用另画。
-- **列表全部列出**（用户 09-16 拍板，推翻设计稿「选人页不列发起人」）：不再按自己 / 发起人过滤，不再拼「（是你）」「（发起人）」；在通话里的人统一置灰「已在通话中」。
-  `inCall` 原先只取 `state.participants`（**不含自己**），现补上 `engine.uid`。**离场的发起人**置灰「暂时无法邀请」（`isCallerWhoLeft`；服务端对发起人回 `bad_params`，拉不回来），文案是我定的。
-- **行样式**：文件内新增私有 `IMInviteCandidateCell`——32pt `IMAvatarDiscView`（首字母 + 按 uid 渐变）+ 名字 / 副标题两行 + 系统勾选，行高 56。
-  原先注册的是默认样式 `UITableViewCell`，`detailTextLabel` 为 nil，副标题从来没显示过（所以状态才拼在名字后面）。
-  **`avatarURL` 仍然不取图**：Kit 里没有取图代码（`IMInviteCandidate` 注释写的「Kit 自己去取图」没兑现），只画首字母盘，与 Android 一致。
+**② 离场的发起人可以被重新邀请。** 服务端去掉了 `invite_more` 对发起人的 `bad_params`（见 server current_task）。本仓：
+- `IMInvitePickerViewController` 去掉 `isCallerWhoLeft` 与「暂时无法邀请」，手输 uid 也不再排除发起人；离场的人（含发起人）照常可选。
+- `IMCallViewAction.callReceived` 加带默认值的 `selfUID`（`IMCallController+Delegate` 传 `engine.uid`）：发起人就是自己时不给自己摆格子。
+  横幅显示 `participants.first`，被重新邀请的发起人看到的是通话里某个被叫。注释跟改：`IMCallEngine.inviteMore`、`IMCallViewState.callerUID`。
+- 测试：`CallViewStateTests.testReinvitedCallerGetsNoTileForSelf`；跑了 `swift test --filter CallViewStateTests`（16 条过）+ 单独编 Demo `BUILD SUCCEEDED`，`test.sh` 全量没跑。
+
+**同日已提交 `dba64cb`**：选人页列出全部成员、搜索框钉顶 / 邀请按钮钉底、行改 `IMInviteCandidateCell`（首字母头像 + 两行；`avatarURL` 仍不取图）。
 
 ## 下一步
 
-1. **键盘弹起时底部邀请按钮会不会被挡**没专门验过；「暂时无法邀请」（离场的发起人）文案待用户确认。
+1. 用户真机自测（服务端先重启）：发起人挂断后被邀请回来能响铃、接听、说话，来电横幅不出现自己的格子；**键盘弹起时底部邀请按钮会不会被挡**仍没专门验过。
+   自测过了跑 `./scripts/test.sh` 再提交。
 2. **真机验收（累积项，未做）**：API 命名对齐新签名（`callDidEnd` / `activeSpeakersDidChange` / `networkQualityDidChange` 在 Kit / Demo ObjC / 自画 UI 都收得到，`destroy()`、`openMicrophone` / `openCamera`）；
    M1/M2 两台设备群呼带 `chatGroupID`、中途 `joinCall` 进房、选人页翻页/搜索/置灰；1409 两种文案没连过真服务端。IMProgram / 容信真实接入是后续期（M3-M7）。
 

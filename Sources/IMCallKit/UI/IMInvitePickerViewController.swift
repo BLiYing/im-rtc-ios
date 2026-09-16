@@ -71,9 +71,6 @@ final class IMInvitePickerViewController: UIViewController, UITableViewDataSourc
     /// 在通话里的人（含自己）。`state.participants` 不含自己，不补上的话自己会被当成可邀请。
     private var inCall: Set<String> { Set([controller.engine.uid] + controller.state.participants.map(\.uid)) }
 
-    /// 离场的发起人服务端拉不回来（`invite_more` 回 bad_params），只能置灰。
-    private func isCallerWhoLeft(_ uid: String) -> Bool { uid == context.callerUID && !inCall.contains(uid) }
-
     /// candidates 是**这一屏此刻该展示的候选人**：provider 有数据就用它的累计页，
     /// 没有 provider 时退回静态名单本地过滤。宿主给什么列什么（含自己与发起人），在通话里的人置灰。
     private var candidates: [IMInviteCandidate] {
@@ -91,7 +88,7 @@ final class IMInvitePickerViewController: UIViewController, UITableViewDataSourc
     private var typedUID: String? {
         guard controller.allowsManualUIDInput, candidates.isEmpty else { return nil }
         let q = query.trimmingCharacters(in: .whitespaces)
-        guard !q.isEmpty, !inCall.contains(q), !picked.contains(q), q != context.callerUID else { return nil }
+        guard !q.isEmpty, !inCall.contains(q), !picked.contains(q) else { return nil }
         return q
     }
 
@@ -353,13 +350,10 @@ final class IMInvitePickerViewController: UIViewController, UITableViewDataSourc
         }
         let candidate = candidates[indexPath.row]
         let already = inCall.contains(candidate.uid)
-        let callerLeft = isCallerWhoLeft(candidate.uid)
-        let blocked = already || callerLeft || !candidate.selectable
+        let blocked = already || !candidate.selectable
         let subtitle: String?
         if already {
             subtitle = "已在通话中"
-        } else if callerLeft {
-            subtitle = "暂时无法邀请"
         } else if !candidate.selectable {
             subtitle = candidate.unselectableReason
         } else {
@@ -381,7 +375,7 @@ final class IMInvitePickerViewController: UIViewController, UITableViewDataSourc
             return
         }
         let candidate = candidates[indexPath.row]
-        guard !inCall.contains(candidate.uid), !isCallerWhoLeft(candidate.uid), candidate.selectable else { return }
+        guard !inCall.contains(candidate.uid), candidate.selectable else { return }
         toggle(candidate.uid)
     }
 

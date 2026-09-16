@@ -34,16 +34,16 @@ public final class IMIncomingBanner: UIView {
     @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("Kit 不用 storyboard") }
 
-    public func apply(caller: String, resolver: IMProfileResolving?,
+    public func apply(inviter: String, resolver: IMProfileResolving?,
                       mediaType: String, isGroup: Bool, cameraOn: Bool) {
         /*
          来电屏是**最不能显示成一串 uid** 的一屏，也是最可能解析不出来的一屏
          （陌生人来电时宿主本机没有对方名片）。解析不到就退化成 uid，
          宿主的解析器拉回来后调 IMCallKit.reloadProfiles 重画。
         */
-        let shown = imResolvedName(resolver, uid: caller, fallback: caller)
-        avatarDisc.apply(key: caller, name: shown, size: 38,
-                         image: imResolvedAvatar(resolver, uid: caller))
+        let shown = imResolvedName(resolver, uid: inviter, fallback: inviter)
+        avatarDisc.apply(key: inviter, name: shown, size: 38,
+                         image: imResolvedAvatar(resolver, uid: inviter))
         titleLabel.text = shown
         subtitleLabel.text = isGroup ? "邀请你加入群通话" : (mediaType == "video" ? "邀请你视频通话" : "邀请你语音通话")
         // 接听键恒为听筒，与来电页那颗、与 Web 一致（UI_SPEC「phone · 来电页、来电横幅」）。

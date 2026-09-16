@@ -62,7 +62,7 @@ public final class IMCallWindow {
         // 同一形态内的刷新：横幅换来电人、悬浮球换时长。
         if wanted == .banner, let banner = window?.rootViewController?.view.subviews
             .first as? IMIncomingBanner {
-            banner.apply(caller: state.participants.first?.uid ?? state.peerUID,
+            banner.apply(inviter: incomingDisplayUID(state),
                          resolver: controller.profileResolver,
                          mediaType: state.mediaType, isGroup: state.isGroup,
                          cameraOn: state.selfState.cameraOn)
@@ -186,11 +186,18 @@ public final class IMCallWindow {
 
     // MARK: - 横幅与悬浮球
 
+    /// 来电横幅显示的是「把你加进来的那个人」（`inviter`）。为空才退回第一个格子——
+    /// 旧服务端不带这个字段时 Engine 已回落成发起人，`participants.first` 是最后兜底。
+    private func incomingDisplayUID(_ state: IMCallViewState) -> String {
+        if !state.inviterUID.isEmpty { return state.inviterUID }
+        return state.participants.first?.uid ?? state.peerUID
+    }
+
     private func mountBanner(in host: UIViewController, scene: UIWindowScene,
                              state: IMCallViewState) {
         let banner = IMIncomingBanner()
-        banner.apply(caller: state.participants.first?.uid ?? state.peerUID,
-                         resolver: controller.profileResolver,
+        banner.apply(inviter: incomingDisplayUID(state),
+                     resolver: controller.profileResolver,
                      mediaType: state.mediaType, isGroup: state.isGroup,
                      cameraOn: state.selfState.cameraOn)
         banner.onAccept = { [weak self] in self?.controller.accept() }

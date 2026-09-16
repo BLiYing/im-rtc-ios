@@ -31,6 +31,30 @@ final class CallViewStateTests: XCTestCase {
         XCTAssertEqual(state.participants.map(\.uid), ["alice"])
     }
 
+    func testReinvitedCallerGetsNoTileForSelf() {
+        let state = reduce(IMCallViewState(), [
+            .callReceived(callID: "c-1", caller: "alice", calleeIDs: ["bob", "carol"], mediaType: "video",
+                          isGroup: true, selfUID: "alice"),
+        ])
+        XCTAssertEqual(state.participants.map(\.uid), ["bob", "carol"], "离场后被重新邀请回来的发起人不给自己摆格子")
+        XCTAssertEqual(state.callerUID, "alice")
+    }
+
+    func testIncomingUsesInviterAndFallsBackToCaller() {
+        let invited = reduce(IMCallViewState(), [
+            .callReceived(callID: "c-1", caller: "alice", inviter: "bob", calleeIDs: ["carol"],
+                          mediaType: "audio", isGroup: true),
+        ])
+        XCTAssertEqual(invited.inviterUID, "bob", "被 bob 加进群通话，来电界面显示的是 bob")
+        XCTAssertEqual(invited.callerUID, "alice", "发起人仍是 caller")
+
+        // 旧服务端不带 inviter：回落成发起人。
+        let plain = reduce(IMCallViewState(), [
+            .callReceived(callID: "c-1", caller: "alice", calleeIDs: [], mediaType: "audio", isGroup: false),
+        ])
+        XCTAssertEqual(plain.inviterUID, "alice")
+    }
+
     func testGroupCallHasNoPeerUID() {
         let state = reduce(IMCallViewState(), [
             .callPlaced(calleeIDs: ["bob", "carol"], mediaType: "video", isGroup: true),

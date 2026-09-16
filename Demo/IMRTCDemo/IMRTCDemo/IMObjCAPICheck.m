@@ -147,9 +147,10 @@
 }
 
 - (void)callEngine:(IMCallEngine *)engine didReceiveCall:(NSString *)callID caller:(NSString *)caller
-        calleeIDs:(NSArray<NSString *> *)calleeIDs mediaType:(NSString *)mediaType isGroup:(BOOL)isGroup
-      chatGroupID:(NSString *)chatGroupID userData:(NSString *)userData {
-    NSLog(@"[objc] didReceiveCall %@ from=%@ group=%@", callID, caller, chatGroupID);
+           inviter:(NSString *)inviter calleeIDs:(NSArray<NSString *> *)calleeIDs
+         mediaType:(NSString *)mediaType isGroup:(BOOL)isGroup
+       chatGroupID:(NSString *)chatGroupID userData:(NSString *)userData {
+    NSLog(@"[objc] didReceiveCall %@ from=%@ inviter=%@ group=%@", callID, caller, inviter, chatGroupID);
 }
 
 - (void)callEngine:(IMCallEngine *)engine callDidBegin:(NSString *)callID roomID:(NSString *)roomID

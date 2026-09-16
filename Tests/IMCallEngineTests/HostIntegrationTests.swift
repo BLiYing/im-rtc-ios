@@ -62,6 +62,25 @@ final class HostIntegrationFallbackTests: XCTestCase {
         XCTAssertEqual(begin?.args["user_data"]?.stringValue, "u-9")
     }
 
+    /// `call.incoming.inviter` = 把你加进来的人（≠ 发起人）；旧服务端不带它时回落成发起人。
+    func testIncomingCarriesInviterWithCallerFallback() {
+        let invited = IMCallMachine.reduce(IMCallContext(), .recv(type: IMFrameType.callIncoming, data: [
+            "call_id": .string("call-1"), "room_id": .string("r-1"), "caller": .string("alice"),
+            "inviter": .string("bob"), "callee_ids": .array([.string("carol")]),
+            "media_type": .string("audio"), "is_group": .bool(true),
+        ]))
+        let received = invited.emit.first { $0.callback == "onCallReceived" }
+        XCTAssertEqual(received?.args["inviter"]?.stringValue, "bob")
+        XCTAssertEqual(received?.args["caller"]?.stringValue, "alice", "发起人仍是 caller")
+
+        let old = IMCallMachine.reduce(IMCallContext(), .recv(type: IMFrameType.callIncoming, data: [
+            "call_id": .string("call-1"), "room_id": .string("r-1"), "caller": .string("alice"),
+            "callee_ids": .array([.string("bob")]), "media_type": .string("audio"), "is_group": .bool(false),
+        ]))
+        XCTAssertEqual(old.emit.first { $0.callback == "onCallReceived" }?.args["inviter"]?.stringValue,
+                       "alice", "旧服务端不带 inviter，回落到发起人")
+    }
+
     /// `call.connected` 自己带的值永远优先于回落——不是「先到先得」。
     func testConnectedValuesWinOverFallback() {
         var ctx = IMCallContext()

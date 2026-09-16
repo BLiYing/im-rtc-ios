@@ -115,8 +115,11 @@ public struct IMCallViewState: Equatable, Sendable {
     public var role = ""
     /// 1v1 的对端 uid；群通话为空串。
     public var peerUID = ""
-    /// 发起人 uid，只在被叫侧有值（主叫侧就是自己）。选人页靠它认出离场的发起人：服务端拉不回来，只能置灰。
+    /// 发起人 uid，只在被叫侧有值（主叫侧就是自己）。邀请上下文的 `callerUID` 从这里取。
     public var callerUID = ""
+    /// **把你加进来的那个人**——来电横幅显示的就是他。首次邀请 = 发起人；群通话里被别人
+    /// `inviteMore` 进来时与 `callerUID` 不同。Engine 已对旧服务端做过回落，Kit 不再兜底。
+    public var inviterUID = ""
     /**
      宿主自己的群号（HOST_INTEGRATION_DESIGN §3.2），空串 = 不是从一个群发起 / 宿主没传。
 
@@ -163,8 +166,8 @@ public struct IMCallViewState: Equatable, Sendable {
 /// 驱动视图模型的输入。**写成显式枚举而不是把回调表整个映射过来**：看得出「界面到底用了哪几个」。
 public enum IMCallViewAction: Sendable {
     /// `calleeIDs` 是这通电话邀了谁（**已去掉自己**）。群通话靠它把还没接的人摆成占位格。
-    case callReceived(callID: String, caller: String, calleeIDs: [String],
-                      mediaType: String, isGroup: Bool)
+    case callReceived(callID: String, caller: String, inviter: String = "", calleeIDs: [String],
+                      mediaType: String, isGroup: Bool, selfUID: String = "")
     case callPlaced(calleeIDs: [String], mediaType: String, isGroup: Bool)
     case callBegin(callID: String, roomID: String, mediaType: String,
                    isGroup: Bool, role: String, now: TimeInterval)
@@ -215,7 +218,7 @@ public func reduceCallView(_ state: IMCallViewState,
                            _ action: IMCallViewAction) -> IMCallViewState {
     var next = state
     switch action {
-    case let .callReceived(callID, caller, calleeIDs, mediaType, isGroup):
+    case let .callReceived(callID, caller, inviter, calleeIDs, mediaType, isGroup, selfUID):
         next = IMCallViewState()
         next.connection = state.connection
         next.phase = .incoming
@@ -225,13 +228,17 @@ public func reduceCallView(_ state: IMCallViewState,
         next.role = "callee"
         next.peerUID = isGroup ? "" : caller
         next.callerUID = caller
+        // inviter 为空 = 旧服务端 / 调用方没给：退回发起人。
+        next.inviterUID = inviter.isEmpty ? caller : inviter
         /*
          主叫先摆上（他一定在通话里），其余被邀请的人摆成「还在响铃」的占位格。
 
          不摆的话群通话在两侧长得不一样：主叫看到四格（含没接的），被叫只看到两格。
          `calleeIDs` 里已经由调用方去掉了自己。
         */
-        next.participants = [IMParticipant(uid: caller, hasAccepted: true)]
+        // 离场后被重新邀请回来的发起人收到的 caller 就是他自己：「自己」不是远端成员，不摆格子。
+        let callerTile = caller == selfUID ? [] : [IMParticipant(uid: caller, hasAccepted: true)]
+        next.participants = callerTile
             + calleeIDs.filter { $0 != caller }.map { IMParticipant(uid: $0, hasAccepted: false) }
         // 摄像头默认态见 `imDefaultCameraOn`（群通话默认关）；
         // **默认不外放**（拍板 2026-09-06）：视频通话一样从听筒出声，要外放由用户自己点。
