@@ -38,7 +38,6 @@
    - tag `1.0.0` 推上 GitHub 后，把 `IMRTCDemo.xcodeproj` 里 `XCRemoteSwiftPackageReference` 的 `requirement` 从 `branch = main` 改成 `kind = exactVersion, version = 1.0.0`（等用户确认，本轮不做）。
    - 找机会用 Xcode.app 真的打开一次 `IMRTCDemo.xcworkspace`，看它是否生成自己的 `xcshareddata/swiftpm/Package.resolved`；生成后按「只含 webrtc pin」的预期核对内容，确认无误后加入 git（沿用本仓其它 `Package.resolved` 都进 git 的先例）。
    - 本地未推送的 `502e745`（发布/订阅被拒收场）迟早要推；推之前如果又有新提交，公网包档解析到的 revision 还会再变，属正常现象，不用大惊小怪。
-1. **§A 发布被拒收场：用故障注入上真端走一遍**（先 `FAULT_INJECTION=1 ./scripts/dev.sh`）：通话接通后 `curl -X POST $B/v1/dev/faults -d '{"action":"reject","uid":"<本端uid>","frame_type":"room.publish","code":1302}'`，再开一次麦 / 摄像头 → 本端收场、结束原因 error、对端收到挂断。过了把 CLIENT_PARITY 那一行 🟡 转 ✅。代码已提交，真机验收后续再做（2026-09-16 用户定）。
 2. **累积未做的真机验收**（上一轮遗留，与本轮无关但仍待办）：API 命名对齐新签名（`callDidEnd`/`activeSpeakersDidChange`/`networkQualityDidChange`/`destroy()`/`openMicrophone`/`openCamera`）；M1/M2 两台设备群呼带 `chatGroupID`、中途 `joinCall` 进房、选人页翻页/搜索/置灰；`call.incoming.inviter` 与「离场发起人可被重新邀请」两条双端联调；1409 两种文案没连过真服务端。IMProgram / 容信真实接入是后续期（M3-M7）。
 
 **待办 / 已知限制**：
