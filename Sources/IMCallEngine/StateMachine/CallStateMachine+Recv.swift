@@ -35,6 +35,11 @@ extension IMCallMachine {
         case IMFrameType.callConnected:
             return handleConnected(ctx, data)
 
+        case IMFrameType.callRinging:
+            // 服务端发给通话里的所有人（协议 §4.2，2026-09-17 起），界面据此给正在响铃的人摆占位格。
+            return out(ctx, emit: [IMEmittedEvent("onUserRinging",
+                                                  ["uid": .string(Wire.string(data, "uid"))])])
+
         case IMFrameType.callAccepted:
             return out(ctx, emit: [IMEmittedEvent("onUserAccept",
                                                   ["uid": .string(Wire.string(data, "uid"))])])

@@ -233,6 +233,31 @@ final class GroupOutcomeTests: XCTestCase {
         state = reduceCallView(state, .userSettled(uid: "bob", outcome: .noAnswer))
         XCTAssertEqual(state.participants[0].settled, .none)
     }
+
+    /// 协议 2026-09-17 起 call.ringing 发给通话里的所有人：别人加的人也要摆占位格（与 Web `callView.test.ts` 同一组）。
+    func testRingingOfSomeoneElsesInviteeAddsPlaceholder() {
+        var state = reduceCallView(IMCallViewState(),
+                                   .callPlaced(calleeIDs: ["carol"], mediaType: "video", isGroup: true))
+        state = reduceCallView(state, .userAccept(uid: "carol"))
+        state = reduceCallView(state, .userRinging(uid: "dave"))
+        state = reduceCallView(state, .userRinging(uid: "dave"))
+        XCTAssertEqual(state.participants.map(\.uid), ["carol", "dave"], "摆一个、不重复摆")
+        XCTAssertEqual(state.participants.map(\.hasAccepted), [true, false])
+
+        state = reduceCallView(state, .userRinging(uid: "carol"))
+        XCTAssertTrue(state.participants[0].hasAccepted, "已接听的人不动")
+
+        state = reduceCallView(state, .userSettled(uid: "dave", outcome: .rejected))
+        state = reduceCallView(state, .userRinging(uid: "dave"))
+        XCTAssertEqual(state.participants[1].settled, .none, "标了终局又被重新邀请：清掉终局")
+    }
+
+    /// 1v1 不摆：对方本来就是大画面。
+    func testRingingInOneToOneIsIgnored() {
+        let placed = reduceCallView(IMCallViewState(),
+                                    .callPlaced(calleeIDs: ["bob"], mediaType: "video", isGroup: false))
+        XCTAssertEqual(reduceCallView(placed, .userRinging(uid: "dave")), placed)
+    }
 }
 
 /*

@@ -146,6 +146,13 @@ import Foundation
     /// 有人离房。
     @objc optional func callEngine(_ engine: IMCallEngine, userDidLeave uid: String)
 
+    /**
+     某人的设备开始响铃（协议 `call.ringing`）。**通话里的人都收到**，不含正在响铃的人自己——
+     群通话里别人加了人，你也能给他摆「呼叫中」占位格，随后由 `userDidAccept` / `userDidReject` /
+     `userDidNotRespond` 收掉。1v1 主叫也会收到（可据此把「正在呼叫…」改成「等待对方接听」）。
+     */
+    @objc optional func callEngine(_ engine: IMCallEngine, userIsRinging uid: String)
+
     /// 群通话里某人接听了（其余人都收到）。
     @objc optional func callEngine(_ engine: IMCallEngine, userDidAccept uid: String)
     /// 群通话里某人拒接了。

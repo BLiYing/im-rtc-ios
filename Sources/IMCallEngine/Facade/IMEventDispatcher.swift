@@ -25,6 +25,8 @@ import Foundation
     case userAudioAvailable, userVideoAvailable
     case activeSpeakers, networkQuality, firstVideoFrame
     case roomJoined, roomLeft, roomClosed
+    /// 2026-09-17 增。**追加在末尾**：这是 `@objc enum : Int`，插在中间会改掉已有事件的 rawValue。
+    case userRinging
 }
 
 extension IMCallEventName {
@@ -54,6 +56,7 @@ extension IMCallEventName {
         case .handledOnOtherDevice: return "handledOnOtherDevice"
         case .userEnter: return "userEnter"
         case .userLeave: return "userLeave"
+        case .userRinging: return "userRinging"
         case .userAccept: return "userAccept"
         case .userReject: return "userReject"
         case .userNoResponse: return "userNoResponse"
@@ -235,6 +238,8 @@ final class IMEventDispatcher {
             d.callEngine?(e, userDidEnter: str("uid"))
         case .userLeave:
             d.callEngine?(e, userDidLeave: str("uid"))
+        case .userRinging:
+            d.callEngine?(e, userIsRinging: str("uid"))
         case .userAccept:
             d.callEngine?(e, userDidAccept: str("uid"))
         case .userReject:
@@ -272,6 +277,7 @@ final class IMEventDispatcher {
         "onCallMissed": .callMissed,
         "onHandledOnOtherDevice": .handledOnOtherDevice,
         "onUserEnter": .userEnter, "onUserLeave": .userLeave,
+        "onUserRinging": .userRinging,
         "onUserAccept": .userAccept, "onUserReject": .userReject,
         "onUserNoResponse": .userNoResponse,
         "onUserAudioAvailable": .userAudioAvailable,

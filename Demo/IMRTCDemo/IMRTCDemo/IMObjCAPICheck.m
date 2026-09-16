@@ -166,6 +166,11 @@
     NSLog(@"[objc] callEnd %@ reason=%ld %ld秒", callID, (long)reason, (long)durationSec);
 }
 
+// 2026-09-17 增：call.ringing 发给通话里的所有人。
+- (void)callEngine:(IMCallEngine *)engine userIsRinging:(NSString *)uid {
+    NSLog(@"[objc] %@ 在响铃 %d", uid, IMCallEventNameUserRinging == IMCallEventNameUserRinging);
+}
+
 - (void)callEngine:(IMCallEngine *)engine user:(NSString *)uid audioAvailable:(BOOL)available {
     NSLog(@"[objc] %@ 麦克风 %d", uid, available);
 }

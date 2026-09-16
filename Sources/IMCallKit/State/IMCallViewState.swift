@@ -179,6 +179,8 @@ public enum IMCallViewAction: Sendable {
     case cameraBlocked
     /// 本端往群通话里又拉了一批人，先摆上占位格。
     case invited(uids: [String])
+    /// 某人的设备开始响铃（不一定是本端加的人）：摆占位格。
+    case userRinging(uid: String)
     case userEnter(uid: String)
     case userLeave(uid: String)
     case userAccept(uid: String)
@@ -337,6 +339,20 @@ public func reduceCallView(_ state: IMCallViewState,
         let known = Set(next.participants.map(\.uid))
         next.participants += uids.filter { !known.contains($0) }
             .map { IMParticipant(uid: $0, hasAccepted: false) }
+
+    case let .userRinging(uid):
+        /*
+         协议 2026-09-17 起 call.ringing 发给通话里的所有人：**不是本端加的人也摆占位格**——
+         A 加了 B，C 这边看不见 B 在响的话，只会凭空收到「B 没接听」，还会再邀请一次。
+         只在群通话里摆（1v1 的对方本来就是大画面）；已接听的不动；标了终局又被重新邀请的清掉终局。
+         不进 `lastInvited`（那在 controller 里，1202 / 1407 收回的是本端自己加的那批）。
+         */
+        guard state.isGroup, [.outgoing, .connecting, .active].contains(state.phase) else { return state }
+        if let index = next.participants.firstIndex(where: { $0.uid == uid }) {
+            if !next.participants[index].hasAccepted { next.participants[index].settled = .none }
+        } else {
+            next.participants.append(IMParticipant(uid: uid, hasAccepted: false))
+        }
 
     case let .userEnter(uid), let .userAccept(uid):
         next = withParticipant(next, uid) { $0.hasAccepted = true; $0.settled = .none }

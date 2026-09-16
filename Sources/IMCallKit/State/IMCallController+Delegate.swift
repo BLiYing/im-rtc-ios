@@ -124,6 +124,8 @@ extension IMCallController: IMCallEngineDelegate {
 
     public func callEngine(_ engine: IMCallEngine, userDidEnter uid: String) { apply(.userEnter(uid: uid)) }
     public func callEngine(_ engine: IMCallEngine, userDidLeave uid: String) { apply(.userLeave(uid: uid)) }
+    /// 通话里任何人加的人开始响铃都会来（协议 call.ringing 发在场全员），不只是本端加的。
+    public func callEngine(_ engine: IMCallEngine, userIsRinging uid: String) { apply(.userRinging(uid: uid)) }
     public func callEngine(_ engine: IMCallEngine, userDidAccept uid: String) { apply(.userAccept(uid: uid)) }
 
     // 拒接与无应答要在格子上写明终局再收掉——直接收的话，从主叫的角度看拒接就跟什么都没发生一样。

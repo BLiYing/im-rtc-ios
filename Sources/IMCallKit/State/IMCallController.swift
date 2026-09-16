@@ -525,8 +525,10 @@ public protocol IMCallControllerObserver: AnyObject {
             let timer = DispatchSource.makeTimerSource(queue: .main)
             timer.schedule(deadline: .now() + IMSettledHoldSeconds)
             timer.setEventHandler { [weak self] in
-                self?.settleTimers[p.uid] = nil
-                self?.apply(.userRemove(uid: p.uid))
+                guard let self else { return }
+                self.settleTimers[p.uid] = nil
+                // 停的这 2 秒里又被重新邀请（userRinging 清掉了终局）：不收。
+                if self.state.participants.contains(where: { $0.uid == p.uid && $0.settled != .none }) { self.apply(.userRemove(uid: p.uid)) }
             }
             settleTimers[p.uid] = timer
             timer.resume()
