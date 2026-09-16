@@ -1,5 +1,6 @@
 #if canImport(WebRTC) && canImport(UIKit)
 import Foundation
+import AVFoundation
 import WebRTC
 import IMCallEngine
 
@@ -60,6 +61,7 @@ extension IMWebRTCAdapter {
         }()
         guard needsConfig else { return }
         configureAudioSession()
+        observeRouteChanges()
         // 会话刚配好，把响铃期间记下的扬声器选择补上（见 setSpeakerOn）。
         lock.lock()
         let wanted = desiredSpeakerOn
@@ -90,6 +92,47 @@ extension IMWebRTCAdapter {
         }()
         guard alreadyConfigured else { return }
         applySpeakerRoute(on)
+    }
+
+    /**
+     observeRouteChanges：会话配好之后开始听路由变化，`close()` 时摘掉（`stopObservingRouteChanges`）。
+
+     原先没监听：插拔耳机、连断蓝牙，SDK 一概不知道。现在两件事——**记一条日志**（落到哪一档，
+     排查「声音从哪出」全靠它），以及**强制外放被系统清掉时补回去**（判据 `imShouldReapplySpeaker`）。
+     */
+    func observeRouteChanges() {
+        stopObservingRouteChanges()
+        let token = NotificationCenter.default.addObserver(
+            forName: AVAudioSession.routeChangeNotification, object: nil, queue: nil
+        ) { [weak self] note in
+            self?.routeDidChange(note)
+        }
+        lock.lock()
+        routeChangeObserver = token
+        lock.unlock()
+    }
+
+    func stopObservingRouteChanges() {
+        lock.lock()
+        let token = routeChangeObserver
+        routeChangeObserver = nil
+        lock.unlock()
+        if let token { NotificationCenter.default.removeObserver(token) }
+    }
+
+    private func routeDidChange(_ note: Notification) {
+        let reason = note.userInfo?[AVAudioSessionRouteChangeReasonKey] as? UInt ?? 0
+        let outputs = AVAudioSession.sharedInstance().currentRoute.outputs.map(\.portType.rawValue)
+        lock.lock()
+        let wanted = desiredSpeakerOn
+        let active = audioSessionActive
+        lock.unlock()
+        guard active else { return }
+        IMRTCLog.info("音频路由变化", ["reason": String(reason), "outputs": outputs.joined(separator: ","),
+                                     "speaker": String(wanted)])
+        guard imShouldReapplySpeaker(wantsSpeaker: wanted, reason: reason, outputPorts: outputs) else { return }
+        IMRTCLog.info("插拔后系统清掉了外放覆盖，按钮还亮着：补回扬声器", [:])
+        applySpeakerRoute(true)
     }
 
     /// 真正去改路由。**只在会话已经配置过之后调**——`overrideOutputAudioPort` 只有
