@@ -419,6 +419,12 @@ final class GridTests: XCTestCase {
     }
 
     /// 远端截到 8：**本端恒占一格**，9 个远端加上自己就是 10 格，而只有 9 个坑。
+    /// 会议房 M1：多出来的人不再无声消失，三端同一句文案（Web `hiddenCountText`）。
+    func testHiddenCountText() {
+        XCTAssertEqual(imHiddenCountText(0), "")
+        XCTAssertEqual(imHiddenCountText(3), "还有 3 人未显示")
+    }
+
     func testVisibleTilesTruncates() {
         XCTAssertEqual(imVisibleTiles(Array(1...5)).count, 5)
         XCTAssertEqual(imVisibleTiles(Array(1...20)).count, IMMaxRemoteTiles)

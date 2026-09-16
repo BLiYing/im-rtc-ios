@@ -31,6 +31,16 @@ final class IMCallGridView: UIView {
     private var widthConstraint: NSLayoutConstraint!
     private var heightConstraint: NSLayoutConstraint!
 
+    /// 「还有 N 人未显示」胶囊（会议房 M1，文案见 `imHiddenCountText`）。**不可点**：成员列表是 M2。
+    private let hiddenPill = UILabel()
+    var hiddenCount = 0 {
+        didSet {
+            guard hiddenCount != oldValue else { return }
+            hiddenPill.text = "  \(imHiddenCountText(hiddenCount))  "
+            hiddenPill.isHidden = hiddenCount <= 0
+        }
+    }
+
     override init(frame: CGRect) {
         super.init(frame: frame)
         rowsStack.axis = .vertical
@@ -41,10 +51,22 @@ final class IMCallGridView: UIView {
 
         widthConstraint = rowsStack.widthAnchor.constraint(equalToConstant: 0)
         heightConstraint = rowsStack.heightAnchor.constraint(equalToConstant: 0)
+        hiddenPill.font = .systemFont(ofSize: 12)
+        hiddenPill.textColor = .white
+        hiddenPill.backgroundColor = UIColor(white: 0, alpha: 0.6)
+        hiddenPill.layer.cornerRadius = 11
+        hiddenPill.clipsToBounds = true
+        hiddenPill.isHidden = true
+        hiddenPill.isUserInteractionEnabled = false
+        hiddenPill.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(hiddenPill)
         NSLayoutConstraint.activate([
             rowsStack.centerXAnchor.constraint(equalTo: centerXAnchor),
             rowsStack.centerYAnchor.constraint(equalTo: centerYAnchor),
             widthConstraint, heightConstraint,
+            hiddenPill.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
+            hiddenPill.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -8),
+            hiddenPill.heightAnchor.constraint(equalToConstant: 22),
         ])
     }
 

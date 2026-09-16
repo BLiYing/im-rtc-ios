@@ -477,7 +477,9 @@ public final class IMCallOverlayViewController: UIViewController {
         gridView.layout(ordered)
         // 层上界按真人的格子数算，加号格不算——它不收流。
         let layer = imTileLayer(visible.count + 1)
-        for p in visible { report(p.uid, layer: layer, hasVideo: p.hasVideo) }
+        // 没格子的人视频报 none、并说一句「还有 N 人未显示」（会议房 M1 止血，MEETING_ROOM_DESIGN §4.3 / §4.5）。
+        for (i, p) in state.participants.enumerated() { report(p.uid, layer: i < visible.count ? layer : "none", hasVideo: p.hasVideo) }
+        gridView.hiddenCount = state.participants.count - visible.count
     }
 
     /// 本端那格。**只表达麦克风开 / 关两态**（2026-09-09 拍板）——自己在不在说话自己知道，

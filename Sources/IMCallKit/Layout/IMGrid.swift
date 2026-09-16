@@ -134,6 +134,16 @@ public func imTileLayer(_ tileCount: Int) -> String {
     }
 }
 
+/**
+ 「还有 N 人未显示」胶囊的文案（MEETING_ROOM_DESIGN §4.5，会议房 M1 止血）；没人被截掉时是空串。
+
+ 会议房原先超过 9 人时多出来的人**无声消失**（2026-09-09 真机，11 人只画了 9 格）。翻页（M2）之前先说一句；
+ **只是提示、点了不响应**——成员列表是 M2 的内容。与 Web `hiddenCountText`、Android 同一句。
+ */
+public func imHiddenCountText(_ hidden: Int) -> String {
+    hidden > 0 ? "还有 \(hidden) 人未显示" : ""
+}
+
 /// 截掉超出一屏的**远端**格子（本端那一格由界面自己加，见 `IMMaxRemoteTiles`）。
 ///
 /// 截断而不是缩到看不清：9 个 3×3 已经是「能看清是谁」的下限，
