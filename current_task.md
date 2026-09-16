@@ -7,7 +7,7 @@
 
 ## 当前焦点
 
-**2026-09-16（第二轮，未提交）：来电铃声 + 回铃音，顺带修音频会话时机缺陷。**`./scripts/test.sh` 全绿（10 步，293 例=292 执行+1 skip，含 Demo `BUILD SUCCEEDED`）。
+**2026-09-16（第二轮，已提交 `cbf8c55`，真机验收通过）：来电铃声 + 回铃音，顺带修音频会话时机缺陷。**`./scripts/test.sh` 全绿（10 步，293 例=292 执行+1 skip，含 Demo `BUILD SUCCEEDED`）。
 
 **音频会话时机（治本，没走 Kit 临时切 category 的退路）**：`IMWebRTCAdapter.configureAudioSession()` 原来挂在 `open(_:)`（= `login()`）上，登录一成功就把会话接管成 `.playAndRecord`+`.voiceChat`+active，跟有没有通话无关——宿主背景音乐被掐断（没开 `.mixWithOthers`），响铃期间会话已是通话态、铃声等于没做。查过 iOS 这边没有 Android `IMMediaDriver.drive()`（按 room_token 判「媒体真正启动」）那种集中判断点，媒体是 `IMWebRTCAdapter` 内部按需惰性起（`ensurePeers()`），所以把配置挪到了实际拿麦克风的那一刻：
 - `IMWebRTCAdapter.open(_:)` 只接线 events，不再碰会话。
@@ -42,16 +42,7 @@
 
 ## 下一步
 
-1. **必须真机验证（这一轮新增，最关键）**：
-   - 来电铃声在**响铃阶段**能听到、且**不是**通话音质/路由（不应该走听筒、不应该跟通话音量走）；接听/拒接/取消后铃声/回铃音立即停。
-   - 回铃音在**拨出中**响，对方接听那一刻停，转成通话。
-   - **音频会话挪动的核心验证**：确认接听/拨通后**通话本身的音频质量正常**——双向说话清楚、无回声（`.voiceChat` 生效）、无异常延迟或断续；反复打好几通电话（尤其第二通、第三通）确认 `audioSessionActive` 标记的复位没有导致会话配置漏掉或重复报错。
-   - **宿主背景音乐场景**：宿主 App 播着音乐时登录 SDK（不打电话），确认音乐不受影响（这是这次修复要解决的原问题）；来电响铃时确认音乐是被跟着响铃「混音/让路」还是被打断，与 Kit 的铃声一起听感是否正常。
-   - 通话结束后确认音频会话被正确释放（`releaseAudioSession()`）：挂断后如果宿主之前有背景音乐在放，看它是否能恢复播放（`notifyOthersOnDeactivation` 生效与否只能真机听）。
-   - 视频通话：响铃阶段开着摄像头预览时（`startRingingPreviewIfAllowed`/`startPreviewIfWanted`）确认铃声不受摄像头预览影响（预览走的是 `ensurePeers()`，不触发音频会话，理论上互不干扰，但要真机确认一遍）。
-   - Demo 的「静音来电铃声」开关：切换后重新收到来电，确认响铃真的消音；切回来确认又能响。
-   - 宿主传自定义 `incomingRingtone`/`ringbackTone`（`URL?`）时能被使用（Demo 当前没有 UI 演示自定义铃声，如果要验这条得手动改 Demo 代码指一个文件测一次）。
-2. **累积未做的真机验收**（上一轮遗留，与本轮无关但仍待办）：API 命名对齐新签名（`callDidEnd`/`activeSpeakersDidChange`/`networkQualityDidChange`/`destroy()`/`openMicrophone`/`openCamera`）；M1/M2 两台设备群呼带 `chatGroupID`、中途 `joinCall` 进房、选人页翻页/搜索/置灰；`call.incoming.inviter` 与「离场发起人可被重新邀请」两条双端联调；1409 两种文案没连过真服务端。IMProgram / 容信真实接入是后续期（M3-M7）。
+1. **累积未做的真机验收**（上一轮遗留，与本轮无关但仍待办）：API 命名对齐新签名（`callDidEnd`/`activeSpeakersDidChange`/`networkQualityDidChange`/`destroy()`/`openMicrophone`/`openCamera`）；M1/M2 两台设备群呼带 `chatGroupID`、中途 `joinCall` 进房、选人页翻页/搜索/置灰；`call.incoming.inviter` 与「离场发起人可被重新邀请」两条双端联调；1409 两种文案没连过真服务端。IMProgram / 容信真实接入是后续期（M3-M7）。
 
 **待办 / 已知限制**：
 - `IMWebRTCAdapter.swift`（594 行）、`IMCallController.swift`（597 行）、`IMCallOverlayViewController.swift`（596 行）、`IMCallEngine.swift`（558 行）、`SignalConnection.swift`（594 行）都逼近或已经很接近 600 行红线（`check-file-size.sh` 目前是 WARN，没超）——下次往这几个文件加东西之前先规划怎么拆。
