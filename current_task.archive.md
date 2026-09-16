@@ -750,3 +750,47 @@ WebRTC 那部分 macOS 编不进来，**只有第 10 步把关，没真机验**�
 
 **次日验证**：2026-09-16 稍晚随「铃声 + 音频会话」那一轮一起跑了 `./scripts/test.sh` 全量（10 步全绿，292 例 + 1 skip），确认①②两条改动没有被破坏，但**真机双端联调仍未做**（见下面「下一步」）。
 - **Kit 在视频通话中摄像头无权限 / 无设备（2001/2002）时没有专门的界面提示**——待补。
+
+## 2026-09-16（第二、三轮）：来电铃声 + 回铃音 / 发布订阅被拒收场
+
+2026-09-16 晚从 current_task.md 移出（当时已各自提交），原文照录。**下一步 / 已知坑 / 限制两节没有跟着搬**——那两节是活的待办清单，跨轮次持续有效，仍在 current_task.md 里维护，没有被这次移出清空。
+
+### 当时的「当前焦点」
+
+**2026-09-16（第三轮，已提交（`git log` 里标题为「call: 发布 / 订阅被拒要收场」那笔），未上真端）：静默失败审计 §A——发布 / 订阅被拒要收场。** `./scripts/test.sh` 10 步全绿（300 例 = 299 + 1 skip）。
+- `IMFrameLoop.rollback` 改收整帧：`room.publish` 被拒且在通话里 → 新私有 `forceEndForPublishFailure()`（`IMEngineMachine.forceEnd(ctx, reason: .error)`，结束帧经 `connection.fire` 直发）；否则 `publish_failed`；`room.subscribe` → `subscribe_failed`。
+- **注意 forceEnd 现在有三个入口**：门面 `IMCallEngine+ForceEnd.swift`、actor 里这一个、状态机纯函数；重构 forceEnd 时别漏。
+- 用例：`RequestFailureRecoveryTests` 5 条、`FacadeTests.testPublishRejected*` 2 条。负向验证：只把 `IMFrameLoop` 两个分支短路，两条门面用例变红。
+
+**2026-09-16（第二轮，已提交 `cbf8c55`，真机验收通过）：来电铃声 + 回铃音，顺带修音频会话时机缺陷。**`./scripts/test.sh` 全绿（10 步，293 例=292 执行+1 skip，含 Demo `BUILD SUCCEEDED`）。
+
+**音频会话时机（治本，没走 Kit 临时切 category 的退路）**：`IMWebRTCAdapter.configureAudioSession()` 原来挂在 `open(_:)`（= `login()`）上，登录一成功就把会话接管成 `.playAndRecord`+`.voiceChat`+active，跟有没有通话无关——宿主背景音乐被掐断（没开 `.mixWithOthers`），响铃期间会话已是通话态、铃声等于没做。查过 iOS 这边没有 Android `IMMediaDriver.drive()`（按 room_token 判「媒体真正启动」）那种集中判断点，媒体是 `IMWebRTCAdapter` 内部按需惰性起（`ensurePeers()`），所以把配置挪到了实际拿麦克风的那一刻：
+- `IMWebRTCAdapter.open(_:)` 只接线 events，不再碰会话。
+- `acquireMicrophone()` 开头调新方法 `ensureAudioSessionConfigured()`（`audioSessionActive` 标记只配一次，归 `lock`）。
+- `answerSubOffer(_:)` 也调它——**这条是收听远端音频那一路**：服务端推 `room.offer(pc=sub)` 后，状态机在同一次 reduce 里就产出应答帧、整条链路跑在 Engine 帧循环里，
+  跟 Kit 什么时候起 `Task` 调 `acquireMicrophone()` **没有任何先后约束**，下行 offer 完全可能先到。漏了它的症状是「接通了但听不到对方」，
+  而且是这次挪动**新引入**的窗口（旧实现会话在 `login()` 就配好了，永远碰不到）。
+- `setSpeakerOn(_:)` **只记选择、不配置会话**（整个方法已搬进 `+AudioSession.swift`）。它一度也是触发入口，理由是 Kit 在「进房即可发布」那一刻先同步调它、再另起 `Task` 异步走到 `acquireMicrophone()`，
+  会话没配好时 `overrideOutputAudioPort` 会静默失效。但 `/code-review` 抓到：**那颗扬声器按钮在拨出中（`.outgoing`）就能点**
+  （`IMCallOverlayViewController.renderControls` 里 `.outgoing` 落在带 `speakerButton` 的两个分支上；`.incoming` 是 `top = []`，所以只有主叫的回铃音暴露），
+  那时回铃音正放着，由它去配置会话等于当场把回铃音掐断或拽到通话路由上——**正好把这次要修的毛病又犯一遍**。
+  改成：记进 `desiredSpeakerOn`，已配置就立即应用，没配置就等上面两个入口配好后由 `ensureAudioSessionConfigured()` 补应用，意向不丢。
+  **残留限制**：响铃期间点它只决定「接通后用哪路」，不改回铃音本身的外放与否（回铃音是 Kit 的 `AVAudioPlayer` 放的，不归 adapter 管）；按钮亮灭仍跟 `state.selfState.speakerOn`，界面不自相矛盾。
+- `close()` 收场对称补上：配置过的话调新方法 `IMWebRTCAdapter+Support.releaseAudioSession()`（`RTCAudioSession.session.setActive(false, options: [.notifyOthersOnDeactivation])`，仍在 `lockForConfiguration` 里做，不绕开 `RTCAudioSession`）；没配置过（只起过预览、mic 从没 acquire 就被挂断）不动会话。
+- 没有证据显示这次挪动会破坏 libwebrtc 音频单元的初始化时序：`ensurePeers()`/工厂本来就是惰性建的，配置时机只是从「远早于 PC 创建」挪到「紧邻 PC/轨道创建之前」，方向是更贴近而不是更冒险；`xcodebuild` 编译通过，但**时序是否真的安全只能靠真机听感验证**，见下面「必须真机验证」。
+
+**铃声实现**：
+- 素材 `Sources/IMCallKit/Resources/im_ringtone.mp3` / `im_ringback.mp3`，`Package.swift` 给 `IMCallKit` target 加 `resources: [.process("Resources")]`。
+- 纯判据 `ringtoneFor(_ state: IMCallViewState, muted: Bool) -> IMRingtoneKind`（`IMCallViewRules.swift`，不带 UIKit，`swift test` 覆盖得到）：`muted`/`isMeeting` → `.none`；`incoming` → `.incoming`；`outgoing` → `.ringback`；其余 → `.none`。停铃按 phase 收敛，不按事件特判（`.callEnd` 在 `incoming` 时直接回 `idle`、不经过 `ended`，两者 default 分支都落 `.none`）。
+- 播放层 `Sources/IMCallKit/State/IMCallController+Ringtone.swift`（新文件，`#if canImport(UIKit)`，`AVAudioPlayer`，`numberOfLoops = -1`）；挂载点是 `IMCallController.onStateChanged(from:)`（`state` 的 `didSet` 已去重），**没有**挂 `IMCallControllerObserver.callController(_:didChange:)`（`broadcast()` 在 state 没变时也会被调，会重复触发）。
+- `IMCallKitConfig` 加 `incomingRingtone: URL?` / `ringbackTone: URL?`（nil = 内置）/ `ringtoneMuted: Bool = false`；`IMCallController` 新增 `config` 引用（`IMCallKit.init` 换成真实例，语义同 `bannerFirst`——现用现读，不是 init 快照）。
+- Demo：`DemoSession.ringtoneMuted` 落 `UserDefaults`（同 `bannerFirst`/`floatingWindow` 写法），`SettingsViewController` 加「静音来电铃声」开关，供真机对照验证。
+- 测试：`Tests/IMCallKitTests/RingtoneRulesTests.swift`（6 条，覆盖 incoming/outgoing/会议/muted/其余阶段/两条停铃路径）。
+
+**体量**：改完 `IMWebRTCAdapter.swift` 584 行、`IMCallController.swift` 594 行，都在 600 红线内（`setSpeakerOn` 搬走后主文件又降了 13 行）。
+腾行数靠**拆文件**：新建 `Sources/IMCallEngineWebRTC/IMWebRTCAdapter+AudioSession.swift`（58 行）放 `ensureAudioSessionConfigured()`。
+**旧注释一个字都没动**——第一版曾为腾额度精简过两个文件里跟本轮无关的旧注释（`RTCPeerConnection` 报废必崩、`lock` 数据竞争、跨 await 代际、
+`setSpeakerOn` 不绕开 `RTCAudioSession`、`acquireMicrophone` 的 cid、`close()` 代际，以及 `IMCallController` 顶部三段），
+已用 `git show HEAD:` 逐字复原并核对过 diff：两个文件加起来只剩两行删除（`lock` 去掉 `private`、搬走的那句 `configureAudioSession()`），其余全是新增。
+**下次再碰这两个文件，腾体量一律拆文件，不许动注释**——那些注释记的是已经付过代价的坑。
+（`ringtonePlayer` / `ringtoneKind` 是存储属性，Swift 不允许扩展加存储属性，只能留在主体里，逻辑都在 `+Ringtone.swift`。）

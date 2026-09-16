@@ -140,7 +140,7 @@
 			mainGroup = B22C4A763049C569008A1C5F;
 			minimizedProjectReferenceProxies = 1;
 			packageReferences = (
-				B22C4AB33049C665008A1C5F /* XCLocalSwiftPackageReference "../.." */,
+				B22C4AC03049C665008A1C5F /* XCRemoteSwiftPackageReference "im-rtc-ios" */,
 			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = B22C4A803049C569008A1C5F /* Products */;
@@ -381,27 +381,31 @@
 		};
 /* End XCConfigurationList section */
 
-/* Begin XCLocalSwiftPackageReference section */
-		B22C4AB33049C665008A1C5F /* XCLocalSwiftPackageReference "../.." */ = {
-			isa = XCLocalSwiftPackageReference;
-			relativePath = ../..;
+/* Begin XCRemoteSwiftPackageReference section */
+		B22C4AC03049C665008A1C5F /* XCRemoteSwiftPackageReference "im-rtc-ios" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/BLiYing/im-rtc-ios.git";
+			requirement = {
+				branch = main;
+				kind = branch;
+			};
 		};
-/* End XCLocalSwiftPackageReference section */
+/* End XCRemoteSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
 		B22C4AB53049C8C0008A1C5F /* IMCallEngine */ = {
 			isa = XCSwiftPackageProductDependency;
-			package = B22C4AB33049C665008A1C5F /* XCLocalSwiftPackageReference "../.." */;
+			package = B22C4AC03049C665008A1C5F /* XCRemoteSwiftPackageReference "im-rtc-ios" */;
 			productName = IMCallEngine;
 		};
 		B22C4AB73049C8C0008A1C5F /* IMCallKit */ = {
 			isa = XCSwiftPackageProductDependency;
-			package = B22C4AB33049C665008A1C5F /* XCLocalSwiftPackageReference "../.." */;
+			package = B22C4AC03049C665008A1C5F /* XCRemoteSwiftPackageReference "im-rtc-ios" */;
 			productName = IMCallKit;
 		};
 		B22C4AB93049C8C0008A1C5F /* IMCallEngineWebRTC */ = {
 			isa = XCSwiftPackageProductDependency;
-			package = B22C4AB33049C665008A1C5F /* XCLocalSwiftPackageReference "../.." */;
+			package = B22C4AC03049C665008A1C5F /* XCRemoteSwiftPackageReference "im-rtc-ios" */;
 			productName = IMCallEngineWebRTC;
 		};
 /* End XCSwiftPackageProductDependency section */

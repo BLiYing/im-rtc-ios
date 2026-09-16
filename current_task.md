@@ -1,54 +1,45 @@
 # Current Task — im-rtc-ios（Swift Engine + Kit + Demo）
 
-> **活快照**：就地覆盖、不追加。历史见 `git log` 与 [current_task.archive.md](current_task.archive.md)（末节「2026-09-16（第一轮）：`call.incoming.inviter` + 离场发起人可被重新邀请」）。
+> **活快照**：就地覆盖、不追加。历史见 `git log` 与 [current_task.archive.md](current_task.archive.md)（末节「2026-09-16（第二、三轮）：来电铃声 + 回铃音 / 发布订阅被拒收场」）。
 > 规范 [CONVENTIONS.md](CONVENTIONS.md) · 分期 server `docs/design/RTC_CALL_DESIGN.md` §10 ·
 > 界面以设计稿 **v3.1** 为准：`../im-rtc-server/docs/design/sketches/RTC_CALL_UI_SPEC.html` / `RTC_CALL_UX_FLOWS.html`。
 > ✅ 状态只写在 `../im-rtc-server/docs/CLIENT_PARITY.md`。
 
 ## 当前焦点
 
-**2026-09-16（第三轮，已提交（`git log` 里标题为「call: 发布 / 订阅被拒要收场」那笔），未上真端）：静默失败审计 §A——发布 / 订阅被拒要收场。** `./scripts/test.sh` 10 步全绿（300 例 = 299 + 1 skip）。
-- `IMFrameLoop.rollback` 改收整帧：`room.publish` 被拒且在通话里 → 新私有 `forceEndForPublishFailure()`（`IMEngineMachine.forceEnd(ctx, reason: .error)`，结束帧经 `connection.fire` 直发）；否则 `publish_failed`；`room.subscribe` → `subscribe_failed`。
-- **注意 forceEnd 现在有三个入口**：门面 `IMCallEngine+ForceEnd.swift`、actor 里这一个、状态机纯函数；重构 forceEnd 时别漏。
-- 用例：`RequestFailureRecoveryTests` 5 条、`FacadeTests.testPublishRejected*` 2 条。负向验证：只把 `IMFrameLoop` 两个分支短路，两条门面用例变红。
+**2026-09-16（第四轮，已提交（标题「构建: SDK 公网发布准备」，未推送），代码审查零问题）：Demo 拆成「源码档 / 公网包档」两档，为公网发布（`github.com/BLiYing/im-rtc-ios`，公开仓，tag `1.0.0` 待打）做准备。**
+`./scripts/test.sh` 10 步全绿（300 例=299+1 skip，含 Demo `BUILD SUCCEEDED`）。
 
-**2026-09-16（第二轮，已提交 `cbf8c55`，真机验收通过）：来电铃声 + 回铃音，顺带修音频会话时机缺陷。**`./scripts/test.sh` 全绿（10 步，293 例=292 执行+1 skip，含 Demo `BUILD SUCCEEDED`）。
+**背景**：仓库要公开，第三方用 SPM 填 `https://github.com/BLiYing/im-rtc-ios.git` + tag `1.0.0` 集成。原来 Demo 用 `XCLocalSwiftPackageReference relativePath "../.."` 引本地源码，跟第三方的集成写法不一致，没法验证「公网发布后到底能不能按文档接进去」。
 
-**音频会话时机（治本，没走 Kit 临时切 category 的退路）**：`IMWebRTCAdapter.configureAudioSession()` 原来挂在 `open(_:)`（= `login()`）上，登录一成功就把会话接管成 `.playAndRecord`+`.voiceChat`+active，跟有没有通话无关——宿主背景音乐被掐断（没开 `.mixWithOthers`），响铃期间会话已是通话态、铃声等于没做。查过 iOS 这边没有 Android `IMMediaDriver.drive()`（按 room_token 判「媒体真正启动」）那种集中判断点，媒体是 `IMWebRTCAdapter` 内部按需惰性起（`ensurePeers()`），所以把配置挪到了实际拿麦克风的那一刻：
-- `IMWebRTCAdapter.open(_:)` 只接线 events，不再碰会话。
-- `acquireMicrophone()` 开头调新方法 `ensureAudioSessionConfigured()`（`audioSessionActive` 标记只配一次，归 `lock`）。
-- `answerSubOffer(_:)` 也调它——**这条是收听远端音频那一路**：服务端推 `room.offer(pc=sub)` 后，状态机在同一次 reduce 里就产出应答帧、整条链路跑在 Engine 帧循环里，
-  跟 Kit 什么时候起 `Task` 调 `acquireMicrophone()` **没有任何先后约束**，下行 offer 完全可能先到。漏了它的症状是「接通了但听不到对方」，
-  而且是这次挪动**新引入**的窗口（旧实现会话在 `login()` 就配好了，永远碰不到）。
-- `setSpeakerOn(_:)` **只记选择、不配置会话**（整个方法已搬进 `+AudioSession.swift`）。它一度也是触发入口，理由是 Kit 在「进房即可发布」那一刻先同步调它、再另起 `Task` 异步走到 `acquireMicrophone()`，
-  会话没配好时 `overrideOutputAudioPort` 会静默失效。但 `/code-review` 抓到：**那颗扬声器按钮在拨出中（`.outgoing`）就能点**
-  （`IMCallOverlayViewController.renderControls` 里 `.outgoing` 落在带 `speakerButton` 的两个分支上；`.incoming` 是 `top = []`，所以只有主叫的回铃音暴露），
-  那时回铃音正放着，由它去配置会话等于当场把回铃音掐断或拽到通话路由上——**正好把这次要修的毛病又犯一遍**。
-  改成：记进 `desiredSpeakerOn`，已配置就立即应用，没配置就等上面两个入口配好后由 `ensureAudioSessionConfigured()` 补应用，意向不丢。
-  **残留限制**：响铃期间点它只决定「接通后用哪路」，不改回铃音本身的外放与否（回铃音是 Kit 的 `AVAudioPlayer` 放的，不归 adapter 管）；按钮亮灭仍跟 `state.selfState.speakerOn`，界面不自相矛盾。
-- `close()` 收场对称补上：配置过的话调新方法 `IMWebRTCAdapter+Support.releaseAudioSession()`（`RTCAudioSession.session.setActive(false, options: [.notifyOthersOnDeactivation])`，仍在 `lockForConfiguration` 里做，不绕开 `RTCAudioSession`）；没配置过（只起过预览、mic 从没 acquire 就被挂断）不动会话。
-- 没有证据显示这次挪动会破坏 libwebrtc 音频单元的初始化时序：`ensurePeers()`/工厂本来就是惰性建的，配置时机只是从「远早于 PC 创建」挪到「紧邻 PC/轨道创建之前」，方向是更贴近而不是更冒险；`xcodebuild` 编译通过，但**时序是否真的安全只能靠真机听感验证**，见下面「必须真机验证」。
+**方案：Xcode 官方的「本地包覆盖同名远端包」机制，不用环境变量**（Dock 启动的 Xcode 读不到 shell 环境变量，且包解析有缓存，环境变量方案不可靠）：
 
-**铃声实现**：
-- 素材 `Sources/IMCallKit/Resources/im_ringtone.mp3` / `im_ringback.mp3`，`Package.swift` 给 `IMCallKit` target 加 `resources: [.process("Resources")]`。
-- 纯判据 `ringtoneFor(_ state: IMCallViewState, muted: Bool) -> IMRingtoneKind`（`IMCallViewRules.swift`，不带 UIKit，`swift test` 覆盖得到）：`muted`/`isMeeting` → `.none`；`incoming` → `.incoming`；`outgoing` → `.ringback`；其余 → `.none`。停铃按 phase 收敛，不按事件特判（`.callEnd` 在 `incoming` 时直接回 `idle`、不经过 `ended`，两者 default 分支都落 `.none`）。
-- 播放层 `Sources/IMCallKit/State/IMCallController+Ringtone.swift`（新文件，`#if canImport(UIKit)`，`AVAudioPlayer`，`numberOfLoops = -1`）；挂载点是 `IMCallController.onStateChanged(from:)`（`state` 的 `didSet` 已去重），**没有**挂 `IMCallControllerObserver.callController(_:didChange:)`（`broadcast()` 在 state 没变时也会被调，会重复触发）。
-- `IMCallKitConfig` 加 `incomingRingtone: URL?` / `ringbackTone: URL?`（nil = 内置）/ `ringtoneMuted: Bool = false`；`IMCallController` 新增 `config` 引用（`IMCallKit.init` 换成真实例，语义同 `bannerFirst`——现用现读，不是 init 快照）。
-- Demo：`DemoSession.ringtoneMuted` 落 `UserDefaults`（同 `bannerFirst`/`floatingWindow` 写法），`SettingsViewController` 加「静音来电铃声」开关，供真机对照验证。
-- 测试：`Tests/IMCallKitTests/RingtoneRulesTests.swift`（6 条，覆盖 incoming/outgoing/会议/muted/其余阶段/两条停铃路径）。
+1. **`Demo/IMRTCDemo/IMRTCDemo.xcodeproj` 的包依赖改成 `XCRemoteSwiftPackageReference`**，`repositoryURL = https://github.com/BLiYing/im-rtc-ios.git`，**暂时 `branch = main`**（tag 1.0.0 推上去、用户确认后再改成 `exactVersion 1.0.0`，见下面「下一步」）。三个 product 依赖（`IMCallEngine`/`IMCallKit`/`IMCallEngineWebRTC`）改挂到这个远端引用。**单独打开这个 `.xcodeproj` = 公网包档**——跟第三方拿到手的集成方式完全一样，要联网。
+   手改 `project.pbxproj`：新对象 id `B22C4AC03049C665008A1C5F`（24 位十六进制，跟现有 id 核对过不冲突），`plutil -lint` 与 `xcodebuild -list -project` 都过。
+2. **新建 `Demo/IMRTCDemo/IMRTCDemo.xcworkspace`**（`contents.xcworkspacedata` 两个 `FileRef`：`group:IMRTCDemo.xcodeproj` + `group:../..` 即本仓根目录）。本仓根目录名 `im-rtc-ios` 与远端 URL 末段同名，Xcode 自动用本地包**覆盖**掉那份远端依赖，不用改代码、不用加任何配置。**打开这个 workspace = 源码档**——日常开发默认用这个。
+3. **`scripts/test.sh` 编 Demo 那步改成 `-workspace Demo/IMRTCDemo/IMRTCDemo.xcworkspace`**（原来是 `-project ...xcodeproj`），否则每次跑测试会悄悄联网走公网包档，且验的是 GitHub 上可能落后于本地未推送提交的旧代码。`CLAUDE.md` 新增一节「Demo 的两种打开方式」讲清楚两档怎么用；全仓 `grep -i xcodeproj` 核对过，没有其它脚本/文档提到打开 `.xcodeproj`。
 
-**体量**：改完 `IMWebRTCAdapter.swift` 584 行、`IMCallController.swift` 594 行，都在 600 红线内（`setSpeakerOn` 搬走后主文件又降了 13 行）。
-腾行数靠**拆文件**：新建 `Sources/IMCallEngineWebRTC/IMWebRTCAdapter+AudioSession.swift`（58 行）放 `ensureAudioSessionConfigured()`。
-**旧注释一个字都没动**——第一版曾为腾额度精简过两个文件里跟本轮无关的旧注释（`RTCPeerConnection` 报废必崩、`lock` 数据竞争、跨 await 代际、
-`setSpeakerOn` 不绕开 `RTCAudioSession`、`acquireMicrophone` 的 cid、`close()` 代际，以及 `IMCallController` 顶部三段），
-已用 `git show HEAD:` 逐字复原并核对过 diff：两个文件加起来只剩两行删除（`lock` 去掉 `private`、搬走的那句 `configureAudioSession()`），其余全是新增。
-**下次再碰这两个文件，腾体量一律拆文件，不许动注释**——那些注释记的是已经付过代价的坑。
-（`ringtonePlayer` / `ringtoneKind` 是存储属性，Swift 不允许扩展加存储属性，只能留在主体里，逻辑都在 `+Ringtone.swift`。）
+**验证（真跑过，非纸面）**：
+- `xcodebuild -resolvePackageDependencies -project Demo/IMRTCDemo/IMRTCDemo.xcodeproj -scheme IMRTCDemo`：`im-rtc-ios` 解析到 `https://github.com/BLiYing/im-rtc-ios.git @ main`，revision `df2cb7a`（GitHub 上的 main，落后本地未推送的 `502e745` 一个提交——预期内，没有去 push）。
+- `xcodebuild -resolvePackageDependencies -workspace Demo/IMRTCDemo/IMRTCDemo.xcworkspace -scheme IMRTCDemo`：`im-rtc-ios` 解析到本地路径 `/Users/liying/IOSProject/im-rtc/im-rtc-ios`，没有联网 checkout。
+- **负向验证**：在 `Sources/IMCallKit/KitEntry.swift` 的 import 后面插一行 `__TEMP_VERIFY_SOURCE_PROFILE_BUILD_ERROR__`，`xcodebuild -workspace ... build` 报错 `expressions are not allowed at the top level`（精确指到这一行）→ `BUILD FAILED`；撤销后 `git diff --stat` 确认 `KitEntry.swift` 不再出现在 diff 里，源码已恢复原样。
+- `xcodebuild -workspace ... -destination 'generic/platform=iOS Simulator' build`：`BUILD SUCCEEDED`（源码档）。
+- `xcodebuild -project ... -destination 'generic/platform=iOS Simulator' build`：**也 `BUILD SUCCEEDED`**（公网包档，用的是 GitHub 上落后一个提交的 main）——那个未推送的提交（`502e745`，发布/订阅被拒收场）没有动公开 API 面，所以对 Demo 编译没有影响，不是必然会过，纯属这次凑巧。
+- `plutil -lint IMRTCDemo.xcodeproj/project.pbxproj` 与 `xcodebuild -list -project`/`-list -workspace` 均通过。
+
+**Package.resolved 处理**：
+- 根 `Package.resolved`（本仓自己 `swift build`/`swift test` 用）：不受影响，没改。
+- `Demo/IMRTCDemo/IMRTCDemo.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved`：这是 **xcodeproj 单独打开（公网包档）** 用的那份，本来就进 git（只有 webrtc 一个 pin），现在 Xcode 重新解析后多了 `im-rtc-ios` 的远端 branch pin，**已更新并保留跟踪**——延续原有先例，且这本来就该是「公网包档」的真实解析快照。
+- `Demo/IMRTCDemo/IMRTCDemo.xcworkspace/xcshareddata/swiftpm/Package.resolved`（**源码档**自己那份）：**目前还不存在**——`xcodebuild -resolvePackageDependencies`/`build` 命令行跑完不会落这个文件，只有真的在 Xcode.app 里打开这个 workspace 一次才会生成（GUI-only 行为，命令行验证不到，试了 `-resolvePackageDependencies` 和整个 `build` 两种都没落地，判断是 Xcode 的既有限制不是这次配置错）。写进了「下一步」。预期内容应该只有 `webrtc` 一个 pin（`im-rtc-ios` 被本地覆盖，不会出现在 pins 里，跟原 xcodeproj-only-local 时代的那份文件形态一致）。
 
 ## 下一步
 
-0. **§A 发布被拒收场：用故障注入上真端走一遍**（先 `FAULT_INJECTION=1 ./scripts/dev.sh`）：通话接通后 `curl -X POST $B/v1/dev/faults -d '{"action":"reject","uid":"<本端uid>","frame_type":"room.publish","code":1302}'`，再开一次麦 / 摄像头 → 本端收场、结束原因 error、对端收到挂断。过了把 CLIENT_PARITY 那一行 🟡 转 ✅。代码已提交，真机验收后续再做（2026-09-16 用户定）。
-1. **累积未做的真机验收**（上一轮遗留，与本轮无关但仍待办）：API 命名对齐新签名（`callDidEnd`/`activeSpeakersDidChange`/`networkQualityDidChange`/`destroy()`/`openMicrophone`/`openCamera`）；M1/M2 两台设备群呼带 `chatGroupID`、中途 `joinCall` 进房、选人页翻页/搜索/置灰；`call.incoming.inviter` 与「离场发起人可被重新邀请」两条双端联调；1409 两种文案没连过真服务端。IMProgram / 容信真实接入是后续期（M3-M7）。
+0. **公网发布相关（本轮遗留）**：
+   - tag `1.0.0` 推上 GitHub 后，把 `IMRTCDemo.xcodeproj` 里 `XCRemoteSwiftPackageReference` 的 `requirement` 从 `branch = main` 改成 `kind = exactVersion, version = 1.0.0`（等用户确认，本轮不做）。
+   - 找机会用 Xcode.app 真的打开一次 `IMRTCDemo.xcworkspace`，看它是否生成自己的 `xcshareddata/swiftpm/Package.resolved`；生成后按「只含 webrtc pin」的预期核对内容，确认无误后加入 git（沿用本仓其它 `Package.resolved` 都进 git 的先例）。
+   - 本地未推送的 `502e745`（发布/订阅被拒收场）迟早要推；推之前如果又有新提交，公网包档解析到的 revision 还会再变，属正常现象，不用大惊小怪。
+1. **§A 发布被拒收场：用故障注入上真端走一遍**（先 `FAULT_INJECTION=1 ./scripts/dev.sh`）：通话接通后 `curl -X POST $B/v1/dev/faults -d '{"action":"reject","uid":"<本端uid>","frame_type":"room.publish","code":1302}'`，再开一次麦 / 摄像头 → 本端收场、结束原因 error、对端收到挂断。过了把 CLIENT_PARITY 那一行 🟡 转 ✅。代码已提交，真机验收后续再做（2026-09-16 用户定）。
+2. **累积未做的真机验收**（上一轮遗留，与本轮无关但仍待办）：API 命名对齐新签名（`callDidEnd`/`activeSpeakersDidChange`/`networkQualityDidChange`/`destroy()`/`openMicrophone`/`openCamera`）；M1/M2 两台设备群呼带 `chatGroupID`、中途 `joinCall` 进房、选人页翻页/搜索/置灰；`call.incoming.inviter` 与「离场发起人可被重新邀请」两条双端联调；1409 两种文案没连过真服务端。IMProgram / 容信真实接入是后续期（M3-M7）。
 
 **待办 / 已知限制**：
 - `IMWebRTCAdapter.swift`（594 行）、`IMCallController.swift`（597 行）、`IMCallOverlayViewController.swift`（596 行）、`IMCallEngine.swift`（558 行）、`SignalConnection.swift`（594 行）都逼近或已经很接近 600 行红线（`check-file-size.sh` 目前是 WARN，没超）——下次往这几个文件加东西之前先规划怎么拆。
@@ -60,6 +51,7 @@
 
 ## 已知坑 / 限制
 
+- **Demo 打开 `.xcodeproj` 和打开 `.xcworkspace` 是两个不同档**（2026-09-16 起，见上面「当前焦点」）：`.xcodeproj` 单独打开 = 公网包档（远端 `github.com/BLiYing/im-rtc-ios.git`），`.xcworkspace` = 源码档（本地包覆盖）。**改 `scripts/test.sh` 或任何新脚本时别手滑写成 `-project`**——那样会联网、且验的是 GitHub 上可能落后于本地的代码。`.xcworkspace` 自己的 `xcshareddata/swiftpm/Package.resolved` 命令行落不了地，只有 Xcode.app 真开一次才生成，别把它的缺席当成配置错误。
 - **音频会话不再在 `login()` 时配置**（2026-09-16 改）：如果以后发现某条路径「应该出声却没出声」，先确认是不是漏了 `ensureAudioSessionConfigured()` 这一环（目前挂在 `acquireMicrophone()` / `setSpeakerOn(_:)` 两处），**别把老经验（会话在登录后就绪）当成还成立的前提**。
 - **simulcast 没生效，换包暂缓**（2026-09-09 拍板，**别重查**）：`stasel/WebRTC 152.0.0` 没有 `RTCVideoEncoderFactorySimulcast`，三个 encoding 进得了 SDP 但只跑第一个（h），SFU 降层对 iOS 无效。
   选定候选 `webrtc-sdk/Specs 150.7871.01`（`RTC*` 原名、product 同名、0 处改名）；checksum、逐类兼容核对、换包三件事、M152→M150 与 H.264/VP8 取舍、兜底 M144，全在 archive 末节「已知坑」第一条。

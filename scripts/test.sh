@@ -138,13 +138,23 @@ fi
 #     公开 API，编译即验证（CONVENTIONS §4）。它已经抓到过一个真问题：
 #     `setMuted(_:_:)` 两个参数都不带标签，生成的选择器是 `setMuted::completionHandler:`。
 #
+# **必须走 `-workspace IMRTCDemo.xcworkspace`，不是 `-project IMRTCDemo.xcodeproj`**
+# （2026-09-16 起）：Demo 现在两档并存——
+#   · 单独打开 **`IMRTCDemo.xcodeproj`** = 公网包档，包依赖是
+#     `XCRemoteSwiftPackageReference` 指到 `github.com/BLiYing/im-rtc-ios.git`（branch main），
+#     跟第三方集成时的写法完全一样，但要联网，且远端 main 可能落后于本地未推送的提交。
+#   · 打开 **`IMRTCDemo.xcworkspace`**（内含该 xcodeproj + 本仓根目录本地包）= 源码档，
+#     Xcode 用「本地包覆盖同 identity 远端包」机制，本地目录名 `im-rtc-ios` 与远端 URL
+#     末段同名，自动生效，不用改任何代码。日常开发、回归测试都要用这一档——
+#     用 `-project` 会把 CI 悄悄跑到联网的公网包档，验的是 GitHub 上的旧代码，不是本地改动。
+#
 # 没装 Xcode 就跳过（比如 CI 上只跑 SwiftPM 的那种机器），不算失败。
 demo_builds_for_ios() {
   if ! command -v xcodebuild >/dev/null 2>&1; then
     echo "  跳过：这台机器没有 xcodebuild"
     return 0
   fi
-  xcodebuild -project Demo/IMRTCDemo/IMRTCDemo.xcodeproj -scheme IMRTCDemo \
+  xcodebuild -workspace Demo/IMRTCDemo/IMRTCDemo.xcworkspace -scheme IMRTCDemo \
     -destination 'generic/platform=iOS Simulator' \
     -derivedDataPath "${DEMO_DERIVED_DATA:-.build/demo-dd}" \
     build 2>&1 | grep -E 'error:|warning:|BUILD (SUCCEEDED|FAILED)' | head -20

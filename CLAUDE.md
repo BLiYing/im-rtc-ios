@@ -43,9 +43,26 @@ im-rtc-ios/
 │       ├── Group/                     # 九宫格、格子(Tile)、选人
 │       └── Floating/                  # 悬浮球 / 悬浮小画面
 ├── Tests/                             # XCTest：状态机、信令编解码、一致性向量
-├── Demo/                              # Demo App（独立 Xcode 工程，依赖本地 package）
+├── Demo/                              # Demo App（独立 Xcode 工程，两档见下）
 └── scripts/                           # 门禁与测试入口
 ```
+
+## Demo 的两种打开方式（源码档 / 公网包档）
+
+`Demo/IMRTCDemo/` 下同时有 `IMRTCDemo.xcodeproj` 和 `IMRTCDemo.xcworkspace`，打开哪个决定
+Demo 依赖的是本地源码还是公网发布的 SDK：
+
+| 打开 | 档位 | 包依赖来源 | 用途 |
+|---|---|---|---|
+| **`IMRTCDemo.xcworkspace`** | 源码档 | 本仓根目录（本地包覆盖同名远端包） | **日常开发默认用这个**——改了 `Sources/` 下的代码立刻在 Demo 里见效 |
+| **`IMRTCDemo.xcodeproj`**（单独打开） | 公网包档 | `github.com/BLiYing/im-rtc-ios.git`（`branch = main`，tag `1.0.0` 推上去后改成 `exactVersion 1.0.0`） | 验证第三方按公开仓库集成时的真实体验；要联网，且落后于本地未推送的提交 |
+
+`xcodeproj` 的包依赖本身写的就是公网 URL（`XCRemoteSwiftPackageReference`）；`xcworkspace` 是
+把这个 `xcodeproj` 和本仓根目录（含 `Package.swift`）一起放进工作区，Xcode 发现本地目录名
+`im-rtc-ios` 与远端 URL 末段同名，就用本地包**覆盖**掉那份远端依赖——不需要改任何代码或加环境变量。
+
+`scripts/test.sh` 编 Demo 那一步固定用 `-workspace`（源码档），别手改成 `-project`，
+否则会联网拉公网包、且验的是 GitHub 上的旧代码。
 
 ## 工作约定
 - **每次开始主要回复前，先读 `current_task.md` 恢复上下文**，改动后更新它。
