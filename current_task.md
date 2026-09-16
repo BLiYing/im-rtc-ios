@@ -7,17 +7,18 @@
 
 ## 当前焦点
 
-**2026-09-17：SDK 1.0.0 已公网发布（SPM tag `1.0.0`，MIT），手上没有在做的改动**（main 已推、工作区干净）。
-- Demo 两档：`IMRTCDemo.xcworkspace` = 源码档（日常用），单独开 `IMRTCDemo.xcodeproj` = 公网包档（锁 `exactVersion 1.0.0`，已验过）。
-- 最近提交：§A 发布被拒收场 `502e745`（真机 ✅ 09-17）· 来电铃声 + 回铃音 `cbf8c55`（真机 ✅）· `call.incoming.inviter` `d80e09b` · API 命名对齐 `c74d1be` · ObjC 全可用 `d91227c` · 宿主对接 `ee51701`。
-- 发布准备的细节（pbxproj 手改、负向验证、三份 `Package.resolved` 各怎么处理）在 archive 末节。
+**2026-09-17 夜：逐项补了四件（本地已提交、未推送），单测 + `test.sh` 全绿，真机 / 模拟器交互都没点过**（模拟器没有点击工具，按坐标点桌面误点到别的终端，放弃了）。SDK 1.0.0 已公网发布，这些进下一个版本。
+- `c8da295` 通话里摄像头起不来说一句「没有摄像头权限 / 找不到可用的摄像头，已用语音继续通话」（`imCameraFailureActions`）。
+- `747f538` 收 `call.ringing` 抛 `callEngine(_:userIsRinging:)`，群通话里别人加的人也摆占位格；终局计时器到点先看终局还在不在。
+- `2714e7e` 监听 `routeChangeNotification`：记日志，插拔后系统清掉的外放覆盖补回去（`imShouldReapplySpeaker`）。
+- `527d391` 会议房「还有 N 人未显示」+ 屏外报 none（M1）；`20b4bc2` 打开网络质量图标，「对方网络不佳」只在 1v1。
+- **体量**：`IMCallOverlayViewController.swift` 598、`IMCallController.swift` 596，再往里加东西先拆。
 
 ## 下一步
 
 1. **累积的真机验收**：API 命名对齐的新签名（`callDidEnd` / `activeSpeakersDidChange` / `networkQualityDidChange` / `destroy()` / `openMicrophone` / `openCamera`）；
    M1/M2 两台设备群呼带 `chatGroupID`、中途 `joinCall`、选人页翻页 / 搜索 / 置灰；`inviter` 与「离场发起人可被重新邀请」双端联调；1409 两种文案连真服务端。
-2. **下个版本（协议批次，server 下一步 0）**：`call.ringing` 发给在场全员，Kit 消费它建占位格、按裁决帧收掉。
-3. **Kit 视频通话中摄像头无权限 / 无设备（2001/2002）没有界面提示**（Web / Android 有）；补完同步 server `/guide/kit#hints`。
+2. **补验今晚四件**：模拟器关「合成画面」打视频电话看提示；三人群通话里看别人加的人占位格；插拔耳机 / 蓝牙；网络条与 1v1「对方网络不佳」。
 4. **体量**：`IMWebRTCAdapter` 594、`IMCallController` 597、`IMCallOverlayViewController` 596、`SignalConnection` 594、`IMCallEngine` 558 行——往里加东西前先规划拆分。
 5. 按需 / 后续期：来电振动；自定义铃声没有 Demo UI、没真机验过；`IMInviteMemberProvider` / `presentInvitePicker` 没真实宿主跑过；ObjC 状态观察者只有 delegate 没有 block；IMProgram / 容信真实接入（M3~M7）。
 
