@@ -7,6 +7,11 @@
 
 ## 当前焦点
 
+**2026-09-17 夜：「调用结果回给调用方」2.0.0 改造（server `docs/design/ACTION_RESULT_DESIGN.md`）已在 main 工作区改完、未提交，等 code-review。**
+发起类方法改 `async throws`（`call` 返回 callID）、本地拒绝走 `IMMachineOutput.reject`、`IMFrameLoop.request` 结算直接帧、
+`IMRTCError.forType`、destroy 契约（`DestroyContractTests`）、Kit 从 throw 取码（删 `joiningCallID` / `pendingJoinDenial`）。`test.sh` 10 步全绿 337 例 + Demo 编译。
+真机未验（joinCall 1202/1402/1409 文案、拨号拿 callID、通话中断网再挂断）。
+
 **2026-09-17 傍晚：四仓 /simplify 清理做完并推送（本仓 `dc76a99`…`7c3f457`，`test.sh` 10 步全绿 322 例 + Demo 编译；用户已复看，正常）。**
 - 行为不变：`IMEmittedEvent.error(_:)` 工厂、`IMSysErrorFrame.decode` 推送 / 应答共用、状态机 `out` / `invalidStateOutput` 合并、周期事件先 `IMRTCLog.isEnabled` 再拼字段、`sys.pong` 不进帧泵、`stampCallStart` 单字段比较；
   WebRTC 适配器 `ensurePeers` 取一次、`close()` 取消开摄像头 Task；Kit 色值 / 弹簧 / 小头像 44 收进 `IMKitTheme`，`imPinEdges` / `imConfigureCircleIconButton`，悬浮球贴边下沉 `Layout/IMFloatingBubbleLayout.swift`（有单测）。
@@ -15,7 +20,7 @@
 
 ## 下一步
 
-1. destroy 对表查出的本端欠账（CLIENT_PARITY `[^destroy]`）：`IMCallEngine+Lifecycle.swift` 注释与实际不符；`attachView` / `attachLocalView` 销毁后仍建空渲染视图。
+1. 2.0.0：code-review 通过后提交；真机验上面三项。destroy 欠账（注释 / 空视图）已随这次改掉。
 2. 按需 / 后续期：自定义铃声没有 Demo UI、没真机验过；`IMInviteMemberProvider` / `presentInvitePicker` 没真实宿主跑过；IMProgram / 容信真实接入（M3~M7）。
 
 ## 已知坑 / 限制
@@ -28,7 +33,7 @@
 - **别单独 `rm -rf DerivedData`**：Xcode 开着时 SwiftPM 命中缓存 zip 跳过下载然后 `fatalError`（`There is no XCFramework found`）。平时 ⇧⌘K；真要清先退 Xcode：
   `osascript -e 'quit app "Xcode"'; sleep 3; rm -rf ~/Library/Developer/Xcode/DerivedData ~/Library/Caches/org.swift.swiftpm/artifacts`。
 - **Kit 界面代码 macOS 上编不到**（`#if canImport(UIKit)`）：`swift test` 绿不算数，要跑完整 `test.sh`（第 10 步编 Demo）。macOS 也编的 Controller 文件不能引用 `IMKitTheme`；`IMCallController+Ringtone.swift` 全包在 `#if canImport(UIKit)`。
-- **`join_denied` 不是协议 reason**：`IMCallController` 在 `joinCall` 被 1409 拒时本地改写的伪原因，只用于结束画面，别拿去和其他端对齐。
+- **`join_denied` 不是协议 reason**：`IMCallController` 在 `joinCall` 被拒（任何码）时本地改写的伪原因，只用于结束画面，别拿去和其他端对齐。
 - **「人先进来、轨道后到」是常态**：摆格子时的动作（层上报、尺寸、订阅）要能在轨道到达时再做一遍，别让去重表吃掉（`report(_:layer:hasVideo:)`）。
 - **通话中关摄像头停的是采集、不是轨道**：重开失败只记日志；`stopCapture()` 在 async 上下文解析到 async 重载，同步停走 `IMWebRTCAdapter.halt`；本端画布靠 `IMVideoRegistry.firstFrameArrived` 揭示。
 - 切后台 controller 自动 mute 摄像头；回前台不替用户打开本来关着的摄像头。

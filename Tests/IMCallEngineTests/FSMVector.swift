@@ -59,6 +59,17 @@ enum FSMVector {
         }
     }
 
+    /// assertResult 比对 `act` 步骤的本地拒绝结果。**省略 = 断言没有本地拒绝**（2.0.0，
+    /// server `docs/design/ACTION_RESULT_DESIGN.md`）：本地拒绝只进 result，不许同时抛 onError（emit 那边会抓到）。
+    static func assertResult(_ actual: IMErrorCode?, _ want: Any?, label: String) {
+        guard let expected = want as? [String: Any] else {
+            XCTAssertNil(actual, "\(label)：向量没写 result，却被本地拒绝成 \(actual.map { $0.name } ?? "")")
+            return
+        }
+        XCTAssertEqual(actual?.rawValue, (expected["code"] as? NSNumber)?.intValue, "\(label) 的码")
+        XCTAssertEqual(actual?.name, expected["name"] as? String, "\(label) 的 name")
+    }
+
     static func assertEvents(_ actual: [IMEmittedEvent], _ want: Any?, label: String) {
         let wanted = want as? [[String: Any]] ?? []
         XCTAssertEqual(actual.count, wanted.count,

@@ -41,7 +41,7 @@ final class PendingRequests {
         timer.setEventHandler { [weak self] in
             guard let self, let waiter = self.waiters.removeValue(forKey: reqID) else { return }
             waiter.timer.cancel()
-            waiter.complete(.failure(IMRTCError(.signalingTimeout, "\(type) 等应答超时")))
+            waiter.complete(.failure(IMRTCError(.signalingTimeout, "\(type) 等应答超时", forType: type)))
         }
         waiters[reqID] = Waiter(type: type, timer: timer, complete: complete)
         timer.resume()
@@ -65,6 +65,7 @@ final class PendingRequests {
             waiter.complete(.failure(IMRTCError(
                 decoded.known ?? .internalError,
                 decoded.msg,
+                forType: waiter.type,
                 unknownCodeRetryable: unknownCodeRetryable)))
             return true
         }
@@ -81,7 +82,8 @@ final class PendingRequests {
         waiters.removeAll()
         for (_, waiter) in all {
             waiter.timer.cancel()
-            waiter.complete(.failure(error))
+            // 每个在途请求带上自己的帧类型：调用方与 onError 都靠 forType 分清是哪一个。
+            waiter.complete(.failure(error.withForType(waiter.type)))
         }
     }
 }

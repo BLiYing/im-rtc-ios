@@ -134,7 +134,7 @@ final class ConnectLifecycleTests: XCTestCase {
         {"type":"room.join.ok","req_id":"\(join.reqID)","ts":1,"data":{\
         "room_id":"r-1","participant_id":"r-1-p1","participants":[],"tracks":[]}}
         """)
-        await joining
+        try await joining
 
         let uids = (0..<60).map { "u-\($0)" }
         for uid in uids {

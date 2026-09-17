@@ -107,11 +107,41 @@ actor IMFrameLoop {
         await dispatch(.recv(type: type, data: data))
     }
 
-    /// dispatch 把一个输入喂进状态机，然后抛事件、发帧。
+    /**
+     dispatch 把一个**找不到调用方**的输入喂进状态机（下行帧、内部事件、引擎自发的动作如
+     `restart_pub_ice`），然后抛事件、发帧。**永不 throw**：帧失败转成 `onError`；
+     本地拒绝只记日志（`logLocalReject`）。
+     */
     func dispatch(_ input: IMMachineInput) async {
         let result = IMEngineMachine.reduce(ctx, input)
-        logLocalReject(input, result.emit)
-        await apply(result)
+        logLocalReject(input, result)
+        await apply(result, settlement: nil)
+    }
+
+    /**
+     request 把一次**宿主调用**喂进状态机，并把结果交回调用方（server `docs/design/ACTION_RESULT_DESIGN.md` R1）。
+
+     - 状态机就地拒绝 → throw 那个码（`2005`），不抛事件、不发帧；
+     - 本步直接产出的帧被拒 / 超时 / 没连接 / 等应答时断线 → throw 那个错误（带 `forType`），
+       **不再**发 `onError`（R3）；回滚照做，`onCallEnd(error)` 之类的状态事件**先于** throw 发出（R4）；
+     - 否则返回最后一帧应答的 data（`call` 从里面取 `call_id`）。本步没发帧（意图被缓存、
+       拨出中挂起的 cancel）时返回空字典：调用已受理，之后的连锁帧失败走 `onError`（R2）。
+     */
+    func request(_ input: IMMachineInput) async throws -> [String: IMJSON] {
+        let result = IMEngineMachine.reduce(ctx, input)
+        logLocalReject(input, result)
+        let settlement = IMSettlement()
+        await apply(result, settlement: settlement)
+        if let code = result.reject {
+            throw IMRTCError(code, "状态机在 call=\(ctx.call.state.rawValue) room=\(ctx.room.state.rawValue) 时拒绝了 \(Self.opName(input))")
+        }
+        if let error = settlement.error { throw error }
+        return settlement.reply
+    }
+
+    private static func opName(_ input: IMMachineInput) -> String {
+        guard case let .act(op, _) = input else { return "" }
+        return op
     }
 
     /**
@@ -134,11 +164,22 @@ actor IMFrameLoop {
             return
         }
         let ended = IMEngineMachine.forceEnd(ctx)
-        await apply(IMMachineOutput(ended.state, send: inviteLanded ? ended.send : [], emit: ended.emit))
+        await apply(IMMachineOutput(ended.state, send: inviteLanded ? ended.send : [], emit: ended.emit),
+                    settlement: nil)
     }
 
     /// apply 把一次推进的结果落地：记状态、同步媒体层、抛事件、发帧。
-    private func apply(_ result: IMMachineOutput<IMEngineContext>) async {
+    ///
+    /// `settlement` 不为 nil 时本步是宿主调用，产出的帧的结果记进去交给调用方（见 `request`）。
+    private func apply(_ result: IMMachineOutput<IMEngineContext>, settlement: IMSettlement?) async {
+        land(result)
+        for frame in result.send {
+            await sendFrame(frame, settlement: settlement)
+        }
+    }
+
+    /// land 是 `apply` 里**不等待**的那一半：记状态、同步媒体层、抛事件。帧另发。
+    private func land(_ result: IMMachineOutput<IMEngineContext>) {
         ctx = result.state
         mirror.set(ctx)
 
@@ -187,13 +228,15 @@ actor IMFrameLoop {
             if event.callback == IMEmittedCallbackName.onKickedOut { continue }
             dispatcher.emit(event)
         }
-        for frame in result.send {
-            await sendFrame(frame)
-        }
     }
 
-    /// sendFrame 发一帧，并把应答喂回状态机。
-    private func sendFrame(_ frame: IMOutgoingFrame) async {
+    /**
+     sendFrame 发一帧，并把应答喂回状态机。
+
+     `settlement` 不为 nil 时这一帧是宿主调用直接发出的：失败记进去交给调用方，不发 `onError`。
+     同一次调用发了几帧的，调用方拿第一个失败，其余的照旧走 `onError`——一个错误只报一次。
+     */
+    private func sendFrame(_ frame: IMOutgoingFrame, settlement: IMSettlement?) async {
         /*
          **没有连接不是「什么都不做」，是一次失败。**
 
@@ -207,7 +250,7 @@ actor IMFrameLoop {
          Web 的 `frameLoop.sendFrame` 同日补上。）
          */
         guard let connection = connection() else {
-            emitError(IMRTCError(.notLoggedIn, "\(frame.type)：信令未连接"))
+            settleFailure(IMRTCError(.notLoggedIn, "\(frame.type)：信令未连接", forType: frame.type), settlement)
             await rollback(frame)
             return
         }
@@ -218,20 +261,62 @@ actor IMFrameLoop {
             return
         }
         let startedNS = DispatchTime.now().uptimeNanoseconds
+        let reply: IMRequestResult?
         do {
-            let reply = try await sender.send(connection, frame)
-            Self.noteSlowRequest(frame.type, sinceNS: startedNS, failed: false)
-            guard let reply else { return }
-            // **应答也要喂回状态机**：join.ok / publish.ok 都是状态推进的关键一步。
-            await handleIncoming(reply.envelope.type, reply.data)
+            reply = try await sender.send(connection, frame)
         } catch {
             Self.noteSlowRequest(frame.type, sinceNS: startedNS, failed: true)
             // **失败也要放闸**（见 IMPubOfferGate）：这一轮的 answer 不会来了。
             if isPubOffer { pubOffer.abort() }
-            // 请求失败不该中断整个事件流：转成 error 事件交给宿主。
-            emitError(error)
+            // 请求失败不该中断整个事件流：交给调用方，找不到调用方就转成 error 事件。
+            let rtc = error as? IMRTCError ?? IMRTCError(.internalError, String(describing: error))
+            settleFailure(rtc.withForType(frame.type), settlement)
             await rollback(frame)
+            return
         }
+        Self.noteSlowRequest(frame.type, sinceNS: startedNS, failed: false)
+        guard let reply else { return }
+        // **应答也要喂回状态机**：join.ok / publish.ok 都是状态推进的关键一步。
+        guard let settlement else {
+            await handleIncoming(reply.envelope.type, reply.data)
+            return
+        }
+        settlement.reply = reply.data
+        await landReplyWithoutWaiting(reply)
+    }
+
+    /**
+     landReplyWithoutWaiting 是宿主调用直接那一帧的应答：**落进状态机就算结算完**，不等它连锁出来的帧（R2 / D1）。
+
+     状态与事件在这里当场落地；之后的连锁帧（publish.ok → pub offer → 等 answer，join.ok → 重放缓存的发布）
+     放进一个新 Task 发，它们有自己的出口（`onError`）。等它们的话，`publishMicrophone()` 要陪着 SDP 协商走完，
+     协商卡住还得多等一个请求超时——而那些失败本来就不算这次调用的。（Web 端同一处：`frameLoop.ts` 的 `sendFrame`。）
+
+     `room.answer` 这类要先交给媒体层的应答照旧走 `handleIncoming` 等它走完（宿主调用发不出 pub offer，走不到这里）。
+     */
+    private func landReplyWithoutWaiting(_ reply: IMRequestResult) async {
+        let type = reply.envelope.type
+        guard !Self.mediaFrames.contains(type) else {
+            await handleIncoming(type, reply.data)
+            return
+        }
+        let result = IMEngineMachine.reduce(ctx, .recv(type: type, data: reply.data))
+        land(result)
+        guard !result.send.isEmpty else { return }
+        Task {
+            for frame in result.send {
+                await self.sendFrame(frame, settlement: nil)
+            }
+        }
+    }
+
+    /// settleFailure 把一帧的失败交给调用方；没有调用方、或调用方已经拿到一个失败时发 `onError`。
+    private func settleFailure(_ error: IMRTCError, _ settlement: IMSettlement?) {
+        if let settlement, settlement.error == nil {
+            settlement.error = error
+            return
+        }
+        emitError(error)
     }
 
     /// 请求往返超过这么久记一条。正常是几十毫秒。
@@ -281,6 +366,22 @@ actor IMFrameLoop {
         */
         if type == IMFrameType.roomLeave {
             await dispatch(.internalEvent(name: "leave_failed"))
+            /*
+             等应答期间断线的话，房间机先收到 `disconnected` 从 `leaving` 进了 `reconnecting`，
+             `leave_failed` 就不认了——恢复之后人又回到房里，而宿主早就按了离开。
+             这一帧只可能是宿主要离房才发的，没有通话时照样本地收场（ACTION_RESULT_DESIGN D2）。
+             */
+            if ctx.call.state == .idle { await endLocally() }
+            return
+        }
+        /*
+         **退出类被拒也要本地收场**（ACTION_RESULT_DESIGN D2）：用户按的是「结束」，服务端拒了
+         （最常见的是通话已经结束 1402 / 1401）或根本没发出去，都不该让界面停在通话里。
+         结束帧已经试过了，这里只落本地——与 `forceEnd` 同一份收场计算，只是不再发帧。
+         */
+        if Self.exitFrames.contains(type) {
+            await endLocally()
+            return
         }
         /*
          同理，**通话类请求被拒也要退回 idle**。不退的话界面停在「正在呼叫…」，
@@ -339,7 +440,15 @@ actor IMFrameLoop {
         } else if !ended.send.isEmpty {
             IMRTCLog.warn("发布被拒收场：没有信令连接，结束帧发不出去，只做本地收场", [:])
         }
-        await apply(IMMachineOutput(ended.state, send: [], emit: ended.emit))
+        await apply(IMMachineOutput(ended.state, send: [], emit: ended.emit), settlement: nil)
+    }
+
+    /// endLocally 按此刻状态本地收场（通话或会议），不发帧。已经收干净时什么都不做。
+    private func endLocally() async {
+        let ended = IMEngineMachine.forceEnd(ctx)
+        guard !ended.emit.isEmpty else { return }
+        IMRTCLog.warn("结束帧失败，本地收场", ["call_id": ctx.call.callID, "room_id": ctx.room.roomID])
+        await apply(IMMachineOutput(ended.state, send: [], emit: ended.emit), settlement: nil)
     }
 
     /// sendCandidate 把本端候选发上去。候选是尽力而为的，失败只报不中断。
@@ -383,25 +492,19 @@ actor IMFrameLoop {
 
     private func emitError(_ error: Error) {
         let rtc = error as? IMRTCError ?? IMRTCError(.internalError, String(describing: error))
-        dispatcher.emit(IMEmittedEvent.error(rtc.code))
+        dispatcher.emit(IMEmittedEvent.error(rtc))
     }
 
     /**
      logLocalReject 把「状态机本地拒掉了一个动作」记成一条**说得清的**日志。
 
-     宿主收到的 onError 只有 `code=2005 / invalid_state`——**哪个动作、当时什么状态，
+     宿主拿到的错误只有 `code=2005 / invalid_state`——**哪个动作、当时什么状态，
      一个字都没有**。Web 端三人会议那次排查就卡在这里：日志里十几条一模一样的 2005，
      要读代码才能推出「点的是挂断，而会议房里没有 call」。
-
-     不把这些塞进 onError 的载荷，是因为那是四端共用的公开回调表；诊断信息进日志就够了。
+     引擎自己发起的动作（`restart_pub_ice`）被拒时**只有**这一条日志。
      */
-    private func logLocalReject(_ input: IMMachineInput, _ emit: [IMEmittedEvent]) {
-        guard case let .act(op, _) = input else { return }
-        let rejected = emit.contains {
-            $0.callback == "onError"
-                && $0.args["code"]?.intValue == Int64(IMErrorCode.invalidState.rawValue)
-        }
-        guard rejected else { return }
+    private func logLocalReject(_ input: IMMachineInput, _ result: IMMachineOutput<IMEngineContext>) {
+        guard case let .act(op, _) = input, result.reject != nil else { return }
         IMRTCLog.warn("动作被状态机本地拒绝", [
             "op": op,
             "call_state": ctx.call.state.rawValue,
@@ -417,9 +520,25 @@ actor IMFrameLoop {
         IMFrameType.callInvite, IMFrameType.callAccept, IMFrameType.callJoin,
     ]
 
+    /// exitFrames 是「这一帧失败了也要本地收场」的结束帧（`room.leave` 单独处理，见 `rollback`）。
+    private static let exitFrames: Set<String> = [
+        IMFrameType.callHangup, IMFrameType.callReject, IMFrameType.callCancel,
+    ]
+
     /// leaveCallbacks 是「这一轮媒体到此为止」的信号。
     ///
     /// 三个都要算：通话正常结束、自己离房、房间被服务端关掉。
     /// 少算一个的后果是同一条：下一次进房带着上一轮的 PeerConnection。
     private static let leaveCallbacks: Set<String> = ["onCallEnd", "onRoomLeft", "onRoomClosed"]
+}
+
+/**
+ IMSettlement 收集**一次宿主调用直接发出的那几帧**的结算（ACTION_RESULT_DESIGN R1 / R2）。
+
+ 只有 `IMFrameLoop.request` 会建它，只在帧循环 actor 里读写；应答处理里连锁出来的帧不带它，
+ 失败照旧发 `onError`——那些失败找不到调用方。
+ */
+final class IMSettlement {
+    var error: IMRTCError?
+    var reply: [String: IMJSON] = [:]
 }

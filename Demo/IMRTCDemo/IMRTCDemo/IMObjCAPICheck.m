@@ -68,10 +68,10 @@
     IMCallOptions *options = [[IMCallOptions alloc] initWithIsGroup:YES chatGroupID:@"g-42"
                                                             userData:@"{}" timeoutSec:45];
     [withMedia call:@[@"bob", @"carol"] mediaType:@"video" options:options
-    completionHandler:^{}];
+    completionHandler:^(NSString * _Nullable callID, NSError * _Nullable err) {}];
 
-    // 主动加入一通正在进行的群通话（call.join，2026-09-15 实现）。
-    [withMedia joinCall:@"call-77a1" completionHandler:^{}];
+    // 主动加入一通正在进行的群通话（call.join）。被拒的码（1202 满员 / 1402 已结束 / 1409 宿主拒绝）从 err 里取。
+    [withMedia joinCall:@"call-77a1" completionHandler:^(NSError * _Nullable err) {}];
 }
 
 // device_id 的入参校验（协议 §2.5）。宿主可以不等 login 就自己先验一遍。
@@ -98,13 +98,22 @@
             }
             return;
         }
-        [self->_engine call:@[@"bob"] mediaType:@"video" isGroup:NO completionHandler:^{}];
-        [self->_engine joinRoom:@"r-1" roomToken:@"rt" autoSubscribe:YES completionHandler:^{}];
-        [self->_engine leaveRoomWithCompletionHandler:^{}];
-        [self->_engine acceptWithCompletionHandler:^{}];
-        [self->_engine hangupWithCompletionHandler:^{}];
+        // 2.0.0 起发请求的方法把结果回给调用方：completionHandler 带 NSError（被拒 / 超时 / 断线），
+        // 这个错误不再同时走 didFailWithError。call 还带回服务端分配的 callID。
+        [self->_engine call:@[@"bob"] mediaType:@"video" isGroup:NO
+          completionHandler:^(NSString * _Nullable callID, NSError * _Nullable err) {
+            if (err != nil) {
+                NSLog(@"[objc] 拨号被拒 %ld for_type=%@", (long)err.code, err.userInfo[IMRTCErrorInfo.forTypeKey]);
+            }
+        }];
+        [self->_engine joinCall:@"call-1" completionHandler:^(NSError * _Nullable err) {}];
+        [self->_engine joinRoom:@"r-1" roomToken:@"rt" autoSubscribe:YES completionHandler:^(NSError * _Nullable err) {}];
+        [self->_engine leaveRoomWithCompletionHandler:^(NSError * _Nullable err) {}];
+        [self->_engine acceptWithCompletionHandler:^(NSError * _Nullable err) {}];
+        [self->_engine hangupWithCompletionHandler:^(NSError * _Nullable err) {}];
+        [self->_engine inviteMore:@[@"carol"] completionHandler:^(NSError * _Nullable err) {}];
         [self->_engine forceEnd];
-        [self->_engine setMuted:@"mic-1" muted:YES completionHandler:^{}];
+        [self->_engine setMuted:@"mic-1" muted:YES completionHandler:^(NSError * _Nullable err) {}];
         [self->_engine publishMicrophoneWithCompletionHandler:^(NSString *cid, NSError *err) {}];
         [self->_engine startLocalPreviewWithCompletionHandler:^(NSString *cid, NSError *err) {}];
         [self->_engine stopLocalPreview];

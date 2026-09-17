@@ -35,6 +35,7 @@ final class CallFSMTests: XCTestCase {
 
             FSMVector.assertFrames(result.send, step["send"], label: "\(label) 的 send")
             FSMVector.assertEvents(result.emit, step["emit"], label: "\(label) 的 emit")
+            FSMVector.assertResult(result.reject, step["result"], label: "\(label) 的 result")
 
             if let wantState = step["state"] as? String {
                 XCTAssertTrue(allowedStates.contains(wantState),

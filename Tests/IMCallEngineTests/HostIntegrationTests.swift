@@ -128,39 +128,41 @@ final class HostIntegrationValidationTests: XCTestCase {
     func testOversizedChatGroupIDIsRejectedLocally() async throws {
         let (engine, recorder) = makeEngine()
         let options = IMCallOptions(isGroup: true, chatGroupID: String(repeating: "g", count: 65))
-        await engine.call(["bob"], mediaType: "audio", options: options)
+        await assertThrowsCode(.badParams, forType: "call.invite") {
+            _ = try await engine.call(["bob"], mediaType: "audio", options: options)
+        }
         try await settle()
-        XCTAssertEqual(recorder.names(), [.error, .callEnd], "与「名单里有自己」同一个出口")
-        XCTAssertEqual((recorder.all().first?.payload["code"] as? NSNumber)?.intValue,
-                       IMErrorCode.badParams.rawValue)
+        // 1004 只从 throw 出去；界面出口仍是 callEnd(error)（2.0.0，ACTION_RESULT_DESIGN R3/R4）。
+        XCTAssertEqual(recorder.names(), [.callEnd], "与「名单里有自己」同一个出口")
     }
 
     func testChatGroupIDWithWhitespaceIsRejectedLocally() async throws {
         let (engine, recorder) = makeEngine()
         let options = IMCallOptions(isGroup: true, chatGroupID: "g 42")
-        await engine.call(["bob"], mediaType: "audio", options: options)
+        await assertThrowsCode(.badParams) { _ = try await engine.call(["bob"], mediaType: "audio", options: options) }
         try await settle()
-        XCTAssertEqual(recorder.names(), [.error, .callEnd])
+        XCTAssertEqual(recorder.names(), [.callEnd])
     }
 
     func testOversizedUserDataIsRejectedLocally() async throws {
         let (engine, recorder) = makeEngine()
         let options = IMCallOptions(userData: String(repeating: "u", count: 4097))
-        await engine.call(["bob"], mediaType: "audio", options: options)
+        await assertThrowsCode(.badParams) { _ = try await engine.call(["bob"], mediaType: "audio", options: options) }
         try await settle()
-        XCTAssertEqual(recorder.names(), [.error, .callEnd])
+        XCTAssertEqual(recorder.names(), [.callEnd])
     }
 
     /// 合规的选项不该被这道本地门拦下——**没有连接**时才轮到 `2007 not_logged_in`。
     func testValidOptionsPassLocalValidation() async throws {
         let (engine, recorder) = makeEngine()
         let options = IMCallOptions(isGroup: true, chatGroupID: "g-42", userData: "ok", timeoutSec: 45)
-        await engine.call(["bob"], mediaType: "audio", options: options)
-        try await settle()
-        // 没有信令连接：状态机走到 idle→inviting，帧发不出去，换回 notLoggedIn + onCallEnd，
+        // 没有信令连接：状态机走到 idle→inviting，帧发不出去，throw notLoggedIn（照发 onCallEnd），
         // 而不是本地校验那条 badParams——用错误码区分两条路径。
-        XCTAssertEqual((recorder.all().first { $0.name == .error }?.payload["code"] as? NSNumber)?.intValue,
-                       IMErrorCode.notLoggedIn.rawValue)
+        await assertThrowsCode(.notLoggedIn, forType: "call.invite") {
+            _ = try await engine.call(["bob"], mediaType: "audio", options: options)
+        }
+        try await settle()
+        XCTAssertEqual(recorder.names(), [.callEnd])
     }
 }
 
@@ -210,7 +212,7 @@ final class HostIntegrationWireTests: XCTestCase {
         let options = IMCallOptions(isGroup: true, chatGroupID: "g-42", userData: "payload", timeoutSec: 45)
         // **不能直接 await**：`call()` 会等 `call.invite.ok` 回来才返回，不喂应答的话
         // 会一直卡到请求超时（协议 §7.2 的 10 秒）。与 FacadeTests 同一个 `async let` 套路。
-        async let placed: Void = engine.call(["bob"], mediaType: "video", options: options)
+        async let placed: String = engine.call(["bob"], mediaType: "video", options: options)
         let invite = try await waitForFrame(ws, ofType: IMFrameType.callInvite)
         XCTAssertEqual(invite.data["chat_group_id"]?.stringValue, "g-42")
         XCTAssertEqual(invite.data["user_data"]?.stringValue, "payload")
@@ -220,21 +222,22 @@ final class HostIntegrationWireTests: XCTestCase {
         {"type":"call.invite.ok","req_id":"\(invite.reqID)","ts":1,\
         "data":{"call_id":"call-1","room_id":"r-1","invited_at_ms":1}}
         """)
-        try await placed
+        let callID = try await placed
+        XCTAssertEqual(callID, "call-1", "call() 返回服务端分配的 callID")
     }
 
     /// `timeoutSec == 0`（默认值）不该把线路默认值 30 覆盖成 0。
     func testDefaultTimeoutSecIsNotSentAsZero() async throws {
         let (engine, box) = makeEngine()
         let ws = try await login(engine, box)
-        async let placed: Void = engine.call(["bob"], mediaType: "audio", options: IMCallOptions())
+        async let placed: String = engine.call(["bob"], mediaType: "audio", options: IMCallOptions())
         let invite = try await waitForFrame(ws, ofType: IMFrameType.callInvite)
         XCTAssertEqual(invite.data["timeout_sec"]?.intValue, 30, "0 = 用协议默认值，不是真的发 0")
         ws.receive("""
         {"type":"call.invite.ok","req_id":"\(invite.reqID)","ts":1,\
         "data":{"call_id":"call-1","room_id":"r-1","invited_at_ms":1}}
         """)
-        try await placed
+        _ = try await placed
     }
 
     func testJoinCallSendsCallJoinWithTheCallID() async throws {

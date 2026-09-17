@@ -14,13 +14,31 @@ import Foundation
  · 只要 SDK、UI 自己画 → 用 `IMCallEngineDelegate`（= 设计文档 §7.5 的回调总表），
    连媒体适配器都可以不传：登录、振铃、成员进出、静音通知一个都不少。
  · 要整套界面 → 用 `IMCallKit`，它也只消费这同一张表，没有私有通道。
+
+ # 方法的结果回给调用方（2.0.0）
+
+ 发请求的方法（`login` / `call` / `joinCall` / `accept` / `reject` / `cancel` / `hangup` /
+ `inviteMore` / `joinRoom` / `leaveRoom` / `publish*` / `open*` / `setMuted`）是 `async throws`：
+ **这次调用直接发出的那一帧收到应答时返回**，被本地拒绝、被服务端拒绝、超时、没连接、等应答时断线
+ **throw 一个 `IMRTCError`**（ObjC 是 completionHandler 的 `NSError`）——这个错误**不再**同时走
+ `didFailWithError`。引擎随后自动发的连锁帧（接听之后的进房等）失败找不到调用方，才走 `didFailWithError`。
+
+ 通话 / 房间因此收场时 `callDidEnd(.error)` / `didLeaveRoom` 照发，而且**先于** throw：
+ **界面收起靠回调，catch 里只做提示**。退出类（`reject` / `cancel` / `hangup` / `leaveRoom`）
+ 失败时本地照样收场，错误只供日志。规则全文见 server `docs/design/ACTION_RESULT_DESIGN.md`。
  */
 @objc public final class IMCallEngine: NSObject {
 
-    /// 回调总表的接收方。**weak**（CONVENTIONS §7）。
+    /// 回调总表的接收方。**weak**（CONVENTIONS §7）。`destroy()` 之后再设会被拦掉（保持 nil）。
     @objc public weak var delegate: IMCallEngineDelegate? {
         get { dispatcher.delegate }
-        set { dispatcher.delegate = newValue }
+        set {
+            guard newValue == nil || !(stateQueue.sync { isDestroyed }) else {
+                IMRTCLog.warn("Engine 已 destroy()：忽略 delegate 设置", [:])
+                return
+            }
+            dispatcher.delegate = newValue
+        }
     }
 
     // internal 而不是 private：makeConnection 拆到了 IMCallEngine+Connection.swift。
@@ -99,9 +117,26 @@ import Foundation
         }
     }
 
-    /// emitLocalError 抛一条**本地**错误码（协议 §7.2，永不出现在线路上）。
+    /// emitLocalError 抛一条**本地**错误码（协议 §7.2，永不出现在线路上）。只给找不到调用方的错误用（媒体故障）。
     func emitLocalError(_ code: IMErrorCode) {
         dispatcher.emit(IMEmittedEvent.error(code))
+    }
+
+    /// emitUnattributed 把提示类 / 清理类方法里吞下的失败转成 `didFailWithError`（带 `forType`）。
+    func emitUnattributed(_ error: Error) {
+        let rtc = error as? IMRTCError ?? IMRTCError(.internalError, String(describing: error))
+        dispatcher.emit(IMEmittedEvent.error(rtc))
+    }
+
+    /**
+     act 是「发一个业务动作、等这次调用的结果」的公共外壳：`call` / `accept` / `reject` / `cancel` /
+     `hangup` / `inviteMore` / `joinCall` / `joinRoom` / `leaveRoom` / 发布 / 静音共用。
+     顺带把 `destroy()` 之后的 2005 收在一处。结算规则见 `IMFrameLoop.request`。
+     */
+    @discardableResult
+    func act(_ op: String, _ args: [String: IMJSON] = [:]) async throws -> [String: IMJSON] {
+        try guardNotDestroyed()
+        return try await loop.request(.act(op: op, args: args))
     }
 
     /**
@@ -174,9 +209,14 @@ import Foundation
     /// addEventObserver 用闭包接全部事件，返回退订用的 token。
     ///
     /// 与 delegate 是**同一个分发点**的两个出口（见 IMEventDispatcher），不会分叉。
+    /// `destroy()` 之后调用不再登记（返回的 token 照样能拿去 remove，是空操作）。
     @discardableResult
     @objc public func addEventObserver(_ handler: @escaping (IMCallEvent) -> Void) -> NSUUID {
-        dispatcher.addObserver(handler) as NSUUID
+        guard !(stateQueue.sync { isDestroyed }) else {
+            IMRTCLog.warn("Engine 已 destroy()：忽略 addEventObserver", [:])
+            return NSUUID()
+        }
+        return dispatcher.addObserver(handler) as NSUUID
     }
 
     /// removeEventObserver 退订。
@@ -273,12 +313,13 @@ import Foundation
      连上着的时候调它也是安全的（比如票快过期了提前换）——当前连接不受影响。
      */
     @objc public func updateToken(_ token: String, expiresAtMS: Int64) {
+        guard !(stateQueue.sync { isDestroyed }) else { return }
         currentConnection?.updateToken(token, expiresAtMS: expiresAtMS)
     }
 
     /// 不带到期时刻的旧形态：定时器留到下一次 `sys.hello.ok` 再武装。
     @objc public func updateToken(_ token: String) {
-        currentConnection?.updateToken(token, expiresAtMS: 0)
+        updateToken(token, expiresAtMS: 0)
     }
 
     /// state 是状态机的当前快照，供 UI 渲染。
@@ -292,101 +333,79 @@ import Foundation
     @objc public var uid: String { stateQueue.sync { myUID } }
 
     /**
-     call 发起通话。`calleeIDs` 上限 8 个（自己 + 8 = 9 人，拍板 §11-1）。
+     call 发起通话，**返回服务端分配的 callID**（取自 `call.invite.ok`）。`calleeIDs` 上限 8 个（自己 + 8 = 9 人，拍板 §11-1）。
 
      **呼叫名单里不能有自己**——服务端会以 `1004 bad_params` 拒掉
      （"callee_ids 不能含主叫自己"）。这里在发出去之前就拦下来：那条链路上的
      失败很难看懂，界面已经乐观地进了「正在呼叫…」，而错误只是一条没头没尾的 1004。
      就地拒掉能直接说清是哪个 uid 的问题。
      （实测撞过：Demo 的群呼默认名单里正好有登录的那个人。）
+
+     被拒（本地 1004 / 服务端拒绝 / 超时）时 throw，**并且先照发一次 `callDidEnd(.error)`**——
+     界面在调用之前就切到了「正在呼叫…」，收起它靠那个回调（见 `rejectCallLocally`）。
      */
     @objc public func call(_ calleeIDs: [String], mediaType: String,
-                           isGroup: Bool = false) async {
-        let me = uid
-        if !me.isEmpty, calleeIDs.contains(me) {
-            /*
-             **本地拒掉也要给界面一个出口。**
-
-             调用方（Kit / 宿主）在调 `call()` 之前就已经切到「正在呼叫…」了——
-             这是对的，不然按下去几百毫秒没反应。但只抛一个 error，
-             界面不知道该退回哪儿：卡在「正在呼叫…」，点挂断只会收到 2005
-             （状态机是 idle，没有 call 可挂），除了杀进程没有别的出路。
-
-             `onCallEnd` 是所有结束分支的唯一出口（设计 §7.5），
-             这一条与「服务端拒了 invite」（call_failed）走同一个出口。
-             与 `+HostIntegration.swift` 的 `call(_:mediaType:options:)` 共用
-             `rejectCallLocally`——两处原先各手拼一份完全相同的 onError+onCallEnd。
-            */
-            rejectCallLocally(logMessage: "呼叫名单里含自己，已就地拒掉", logFields: ["uid": me])
-            return
-        }
-        await loop.dispatch(.act(op: "call", args: [
-            "callee_ids": .array(calleeIDs.map { .string($0) }),
-            "media_type": .string(mediaType),
-            "is_group": .bool(isGroup),
-        ]))
+                           isGroup: Bool = false) async throws -> String {
+        try await call(calleeIDs, mediaType: mediaType, options: IMCallOptions(isGroup: isGroup))
     }
 
-    /// accept 接听。
-    @objc public func accept() async {
-        await loop.dispatch(.act(op: "accept"))
+    /// accept 接听。**返回 = 服务端受理了（`call.accept.ok`）**；接通事件随后到。
+    @objc public func accept() async throws {
+        try await act("accept")
     }
 
-    /// reject 拒接。
-    @objc public func reject() async {
-        await loop.dispatch(.act(op: "reject"))
+    /// reject 拒接。失败（通话已结束等）时本地照样收场，错误只供日志。
+    @objc public func reject() async throws {
+        try await act("reject")
     }
 
-    /// cancel 取消呼叫（**接通前**用这个）。
-    @objc public func cancel() async {
-        await loop.dispatch(.act(op: "cancel"))
+    /// cancel 取消呼叫（**接通前**用这个）。失败时本地照样收场，错误只供日志。
+    @objc public func cancel() async throws {
+        try await act("cancel")
     }
 
-    /// hangup 挂断（**接通后**用这个）。
+    /// hangup 挂断（**接通后**用这个）。失败时本地照样收场（`callDidEnd` 照发），错误只供日志。
     ///
     /// **会议房里没有 call**，那里的结束动作是 `leaveRoom()`——
-    /// 在会议里调这个会被状态机本地拒成 2005，界面上就是「点了没反应」。
-    @objc public func hangup() async {
-        await loop.dispatch(.act(op: "hangup"))
+    /// 在会议里调这个会被状态机本地拒成 2005（throw 给调用方）。
+    @objc public func hangup() async throws {
+        try await act("hangup")
     }
 
     /**
      inviteMore 往进行中的群通话里再拉人（协议 §4.1 `call.invite_more`，四端同名）。
 
      **通话里的任何人都能发**（2026-09-15 起，原先仅主叫）；还在响铃 / 已离场的人发会被服务端拒成
-     `1407 not_call_owner`（交互稿 §05）。房间满了回 `1202 room_full`；离场的发起人也能被重新邀请。
-     名单里含自己就地拒掉，理由与 `call` 一样。
+     `1407 not_call_owner`（交互稿 §05）。房间满了回 `1202 room_full`；宿主拒绝 `1409`；离场的发起人也能被重新邀请。
+     这些都 throw 给调用方，通话本身不受影响。名单里含自己就地 throw `1004`，理由与 `call` 一样。
      */
-    @objc public func inviteMore(_ calleeIDs: [String]) async {
+    @objc public func inviteMore(_ calleeIDs: [String]) async throws {
+        try guardNotDestroyed()
         let me = uid
         if !me.isEmpty, calleeIDs.contains(me) {
             // 与 call() 不同：这里已经在通话中，不需要（也不该）补一条 onCallEnd，
-            // 通话本身没受影响，只是这次加人没发出去。所以不走 rejectCallLocally，
-            // 只共享 onError 的事件构造。
-            dispatcher.emit(IMEmittedEvent.error(.badParams))
+            // 通话本身没受影响，只是这次加人没发出去。
             IMRTCLog.warn("加人名单里含自己，已就地拒掉", ["uid": me])
-            return
+            throw IMRTCError(.badParams, "加人名单里含自己", forType: IMFrameType.callInviteMore)
         }
-        await loop.dispatch(.act(op: "invite_more", args: [
-            "callee_ids": .array(calleeIDs.map { .string($0) }),
-        ]))
+        try await act("invite_more", ["callee_ids": .array(calleeIDs.map { .string($0) })])
     }
 
     // MARK: - 房间（会议）
 
-    /// joinRoom 直接进一个会议房（不走振铃）。
+    /// joinRoom 直接进一个会议房（不走振铃）。**返回 = `room.join.ok` 落进了状态机**。
     @objc public func joinRoom(_ roomID: String, roomToken: String,
-                               autoSubscribe: Bool = true) async {
-        await loop.dispatch(.act(op: "join", args: [
+                               autoSubscribe: Bool = true) async throws {
+        try await act("join", [
             "room_id": .string(roomID),
             "room_token": .string(roomToken),
             "auto_subscribe": .bool(autoSubscribe),
-        ]))
+        ])
     }
 
-    /// leaveRoom 离房。**会议的结束动作**。
-    @objc public func leaveRoom() async {
-        await loop.dispatch(.act(op: "leave"))
+    /// leaveRoom 离房。**会议的结束动作**。失败时本地照样收场（`didLeaveRoom` 照发），错误只供日志。
+    @objc public func leaveRoom() async throws {
+        try await act("leave")
     }
 
     func requireMedia() throws -> IMMediaAdapter {
@@ -398,9 +417,8 @@ import Foundation
         return media
     }
 
-    /// guardNotDestroyed 是 `login` / `requireMedia`（覆盖 publishMicrophone / publishCamera /
-    /// startLocalPreview / probeMicrophone / openMicrophone / openCamera）共用的门。
-    /// **internal 而不是 private**：`IMCallEngine+Lifecycle.swift` 也要用。
+    /// guardNotDestroyed 是发起类与本地设备类方法共用的门（`login` / `act` / `requireMedia` / `setMuted` /
+    /// `switchCamera` …），`destroy()` 之后一律 throw 2005。见 `IMCallEngine+Lifecycle.swift`。
     func guardNotDestroyed() throws {
         guard !(stateQueue.sync { isDestroyed }) else {
             throw IMRTCError(.invalidState, "Engine 已 destroy()：不能再使用，需要重新创建实例")

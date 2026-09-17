@@ -115,9 +115,8 @@ public let IMCallKitVersion = IMCallEngineVersion
     /**
      joinCall 主动加入一通正在进行的群通话（HOST_INTEGRATION_DESIGN §3.4）。
 
-     进「接通中…」界面；被拒（1409 等）按错误码提示并收起——见
-     `IMCallController.joinCall(_:)` 与 `IMCallController+Delegate.swift` 的
-     `didFailWithError`。
+     进「接通中…」界面；被拒（不管什么码）进结束画面、显示「无法加入该通话」——见
+     `IMCallController.joinCall(_:)` 与 `handleJoinCallFailure(_:callID:)`。
      */
     @objc public func joinCall(_ callID: String) {
         controller.joinCall(callID)

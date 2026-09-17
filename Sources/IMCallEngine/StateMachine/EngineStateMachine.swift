@@ -76,7 +76,7 @@ public enum IMEngineMachine {
         // next 只可能改了这一个字段（上面三条分支都只碰 callStartedAtMS）——
         // 比这一个字段就够了，不必对整个 context 做深比较。
         guard next.callStartedAtMS != result.state.callStartedAtMS else { return result }
-        return IMMachineOutput(next, send: result.send, emit: result.emit)
+        return IMMachineOutput(next, send: result.send, emit: result.emit, reject: result.reject)
     }
 
     /// handleHelloOK：握手成功。
@@ -227,7 +227,8 @@ public enum IMEngineMachine {
             let room = IMRoomMachine.reduce(ctx.room, .act(op: op, args: args))
             var next = ctx
             next.room = room.state
-            return IMMachineOutput(next, send: room.send, emit: room.emit)
+            // 本地拒绝要原样带上来——漏带的话调用方拿不到结果。
+            return IMMachineOutput(next, send: room.send, emit: room.emit, reject: room.reject)
         }
         return IMMachineOutput(ctx)
     }
@@ -268,6 +269,6 @@ public enum IMEngineMachine {
         var next = IMEngineContext()
         next.room = room
         next.call = result.state
-        return IMMachineOutput(next, send: send, emit: emit)
+        return IMMachineOutput(next, send: send, emit: emit, reject: result.reject)
     }
 }

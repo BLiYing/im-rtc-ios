@@ -338,6 +338,7 @@ final class IMEventDispatcher {
         return NSError(domain: IMRTCErrorDomain, code: code, userInfo: [
             NSLocalizedDescriptionKey: name,
             IMRTCErrorNameKey: name,
+            IMRTCErrorForTypeKey: payload["for_type"] as? String ?? "",
         ])
     }
 }

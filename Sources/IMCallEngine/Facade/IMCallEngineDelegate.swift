@@ -61,7 +61,15 @@ import Foundation
     /// 此时退化成被动行为，是刻意降级不是故障。
     @objc optional func callEngine(_ engine: IMCallEngine, tokenWillExpireAt expiresAtMS: Int64)
 
-    /// 任意内部错误。错误码表与服务端同一份（`IMErrorCode`）。
+    /**
+     **找不到调用方**的错误（2.0.0 起）：断线后放弃重连、服务端主动推的 `sys.error`、媒体层自发故障、
+     引擎随后自动发的连锁帧失败（例如接听之后的 `room.join`）、提示类方法（`setRemoteLayer` 等）与
+     `closeMicrophone` / `closeCamera` 的失败。错误码表与服务端同一份（`IMErrorCode`）。
+
+     **宿主调方法失败不在这里**——那个错误由方法本身 throw（ObjC 是 completionHandler 的 `NSError`），
+     一次失败只从一个出口报（server `docs/design/ACTION_RESULT_DESIGN.md` R3）。
+     `userInfo[IMRTCErrorForTypeKey]` 是出错的请求帧类型，没有对应请求时为空串。
+     */
     @objc optional func callEngine(_ engine: IMCallEngine, didFailWithError error: NSError)
 
     // MARK: - 来电与拨出

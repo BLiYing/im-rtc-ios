@@ -50,11 +50,21 @@ public struct IMMachineOutput<State>: Sendable where State: Sendable {
     public let state: State
     public let send: [IMOutgoingFrame]
     public let emit: [IMEmittedEvent]
+    /**
+     这次 `act` 被状态机**就地拒绝**的码（一致性向量里 `act` 步骤的 `result`）；没拒绝是 nil。
 
-    public init(_ state: State, send: [IMOutgoingFrame] = [], emit: [IMEmittedEvent] = []) {
+     **不是事件**：它只回给发起这次调用的人（门面据此 throw），不经 `onError` 广播——
+     一次失败只从一个出口报（server `docs/design/ACTION_RESULT_DESIGN.md` R3）。
+     带它时 `send` / `emit` 为空、状态不变。
+     */
+    public let reject: IMErrorCode?
+
+    public init(_ state: State, send: [IMOutgoingFrame] = [], emit: [IMEmittedEvent] = [],
+                reject: IMErrorCode? = nil) {
         self.state = state
         self.send = send
         self.emit = emit
+        self.reject = reject
     }
 }
 
@@ -99,10 +109,10 @@ func out<State>(_ ctx: State, send: [IMOutgoingFrame] = [],
 }
 
 /// invalidStateOutput 是不变量 I8/R1 共同的落点：错误状态下的调用**本地拒绝**，
-/// 不发上去，只抛一条 `onError(invalidState)`。`CallStateMachine.invalidState` 与
+/// 不发上去、不抛事件，只在输出里带上 `reject`（交给调用方）。`CallStateMachine.invalidState` 与
 /// `RoomStateMachine.localReject` 函数体完全一样，只是上下文类型不同，合到这一处。
 func invalidStateOutput<State>(_ ctx: State) -> IMMachineOutput<State> where State: Sendable {
-    out(ctx, emit: [IMEmittedEvent.error(.invalidState)])
+    IMMachineOutput(ctx, reject: .invalidState)
 }
 
 /// IMEmittedCallbackName 收着几个要在多处按名字**过滤**的回调名字面量。

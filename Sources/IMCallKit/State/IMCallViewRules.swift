@@ -172,7 +172,7 @@ public func imEndReasonText(_ reason: String, role: String, durationSec: Int) ->
         return "已被移出"
     /*
      `join_denied` 不是协议里的 reason（协议 §6 那张表没有它）——它是 Kit 本地的伪原因，
-     只在 `IMCallController.joinCall(_:)` 被 1409 拒绝时使用，从不上线路、从不来自服务端。
+     只在 `IMCallController.joinCall(_:)` 被拒（任何码）时使用，从不上线路、从不来自服务端。
      真实的服务端结局折到这条分支之外那个 `default`，与四端共用的原因表不冲突。
     */
     case "join_denied":

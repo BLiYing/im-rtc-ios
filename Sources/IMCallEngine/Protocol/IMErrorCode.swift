@@ -8,7 +8,7 @@ import Foundation
  少一个、多一个、msg 差一个字都会失败。
 
  两组码的区别只有一条：`wire` 里的会出现在 `sys.error` 帧里，
- `local` 里的**永远不上线路**，只经 onError 抛给宿主。
+ `local` 里的**永远不上线路**，只经调用结果（能归到某次调用时）或 onError（找不到调用方时）交给宿主。
  */
 @objc public enum IMErrorCode: Int, Sendable {
     /// 1001 `bad_envelope` —— 信封字段缺失/类型错/data 为 null
@@ -213,6 +213,13 @@ extension IMErrorCode {
 public struct IMRTCError: Error, Equatable, Sendable {
     public let code: IMErrorCode
     public let detail: String
+    /**
+     出错的**请求帧类型**（如 `call.join`）；不是某个请求失败的（本地参数校验、媒体故障…）为空串。
+
+     2.0.0 起宿主调方法失败时错误直接 throw 给调用方，`onError` 只剩找不到调用方的错误——
+     两个出口都带它，并发时分得清是哪个请求（server `docs/design/ACTION_RESULT_DESIGN.md` R3）。
+     */
+    public let forType: String
 
     /// 本端不认识线路上那个码时，帧上自带的 `retryable`；认识就是 `nil`。
     ///
@@ -226,17 +233,25 @@ public struct IMRTCError: Error, Equatable, Sendable {
     /// 只在模块内可见：它是信令层判「要不要放弃重连」的内部线索，不进公开 API。
     let unknownCodeRetryable: Bool?
 
-    public init(_ code: IMErrorCode, _ detail: String = "") {
+    public init(_ code: IMErrorCode, _ detail: String = "", forType: String = "") {
         self.code = code
         self.detail = detail
+        self.forType = forType
         self.unknownCodeRetryable = nil
     }
 
     /// 结算 `sys.error` 应答专用。`unknownCodeRetryable` 只有本端不认识那个码时才该有值。
-    init(_ code: IMErrorCode, _ detail: String, unknownCodeRetryable: Bool?) {
+    init(_ code: IMErrorCode, _ detail: String, forType: String = "", unknownCodeRetryable: Bool?) {
         self.code = code
         self.detail = detail
+        self.forType = forType
         self.unknownCodeRetryable = unknownCodeRetryable
+    }
+
+    /// withForType 补上请求帧类型；已经带了就原样返回（断线时在途请求一起被拒的那个错误不知道自己是哪一帧的）。
+    func withForType(_ type: String) -> IMRTCError {
+        guard forType.isEmpty else { return self }
+        return IMRTCError(code, detail, forType: type, unknownCodeRetryable: unknownCodeRetryable)
     }
 }
 
@@ -259,13 +274,21 @@ enum IMSysErrorFrame {
 }
 
 extension IMEmittedEvent {
-    /// error 是 `onError` 事件的工厂：状态机与 Facade 手拼过好几次，字段形状固定为
-    /// `{"code": Int, "name": String}`——一致性向量按这个形状校验，**不许多字段少字段**。
-    static func error(_ code: IMErrorCode) -> IMEmittedEvent {
+    /// error 是 `onError` 事件的工厂。字段形状固定为 `{"code": Int, "name": String, "for_type": String}`。
+    ///
+    /// 2.0.0 起状态机不再产出它（本地拒绝走 `IMMachineOutput.reject`），只剩帧循环与门面上报
+    /// **找不到调用方**的错误时用。
+    static func error(_ code: IMErrorCode, forType: String = "") -> IMEmittedEvent {
         IMEmittedEvent("onError", [
             "code": .int(Int64(code.rawValue)),
             "name": .string(code.name),
+            "for_type": .string(forType),
         ])
+    }
+
+    /// error 的 `IMRTCError` 形态：码与 `forType` 一起带上。
+    static func error(_ error: IMRTCError) -> IMEmittedEvent {
+        Self.error(error.code, forType: error.forType)
     }
 }
 
@@ -276,6 +299,8 @@ extension IMEmittedEvent {
 public let IMRTCErrorDomain = "com.imrtc.engine"
 /// `userInfo` 里放协议错误名（snake_case）的键。
 public let IMRTCErrorNameKey = "IMRTCErrorName"
+/// `userInfo` 里放出错请求帧类型（`IMRTCError.forType`，可能是空串）的键。
+public let IMRTCErrorForTypeKey = "IMRTCErrorForType"
 
 /**
  上面两个常量的 ObjC 取值入口。
@@ -296,6 +321,8 @@ public final class IMRTCErrorInfo: NSObject {
     @objc public static let domain = IMRTCErrorDomain
     /// 等同于 `IMRTCErrorNameKey`。ObjC 写 `IMRTCErrorInfo.nameKey`。
     @objc public static let nameKey = IMRTCErrorNameKey
+    /// 等同于 `IMRTCErrorForTypeKey`。ObjC 写 `IMRTCErrorInfo.forTypeKey`。
+    @objc public static let forTypeKey = IMRTCErrorForTypeKey
 
     /// 纯命名空间，不给实例。
     private override init() { super.init() }
@@ -331,6 +358,7 @@ extension IMRTCError: CustomNSError {
         [
             NSLocalizedDescriptionKey: detail.isEmpty ? code.message : detail,
             IMRTCErrorNameKey: code.name,
+            IMRTCErrorForTypeKey: forType,
         ]
     }
 }

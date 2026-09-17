@@ -17,7 +17,7 @@ extension IMCallController {
         let on = !state.selfState.micOn
         apply(.setMic(on))
         guard !micCID.isEmpty else { return }
-        Task { await engine.setMuted(micCID, muted: !on) }
+        Task { await setMutedLogged(micCID, muted: !on) }
     }
 
     /// 开关摄像头。**还没进房时只改界面，不去发布**；禁用态点了要出提示，不能静默（规范 §06）。
@@ -43,7 +43,7 @@ extension IMCallController {
             // 第一次开摄像头要真的发布；之后只是开关，**不走 unpublish**（协议 §3.2 的重协商风暴）。
             // 判「发布过没有」不看 cid：来电页上起过的预览也有 cid，但从没推上去（见 `cameraPublished`）。
             guard !cameraPublished, on else {
-                if cameraPublished { await engine.setMuted(cameraCID, muted: !on) }
+                if cameraPublished { await setMutedLogged(cameraCID, muted: !on) }
                 return
             }
             do {
@@ -52,7 +52,7 @@ extension IMCallController {
                 cameraPublished = true
                 // 发布的这几百毫秒里用户又把摄像头关了：已经推上去的只能停采集，不补这一下灯就一直亮着。
                 if await MainActor.run(body: { !self.state.selfState.cameraOn }) {
-                    await engine.setMuted(cid, muted: true)
+                    await setMutedLogged(cid, muted: true)
                 }
                 await MainActor.run { self.broadcast() }
             } catch {
@@ -84,16 +84,21 @@ extension IMCallController {
         }
         // 发布是异步的，**这期间用户完全可能已经点过静音或关摄像头**——补一遍，否则界面显示「已静音」而对方照样听得见。
         let wanted = await MainActor.run { self.state.selfState }
-        if !micCID.isEmpty, !wanted.micOn { await engine.setMuted(micCID, muted: true) }
+        if !micCID.isEmpty, !wanted.micOn { await setMutedLogged(micCID, muted: true) }
         if !wanted.cameraOn {
             // 推上去了就停采集、留轨道；还只是预览（没推成）就整个停掉——只关轨道的话灯不灭。
             if cameraPublished {
-                await engine.setMuted(cameraCID, muted: true)
+                await setMutedLogged(cameraCID, muted: true)
             } else if !cameraCID.isEmpty {
                 await MainActor.run { self.stopLocalPreview() }
             }
         }
         await MainActor.run { self.broadcast() }
+    }
+
+    /// setMutedLogged 开关本端轨道。本端在发帧之前就已经切过了；`room.mute` 被拒只留痕，按钮以本端为准。
+    func setMutedLogged(_ cid: String, muted: Bool) async {
+        do { try await engine.setMuted(cid, muted: muted) } catch { imLogRejected("开关轨道", error) }
     }
 
     // MARK: - 前后台
@@ -118,13 +123,13 @@ extension IMCallController {
     @objc private func appDidEnterBackground() {
         guard !cameraCID.isEmpty, state.selfState.cameraOn else { return }
         cameraPausedByBackground = true
-        Task { await engine.setMuted(cameraCID, muted: true) }
+        Task { await setMutedLogged(cameraCID, muted: true) }
     }
 
     @objc private func appWillEnterForeground() {
         guard cameraPausedByBackground else { return }
         cameraPausedByBackground = false
         guard !cameraCID.isEmpty, state.selfState.cameraOn else { return }
-        Task { await engine.setMuted(cameraCID, muted: false) }
+        Task { await setMutedLogged(cameraCID, muted: false) }
     }
 }

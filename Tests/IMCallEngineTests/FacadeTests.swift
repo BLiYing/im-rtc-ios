@@ -335,7 +335,7 @@ final class FacadeTests: XCTestCase {
         {"type":"room.join.ok","req_id":"\(join.reqID)","ts":1,"data":{\
         "room_id":"r-1","participant_id":"r-1-p1","participants":[],"tracks":[]}}
         """)
-        await joining
+        try await joining
         try await settle()
 
         let state = await h.engine.state
@@ -386,7 +386,7 @@ final class FacadeTests: XCTestCase {
         ws.receive("""
         {"type":"room.mute.ok","req_id":"\(mute.reqID)","ts":1,"data":{}}
         """)
-        await muting
+        try await muting
 
         XCTAssertEqual(mute.data["track_id"]?.stringValue, "t-1")
         XCTAssertEqual(mute.data["muted"]?.boolValue, true)
@@ -461,7 +461,7 @@ final class FacadeTests: XCTestCase {
         ws.receive("""
         {"type":"call.accept.ok","req_id":"\(accept.reqID)","ts":1,"data":{}}
         """)
-        await accepting
+        try await accepting
         ws.receive("""
         {"type":"call.connected","req_id":"","ts":1,"data":{\
         "call_id":"c-1","room_id":"r-1","room_token":"rt-1","media_type":"video",\
@@ -511,7 +511,7 @@ final class FacadeTests: XCTestCase {
         let h = makeEngine()
         let ws = try await login(h)
 
-        async let calling: Void = h.engine.call(["bob"], mediaType: "audio")
+        async let calling: String = h.engine.call(["bob"], mediaType: "audio")
         let invite = try await waitForFrame(ws, ofType: IMFrameType.callInvite) // 故意不回
 
         h.engine.forceEnd()
@@ -528,7 +528,7 @@ final class FacadeTests: XCTestCase {
         ws.receive("""
         {"type":"call.cancel.ok","req_id":"\(cancel.reqID)","ts":1,"data":{}}
         """)
-        await calling
+        _ = try await calling
         try await settle()
         XCTAssertEqual(h.events.count(.callEnd), 1, "补发 cancel 是善后，不能再抛一次结束")
     }
@@ -538,10 +538,10 @@ final class FacadeTests: XCTestCase {
         let h = makeEngine()
         let ws = try await login(h)
 
-        async let calling: Void = h.engine.call(["bob"], mediaType: "audio")
+        async let calling: String = h.engine.call(["bob"], mediaType: "audio")
         let invite = try await waitForFrame(ws, ofType: IMFrameType.callInvite) // 故意不回
 
-        await h.engine.cancel()
+        try await h.engine.cancel()
         try await settle(4)
         XCTAssertFalse(ws.frames().contains { $0.type == IMFrameType.callCancel }, "没有 call_id，先不发")
         XCTAssertEqual(h.events.count(.error), 0, "不许为一个发不了的帧给宿主报错")
@@ -554,7 +554,7 @@ final class FacadeTests: XCTestCase {
         ws.receive("""
         {"type":"call.cancel.ok","req_id":"\(cancel.reqID)","ts":1,"data":{}}
         """)
-        await calling
+        _ = try await calling
         try await settle(4)
         XCTAssertEqual(h.events.count(.error), 0)
     }
@@ -607,7 +607,7 @@ final class FacadeTests: XCTestCase {
         ws.receive("""
         {"type":"room.leave.ok","req_id":"\(leave.reqID)","ts":1,"data":{}}
         """)
-        await leaving
+        try await leaving
         try await settle()
 
         XCTAssertEqual(h.events.count(.roomLeft), 1, "会议没有 callEnd，收尾只能靠 roomLeft")
@@ -992,12 +992,13 @@ final class FacadeTests: XCTestCase {
         // 不是「这一次网络流程长什么样」。
         let acquireCountBefore = h.media.calls().filter { $0 == "acquireMic" }.count
         async let reopening: Void = h.engine.openMicrophone()
-        let republish = try await waitForFrame(ws, ofType: IMFrameType.roomPublish)
+        // 发布方法在 publish.ok 时就返回（结果只管直接那一帧），上一轮的帧还在列表里——按 req_id 排除掉。
+        let republish = try await waitForFrame(ws, ofType: IMFrameType.roomPublish, excludingReqID: publish.reqID)
         ws.receive("""
         {"type":"room.publish.ok","req_id":"\(republish.reqID)","ts":1,\
         "data":{"cid":"mic-1","track_id":"t-2"}}
         """)
-        let reoffer = try await waitForFrame(ws, ofType: IMFrameType.roomOffer)
+        let reoffer = try await waitForFrame(ws, ofType: IMFrameType.roomOffer, excludingReqID: offer.reqID)
         ws.receive("""
         {"type":"room.answer","req_id":"\(reoffer.reqID)","ts":1,\
         "data":{"pc":"pub","sdp":"v=0 answer"}}
@@ -1077,7 +1078,7 @@ final class FacadeTests: XCTestCase {
      没有通话的会议房只回滚那一条。
      */
 
-    /// 通话中 `room.publish` 被拒：原错误码照报，发 `call.hangup`，只抛一次 `onCallEnd{error}`。
+    /// 通话中 `room.publish` 被拒：原错误码 throw 给调用方（不再发 onError），发 `call.hangup`，只抛一次 `onCallEnd{error}`。
     func testPublishRejectedDuringCallEndsTheCallWithErrorReason() async throws {
         let h = makeEngine()
         let ws = try await login(h)
@@ -1093,7 +1094,7 @@ final class FacadeTests: XCTestCase {
         ws.receive("""
         {"type":"call.accept.ok","req_id":"\(accept.reqID)","ts":1,"data":{}}
         """)
-        await accepting
+        try await accepting
         ws.receive("""
         {"type":"call.connected","req_id":"","ts":1,"data":{\
         "call_id":"c-1","room_id":"r-1","room_token":"rt-1","media_type":"audio",\
@@ -1108,20 +1109,20 @@ final class FacadeTests: XCTestCase {
         let joined = await h.engine.state
         XCTAssertEqual(joined.room.state, .joined, "先把房间接通，发布被拒才有意义")
 
-        async let publishing = h.engine.publishMicrophone()
+        let publishingEngine = h.engine
+        let publishing = Task { try await publishingEngine.publishMicrophone() }
         let publish = try await waitForFrame(ws, ofType: IMFrameType.roomPublish)
         ws.receive("""
         {"type":"sys.error","req_id":"\(publish.reqID)","ts":1,\
         "data":{"code":1302,"name":"publish_denied","msg":"publish denied",\
         "for_type":"room.publish","retryable":false}}
         """)
-        _ = try await publishing // 门面这条 §B 的已知缺口——即使被拒也正常 resolve，不是本次要修的
+        await assertThrowsCode(.publishDenied, forType: IMFrameType.roomPublish) { _ = try await publishing.value }
         let hangup = try await waitForFrame(ws, ofType: IMFrameType.callHangup)
         XCTAssertEqual(hangup.data["call_id"]?.stringValue, "c-1", "对端还在等，要告诉服务端我走了")
         try await settle(6)
 
-        XCTAssertEqual(h.events.first(.error)?.payload["code"] as? NSNumber,
-                       NSNumber(value: IMErrorCode.publishDenied.rawValue), "原错误码要照样上报")
+        XCTAssertEqual(h.events.count(.error), 0, "原错误码已经交给调用方，不再发 onError")
         XCTAssertEqual(h.events.count(.callEnd), 1, "不能留在一通对方听不见的通话里")
         XCTAssertEqual(h.events.first(.callEnd)?.payload["reason"] as? String, "error",
                        "这不是用户按的红键，写成 hangup/cancel/reject 都是撒谎")
@@ -1145,7 +1146,8 @@ final class FacadeTests: XCTestCase {
         let ws = try await login(h)
         try await joinRoom(h, ws)
 
-        async let publishing = h.engine.publishCamera()
+        let publishingEngine = h.engine
+        let publishing = Task { try await publishingEngine.publishCamera() }
         let publish = try await waitForFrame(ws, ofType: IMFrameType.roomPublish)
         XCTAssertEqual(publish.data["cid"]?.stringValue, "cam-1")
         ws.receive("""
@@ -1153,7 +1155,7 @@ final class FacadeTests: XCTestCase {
         "data":{"code":1302,"name":"publish_denied","msg":"publish denied",\
         "for_type":"room.publish","retryable":false}}
         """)
-        _ = try await publishing
+        await assertThrowsCode(.publishDenied, forType: IMFrameType.roomPublish) { _ = try await publishing.value }
         try await settle(6)
 
         let state = await h.engine.state
@@ -1161,8 +1163,7 @@ final class FacadeTests: XCTestCase {
         XCTAssertNil(state.room.publish["cam-1"], "不能永远停在 publishing")
         XCTAssertEqual(h.events.count(.roomLeft), 0)
         XCTAssertEqual(h.events.count(.callEnd), 0)
-        XCTAssertEqual(h.events.first(.error)?.payload["code"] as? NSNumber,
-                       NSNumber(value: IMErrorCode.publishDenied.rawValue))
+        XCTAssertEqual(h.events.count(.error), 0, "错误只从 throw 出去")
 
         // 摘掉之后必须能重新发布，不能被判重卡住——走完整条正常路径直到 pub answer 落地。
         async let retrying = h.engine.publishCamera()
@@ -1173,12 +1174,12 @@ final class FacadeTests: XCTestCase {
         {"type":"room.publish.ok","req_id":"\(republish.reqID)","ts":1,\
         "data":{"cid":"cam-1","track_id":"t-9"}}
         """)
+        _ = try await retrying
         let offer = try await waitForFrame(ws, ofType: IMFrameType.roomOffer)
         ws.receive("""
         {"type":"room.answer","req_id":"\(offer.reqID)","ts":1,\
         "data":{"pc":"pub","sdp":"v=0 answer"}}
         """)
-        _ = try await retrying
         try await settle(4)
     }
 
@@ -1189,7 +1190,7 @@ final class FacadeTests: XCTestCase {
         {"type":"room.join.ok","req_id":"\(join.reqID)","ts":1,"data":{\
         "room_id":"r-1","participant_id":"r-1-p1","participants":[],"tracks":[]}}
         """)
-        await joining
+        try await joining
         try await settle(4)
     }
 

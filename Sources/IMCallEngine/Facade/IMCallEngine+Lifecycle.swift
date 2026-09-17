@@ -9,23 +9,18 @@ import Foundation
  # 之后还调方法会怎样
 
  这台 Engine 不会再变得可用——**没有「复活」这回事**，宿主要用就得重新创建一个实例。
- 但「不可用」具体长什么样，按本仓一贯的两种之一分类，不新造第三种行为：
+ 之后的调用按方法归类（server `docs/design/ACTION_RESULT_DESIGN.md` §3 与 R6，四端同一张表）：
 
- - **`async throws` 的方法**（`login` / `publishMicrophone` / `startLocalPreview` /
-   `publishCamera` / `probeMicrophone` / `openMicrophone` / `openCamera`）继续抛
-   `invalid_state`——跟「没有媒体适配器」共用同一条错误面，宿主不用多认一种失败。
-   （`login` 单独判一次；其余几个都经 `requireMedia()`，那里加了同一道门。）
- - **fire-and-forget 的方法**（`call` / `accept` / `reject` / `cancel` / `hangup` /
-   `inviteMore` / `joinRoom` / `leaveRoom` / `setMuted` / `setRemoteLayer` /
-   `closeMicrophone` / `closeCamera` / `setSpeakerOn` / `switchCamera` / `attachView` /
-   `attachLocalView` / `updateToken`）**不额外加判断**——`logout()` 已经把连接置空、
-   状态机归零，这些方法在「未登录」时本来就会被现有机制当空操作收场：
-   走 `loop.dispatch` 的那几个会被 `IMFrameLoop.sendFrame` 的「没有连接」分支
-   本地收成 `2007 not_logged_in` + 一次 `onCallEnd`（见该文件的说明），
-   `setMuted`/`closeMicrophone`/`closeCamera` 找不到已发布的 cid 就什么都不做，
-   `updateToken` 在 `currentConnection` 为 nil 时本来就是空操作。**这些行为在
-   `destroy()` 之前——单纯 `logout()` 之后再调用——就已经是这样**，destroy 只是
-   在此之上确保状态"不可能再恢复"，不需要再单独判一次 `isDestroyed`。
+ - **发起类与本地设备类**（`login` / `call` / `joinCall` / `accept` / `reject` / `cancel` / `hangup` /
+   `inviteMore` / `joinRoom` / `leaveRoom` / `publishMicrophone` / `publishCamera` / `openMicrophone` /
+   `openCamera` / `setMuted` / `probeMicrophone` / `startLocalPreview` / `switchCamera`）一律 **throw
+   `2005 invalid_state`**——与平时失败同一个出口（`guardNotDestroyed()`）。
+ - **提示类与清理类**（`setRemoteLayer` / `setSpeakerOn` / `updateToken` / `logout` / `destroy` / `forceEnd` /
+   `closeMicrophone` / `closeCamera` / `stopLocalPreview` / `attachView` / `attachLocalView` /
+   `addEventObserver` / `removeEventObserver`）**不 throw、不做事**：`attachView` / `attachLocalView`
+   不再新建渲染视图，`delegate` 的赋值与 `addEventObserver` 被拦掉（事件本来也不会再有了）。
+
+ 逐个方法的归类由 `Tests/IMCallEngineTests/DestroyContractTests.swift` 钉住。
 
  # 可重复调用
 

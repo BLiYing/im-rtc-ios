@@ -90,7 +90,7 @@ final class InviteMemberProviderTests: XCTestCase {
         XCTAssertFalse(controller.canStartInvite(), "宿主的权限规则（例：群禁言）能单独拦下")
     }
 
-    // MARK: - joinCall：先进「接通中…」，1409 按专门文案收起
+    // MARK: - joinCall：先进「接通中…」，被拒一律「无法加入该通话」
 
     func testJoinCallEntersConnectingPhase() {
         let controller = makeController()
@@ -100,16 +100,15 @@ final class InviteMemberProviderTests: XCTestCase {
         XCTAssertEqual(controller.state.role, "callee")
     }
 
-    /// 1409 拒绝加入：`didFailWithError` 记一次「正在加入」，随后 `callDidEnd(reason: .error)`
-    /// 被改写成本地伪原因 `join_denied`，界面显示专门那句文案而不是笼统的「已结束」。
+    /// 1409 拒绝加入：Engine 先抛 `callDidEnd(reason: .error)`、再把码 throw 回来（2.0.0），
+    /// Kit 按 throw 的码把结束原因改写成本地伪原因 `join_denied`，显示专门那句文案而不是笼统的「已结束」。
     func testJoinDeniedShowsDedicatedReasonThenEnds() {
         let controller = makeController()
         let engine = controller.engine
         controller.joinCall("call-77a1")
 
-        let error = NSError(domain: IMRTCErrorDomain, code: IMErrorCode.inviteDenied.rawValue, userInfo: nil)
-        controller.callEngine(engine, didFailWithError: error)
         controller.callEngine(engine, callDidEnd: "call-77a1", reason: .error, durationSec: 0, endedBy: "")
+        controller.handleJoinCallFailure(IMRTCError(.inviteDenied, forType: "call.join"), callID: "call-77a1")
 
         XCTAssertEqual(controller.state.phase, .ended)
         XCTAssertEqual(controller.state.endReason, "join_denied")
@@ -123,8 +122,8 @@ final class InviteMemberProviderTests: XCTestCase {
         let engine = controller.engine
         controller.apply(.callBegin(callID: "c", roomID: "r", mediaType: "audio",
                                     isGroup: true, role: "caller", now: 1))
-        let error = NSError(domain: IMRTCErrorDomain, code: IMErrorCode.inviteDenied.rawValue, userInfo: nil)
-        controller.callEngine(engine, didFailWithError: error)
+        _ = engine
+        controller.handleInviteMoreFailure(IMRTCError(.inviteDenied, forType: "call.invite_more"))
 
         XCTAssertEqual(controller.state.hint, "对方暂时无法被邀请")
         XCTAssertNotEqual(controller.state.phase, .ended, "没有触发 callDidEnd，通话继续")
@@ -142,7 +141,6 @@ final class InviteMemberProviderTests: XCTestCase {
         XCTAssertEqual(controller.state.phase, phaseBefore)
         XCTAssertEqual(controller.state.callID, "c")
         XCTAssertEqual(controller.state.hint, "正在通话中，无法加入")
-        XCTAssertNil(controller.joiningCallID)
     }
 
     /// 连点两下：第二下被守门挡住，不会把第一下的加入改成另一通。
@@ -151,17 +149,56 @@ final class InviteMemberProviderTests: XCTestCase {
         controller.joinCall("call-a")
         controller.joinCall("call-b")
         XCTAssertEqual(controller.state.callID, "call-a")
-        XCTAssertEqual(controller.joiningCallID, "call-a")
     }
 
-    /// Engine 本地就拒掉的加入（2005 / 2007）没有 callDidEnd：Kit 自己收回「接通中…」。
-    func testLocalJoinRejectionDismisses() {
+    /// Engine 本地就拒掉的加入（2005）没有 callDidEnd：Kit 自己从「接通中…」进结束画面，文案同服务端拒绝。
+    func testLocalJoinRejectionShowsJoinDenied() {
         let controller = makeController()
         controller.joinCall("call-77a1")
-        let error = NSError(domain: IMRTCErrorDomain, code: IMErrorCode.notLoggedIn.rawValue, userInfo: nil)
-        controller.callEngine(controller.engine, didFailWithError: error)
+        controller.handleJoinCallFailure(IMRTCError(.invalidState), callID: "call-77a1")
+        XCTAssertEqual(controller.state.phase, .ended)
+        XCTAssertEqual(controller.state.endReason, "join_denied")
+    }
+
+    /// 服务端拒绝（满员 1202 / 已结束 1402 …，不只 1409）：同一句「无法加入该通话」，与 Web / Android 对齐。
+    func testServerJoinRejectionShowsJoinDeniedForAnyCode() {
+        for code in [IMErrorCode.roomFull, .callNotFound, .callEnded] {
+            let controller = makeController()
+            controller.joinCall("call-77a1")
+            controller.callEngine(controller.engine, callDidEnd: "call-77a1", reason: .error, durationSec: 0, endedBy: "")
+            controller.handleJoinCallFailure(IMRTCError(code, forType: "call.join"), callID: "call-77a1")
+            XCTAssertEqual(controller.state.phase, .ended, "\(code)")
+            XCTAssertEqual(controller.state.endReason, "join_denied", "\(code)")
+        }
+    }
+
+    /// throw 回来之前用户已经收起这一屏：不再弹结束画面。
+    func testJoinFailureIgnoredWhenScreenMovedOn() {
+        let controller = makeController()
+        controller.joinCall("call-77a1")
+        controller.apply(.dismiss)
+        controller.handleJoinCallFailure(IMRTCError(.callEnded, forType: "call.join"), callID: "call-77a1")
         XCTAssertEqual(controller.state.phase, .idle)
-        XCTAssertNil(controller.joiningCallID)
+    }
+
+    /// 加人被拒：满员出提示；1407 把入口藏掉；超时这类没有专属文案的也要收回占位格。
+    func testInviteMoreFailuresRevokePlaceholders() {
+        let controller = makeController()
+        controller.apply(.callBegin(callID: "c", roomID: "r", mediaType: "audio",
+                                    isGroup: true, role: "caller", now: 1))
+        controller.inviteMore(["dave"])
+        XCTAssertTrue(controller.state.participants.contains { $0.uid == "dave" })
+        controller.handleInviteMoreFailure(IMRTCError(.signalingTimeout, forType: "call.invite_more"))
+        XCTAssertFalse(controller.state.participants.contains { $0.uid == "dave" }, "超时也要收回")
+
+        controller.inviteMore(["erin"])
+        controller.handleInviteMoreFailure(IMRTCError(.roomFull, forType: "call.invite_more"))
+        XCTAssertEqual(controller.state.hint, "通话已满员（最多 9 人）")
+        XCTAssertFalse(controller.state.participants.contains { $0.uid == "erin" })
+
+        controller.inviteMore(["frank"])
+        controller.handleInviteMoreFailure(IMRTCError(.notCallOwner, forType: "call.invite_more"))
+        XCTAssertFalse(controller.state.canInvite)
     }
 
     /// 守门判据本身：只有空闲或停在结束画面时放行。

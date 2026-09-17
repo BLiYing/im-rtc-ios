@@ -103,11 +103,6 @@ public protocol IMCallControllerObserver: AnyObject {
     var ringtoneKind: IMRingtoneKind = .none
     var vibrationTimer: DispatchSourceTimer? // 来电振动，同上。
     #endif
-    /// 正在 `joinCall(_:)` 加入的那通电话；拒绝时（1409 等）区分「加人被拒」与「加入被拒」两种文案。
-    /// 见 `IMCallController+Delegate.swift` 的 `didFailWithError`。
-    var joiningCallID: String?
-    /// 加入被 1409 拒绝：下一条 `callDidEnd` 要把 reason 改写成本地伪原因 `join_denied`。
-    var pendingJoinDenial = false
     /// 系统权限探针。**只这一份、controller 全程复用**——`startRingingPreviewIfAllowed()`
     /// 原先每次来电都 `IMSystemPermissionProbe()` 现造一个，探针本身无状态，没必要每次都新建。
     let systemProbe: IMDevicePermissionProbe = IMSystemPermissionProbe()
@@ -158,7 +153,18 @@ public protocol IMCallControllerObserver: AnyObject {
             await startPreviewIfWanted()
             let options = IMCallOptions(isGroup: isGroup, chatGroupID: chatGroupID,
                                         userData: userData, timeoutSec: timeoutSec)
-            await engine.call(calleeIDs, mediaType: mediaType, options: options)
+            do {
+                _ = try await engine.call(calleeIDs, mediaType: mediaType, options: options)
+            } catch {
+                /*
+                 被拒时 Engine **先**抛 `callDidEnd(.error)`（界面已经进了结束画面）、**再** throw 到这里。
+                 只有宿主邀请鉴权回调拒绝（1409）有专属文案，其余码的收场由 `callDidEnd` 那条路负责。
+                 */
+                imLogRejected("拨号", error)
+                if imRTCErrorCode(error) == IMErrorCode.inviteDenied.rawValue {
+                    await MainActor.run { self.apply(.hint("对方暂时无法被邀请")) }
+                }
+            }
         }
     }
 
@@ -173,7 +179,17 @@ public protocol IMCallControllerObserver: AnyObject {
                 if outcome == .cameraBlocked { self.apply(.cameraBlocked) }
             }
             await startPreviewIfWanted()
-            await engine.joinRoom(roomID, roomToken: roomToken)
+            do {
+                try await engine.joinRoom(roomID, roomToken: roomToken)
+            } catch {
+                // 服务端拒绝时 Engine 已经抛过 `didLeaveRoom`（界面随它收起）；本地就拒掉的（2005 / 2007）
+                // 没有那条回调，自己把「接通中…」收回来。进房没成就不推流。
+                imLogRejected("进会议", error)
+                await MainActor.run {
+                    if self.state.phase == .connecting, self.state.roomID == roomID { self.apply(.dismiss) }
+                }
+                return
+            }
             await publishFor(mediaType: "video")
         }
     }
@@ -188,15 +204,23 @@ public protocol IMCallControllerObserver: AnyObject {
                                                       cameraOptedOut: state.selfState.cameraOptedOut)
         Task {
             let outcome = await permissionGate.ensure(devices)
-            guard await settle(outcome, onBlocked: { Task { await self.engine.reject() } }) else { return }
+            guard await settle(outcome, onBlocked: { self.rejectLogged() }) else { return }
             // 同 `placeCall`：权限门期间对方可能已经取消、用户也可能已经按了拒接。
             guard await stillOnScreen(expecting: .incoming, whenGone: "[Kit] 过完权限门时这通来电已经不在了，accept 不发") else { return }
             await startPreviewIfWanted()
-            await engine.accept()
+            // 接听被拒（通话已结束 / 已在别处处理）：Engine 退回 idle 并抛 callDidEnd(.error)，界面随它收起。
+            do { try await engine.accept() } catch { imLogRejected("接听", error) }
         }
     }
 
-    @objc public func reject() { Task { await engine.reject() } }
+    /// 拒接失败时 Engine 本地照样收场，错误只留痕。
+    @objc public func reject() { rejectLogged() }
+
+    private func rejectLogged() {
+        Task {
+            do { try await engine.reject() } catch { imLogRejected("拒接", error) }
+        }
+    }
 
     /**
      stillOnScreen 在过完权限门之后再确认这一屏还在——`placeCall` 与 `accept` 共用。
@@ -220,7 +244,7 @@ public protocol IMCallControllerObserver: AnyObject {
     /// 前后摄像头翻转。**纯媒体动作，不改视图状态**——镜像由媒体层自己处理。
     @objc public func switchCamera() {
         Task {
-            await engine.switchCamera()
+            do { try await engine.switchCamera() } catch { imLogRejected("翻转摄像头", error) }
             /*
              **翻完要重画一次。**
 
@@ -253,24 +277,37 @@ public protocol IMCallControllerObserver: AnyObject {
         IMRTCLog.info("[Kit] 按下红键", ["action": action.rawValue, "phase": String(describing: state.phase)])
         armEndWatchdog(reason: imEndWatchdogReason(for: action))
         Task {
-            switch action {
-            case .leaveRoom: await engine.leaveRoom()
-            case .reject:    await engine.reject()
-            case .cancel:    await engine.cancel()
-            case .hangup:    await engine.hangup()
+            // 退出类失败时 Engine 本地照样收场（callDidEnd / didLeaveRoom 照发），错误只留痕。
+            do {
+                switch action {
+                case .leaveRoom: try await engine.leaveRoom()
+                case .reject:    try await engine.reject()
+                case .cancel:    try await engine.cancel()
+                case .hangup:    try await engine.hangup()
+                }
+            } catch {
+                imLogRejected("红键（\(action.rawValue)）", error)
             }
         }
     }
 
     /// inviteMore 往群通话里加人：占位格**立刻**出现，帧随后才发（交互稿 §05 G3）。
     ///
-    /// 记下这一批是谁：服务端拒掉（1407 本端不在通话里 / 1202 满员）时不会有 `userDidReject`——
+    /// 记下这一批是谁：服务端拒掉（1407 本端不在通话里 / 1202 满员 / 1409 宿主拒绝）时不会有 `userDidReject`——
     /// 那条是给「真的响了铃的人」的。不收回占位格的话它们会一直挂着「呼叫中…」，还占着人数。
+    /// 失败的码从 `engine.inviteMore` 的 throw 里取，见 `handleInviteMoreFailure(_:)`。
     @objc public func inviteMore(_ uids: [String]) {
         guard !uids.isEmpty else { return }
         lastInvited = uids
         apply(.invited(uids: uids))
-        Task { await engine.inviteMore(uids) }
+        Task {
+            do {
+                try await engine.inviteMore(uids)
+            } catch {
+                imLogRejected("加人", error)
+                await MainActor.run { self.handleInviteMoreFailure(error) }
+            }
+        }
     }
 
     /// 把最后一批邀请的占位格收回来（加人被服务端拒时）。

@@ -23,17 +23,20 @@ extension IMCallEngine {
     @objc public func openMicrophone() async throws {
         let cached: String? = stateQueue.sync { publishedMicCID }
         if let cid = cached {
-            await setMuted(cid, muted: false)
+            try await setMuted(cid, muted: false)
             return
         }
         _ = try await publishMicrophone()
     }
 
-    /// closeMicrophone 关麦克风：停止发包，不 unpublish；没发布过就空操作。
+    /// closeMicrophone 关麦克风：停止发包，不 unpublish；没发布过、或 `destroy()` 之后就空操作。
+    ///
+    /// 清理类，**不 throw**：本端在发帧之前就已经静音，`room.mute` 被拒也不回滚本端（隐私优先），
+    /// 错误走 `didFailWithError`。
     @objc public func closeMicrophone() async {
-        let cached: String? = stateQueue.sync { publishedMicCID }
+        let cached: String? = stateQueue.sync { isDestroyed ? nil : publishedMicCID }
         guard let cid = cached else { return }
-        await setMuted(cid, muted: true)
+        await muteForClose(cid)
     }
 
     /// openCamera 开摄像头：没发布过就发布（复用现有预览轨道的逻辑见 `publishCamera`），
@@ -41,7 +44,7 @@ extension IMCallEngine {
     @objc public func openCamera() async throws {
         let cached: String? = stateQueue.sync { publishedCameraCID }
         if let cid = cached {
-            await setMuted(cid, muted: false)
+            try await setMuted(cid, muted: false)
             return
         }
         _ = try await publishCamera()
@@ -51,8 +54,17 @@ extension IMCallEngine {
     /// 对已发布的摄像头轨道置静音时会真的 `halt` 采集（不是仅仅停止发包），所以这一步
     /// 就是关灯；不 unpublish，没发布过就空操作。
     @objc public func closeCamera() async {
-        let cached: String? = stateQueue.sync { publishedCameraCID }
+        let cached: String? = stateQueue.sync { isDestroyed ? nil : publishedCameraCID }
         guard let cid = cached else { return }
-        await setMuted(cid, muted: true)
+        await muteForClose(cid)
+    }
+
+    /// muteForClose 是 close* 共用的「静音、失败只报 didFailWithError」。
+    private func muteForClose(_ cid: String) async {
+        do {
+            try await setMuted(cid, muted: true)
+        } catch {
+            emitUnattributed(error)
+        }
     }
 }
