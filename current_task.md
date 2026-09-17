@@ -7,6 +7,10 @@
 
 ## 当前焦点
 
+**2026-09-17 傍晚：四仓 /simplify 清理（本仓 5 个提交 `dc76a99`…`7c3f457`，未推送，`test.sh` 10 步全绿 322 例 + Demo 编译）。**
+- 行为不变：onError 工厂、sys.error 解码共用、状态机 out/本地拒绝合并、周期事件先判日志级别、sys.pong 不进帧泵、主题色值/弹簧/圆形按钮/贴边约束收进 Kit、悬浮球贴边下沉 `Layout/IMFloatingBubbleLayout.swift`（有单测）。
+- **行为变化只在 Demo**：通话记录改用 `imEndReasonText`（hangup 显示「通话结束 · 时长」）；`DemoSession` 改观察者列表。Kit 视觉未真机复看。
+
 **2026-09-17 下午：旧「下一步」4（体量）与 5 里的「来电振动」「ObjC block 观察者」做完并推送，`test.sh` 10 步全绿（320 例 + Demo 编译）。**
 - 体量五刀（行为不变）：`86fc9a2` `IMCallController` 596 → 407（`+Media` / `+Timers`）· `e4eb8e7` `IMCallOverlayViewController` 598 → 434（协作对象 `IMCallControls` / `IMRemoteTiles` / `IMFullStage`，文案纯函数 `imCallTitle` / `imCallStatusLine`）· `d8b9c32` `SignalConnection` 594 → 440（`SignalConnectionTypes` / `+ResumeGiveUp`）· `1e66361` `IMCallEngine` 558 → 422（`+Media`）· `51b18e1` `IMWebRTCAdapter` 586 → 465（`+Negotiation` / `+Views`）。现在没有 WARN。
 - `558ede0` `IMCallController.addStateChangeHandler` / `removeStateChangeHandler`（block 形式，NSUUID 凭证）；来电振动 `IMCallKitConfig.incomingVibration`（09-17 晚改为**默认关**，与 `ringtoneMuted` 无关，判据 `imShouldVibrate`）。CLIENT_PARITY v1.41 新增一行（server `6111225`）。
