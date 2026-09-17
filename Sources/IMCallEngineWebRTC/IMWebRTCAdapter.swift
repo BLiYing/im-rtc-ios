@@ -9,7 +9,8 @@ import IMCallEngine
  `IMMediaAdapter` 的 libwebrtc 实现。**Engine 里唯一碰 WebRTC 的地方。**
 
  换媒体实现（或做 P2P 隐私模式）时只动这个 target，状态机与信令一行不用改。
- 不碰可变状态的辅助（权限、挑格式、音频会话、编码参数）在 IMWebRTCAdapter+Support.swift。
+ 不碰可变状态的辅助（权限、挑格式、音频会话、编码参数）在 IMWebRTCAdapter+Support.swift；
+ SDP 协商在 +Negotiation.swift，挂视图与下行轨道在 +Views.swift。**可变字段一律声明在本文件**，受 `lock` 保护。
  */
 public final class IMWebRTCAdapter: NSObject, IMMediaAdapter, @unchecked Sendable {
 
@@ -20,14 +21,14 @@ public final class IMWebRTCAdapter: NSObject, IMMediaAdapter, @unchecked Sendabl
      会抛 ObjC 异常，而 Swift 接不住——**进程直接挂掉**。
      原先这里是 `let`，于是第一通电话结束后第二通必崩。
     */
-    private var peers: IMPeerConnections?
-    private let registry = IMVideoRegistry()
+    var peers: IMPeerConnections?
+    let registry = IMVideoRegistry()
     /// 开关摄像头前后的上行视频采样（排查对端「画面出来又刷新一下」）。见 `IMUplinkVideoStats`。
     private let uplinkVideoStats = IMUplinkVideoStats()
-    private var events = IMMediaAdapterEvents()
+    var events = IMMediaAdapterEvents()
 
     /// 本端轨道，按 cid 索引。
-    private var localTracks: [String: RTCMediaStreamTrack] = [:]
+    var localTracks: [String: RTCMediaStreamTrack] = [:]
     /// 摄像头采集器。**必须持有**：不留引用的话它会被释放，画面直接停掉。
     private var capturer: RTCCameraVideoCapturer?
     /// 当前用的是不是前置。翻转靠它决定下一次挑哪一个。
@@ -84,7 +85,7 @@ public final class IMWebRTCAdapter: NSObject, IMMediaAdapter, @unchecked Sendabl
     /// 合成采集器。与 `capturer` 互斥：开了合成就不建摄像头采集器。
     private var syntheticCapturer: IMSyntheticVideoCapturer?
     /// 下一个上行 offer 要不要带 ICE restart。见 `restartPubICE()`。
-    private var pubICERestartPending = false
+    var pubICERestartPending = false
     var audioSessionActive = false // 见 IMWebRTCAdapter+AudioSession.swift。
     var desiredSpeakerOn = false // 同上：会话还没配好时先记下来，配好再补应用。
     var routeChangeObserver: NSObjectProtocol? // 同上：路由变化的监听，close() 时摘。
@@ -116,7 +117,7 @@ public final class IMWebRTCAdapter: NSObject, IMMediaAdapter, @unchecked Sendabl
     }
 
     /// ensurePeers 拿一对可用的 PC；上一对被 close 过就现造一对并接好回调。
-    private func ensurePeers() -> IMPeerConnections {
+    func ensurePeers() -> IMPeerConnections {
         lock.lock()
         defer { lock.unlock() }
         if let peers { return peers }
@@ -124,21 +125,6 @@ public final class IMWebRTCAdapter: NSObject, IMMediaAdapter, @unchecked Sendabl
         wire(fresh)
         peers = fresh
         return fresh
-    }
-
-    private func wire(_ pcs: IMPeerConnections) {
-        pcs.onLocalCandidate = { [weak self] role, candidate in
-            self?.events.onLocalCandidate?(role, IMICECandidate(
-                candidate: candidate.sdp,
-                sdpMid: candidate.sdpMid ?? "",
-                sdpMLineIndex: Int(candidate.sdpMLineIndex)))
-        }
-        pcs.onStateChange = { [weak self] role, state in
-            self?.events.onConnectionStateChange?(role, Self.stateName(state))
-        }
-        pcs.onRemoteTrack = { [weak self] track in
-            self?.handleRemoteTrack(track)
-        }
     }
 
     /**
@@ -328,53 +314,6 @@ public final class IMWebRTCAdapter: NSObject, IMMediaAdapter, @unchecked Sendabl
         return info
     }
 
-    /// createPubOffer 生成上行 offer。**pub 的 offerer 恒为本端**（协议 §3.3）。
-    public func createPubOffer() async throws -> String {
-        lock.lock()
-        let restart = pubICERestartPending
-        pubICERestartPending = false
-        lock.unlock()
-        if restart { IMRTCLog.info("上行重启 ICE", [:]) }
-        let constraints = RTCMediaConstraints(
-            mandatoryConstraints: restart ? ["IceRestart": "true"] : nil,
-            optionalConstraints: nil)
-        let offer = try await ensurePeers().pub.offer(for: constraints)
-        try await ensurePeers().pub.setLocalDescription(offer)
-        return offer.sdp
-    }
-
-    /// 见协议里的说明。**置位而不是立刻发帧**：发帧是 Engine 的事。
-    public func restartPubICE() {
-        lock.lock()
-        pubICERestartPending = true
-        lock.unlock()
-    }
-
-    public func applyPubAnswer(_ sdp: String) async throws {
-        try await ensurePeers().setRemoteDescription(
-            RTCSessionDescription(type: .answer, sdp: sdp), for: .pub)
-    }
-
-    /// answerSubOffer 应答服务端下发的下行 offer。**sub 的 offerer 恒为服务端**。
-    /// **2026-09-16 新增**：开头也调 `ensureAudioSessionConfigured()`——服务端推下行 offer 与 Kit 调 `acquireMicrophone` 是两条独立异步路径，前者可能先到，理由见该方法顶部注释。
-    public func answerSubOffer(_ sdp: String) async throws -> String {
-        ensureAudioSessionConfigured()
-        try await ensurePeers().setRemoteDescription(
-            RTCSessionDescription(type: .offer, sdp: sdp), for: .sub)
-        let constraints = RTCMediaConstraints(mandatoryConstraints: nil, optionalConstraints: nil)
-        let answer = try await ensurePeers().sub.answer(for: constraints)
-        try await ensurePeers().sub.setLocalDescription(answer)
-        return answer.sdp
-    }
-
-    public func addRemoteCandidate(_ pc: IMPCRole, _ candidate: IMICECandidate) async throws {
-        try await ensurePeers().addRemoteCandidate(
-            RTCIceCandidate(sdp: candidate.candidate,
-                            sdpMLineIndex: Int32(candidate.sdpMLineIndex),
-                            sdpMid: candidate.sdpMid.isEmpty ? nil : candidate.sdpMid),
-            for: pc)
-    }
-
     /**
      setMuted 停/复发包。**不是 unpublish**：轨道与协商都保留。
 
@@ -462,48 +401,6 @@ public final class IMWebRTCAdapter: NSObject, IMMediaAdapter, @unchecked Sendabl
         return usingFrontCamera
     }
 
-    public func attachRemoteView(_ uid: String, _ view: AnyObject?) {
-        // 线程由登记表自己管（它整张表只在主线程上动）。
-        registry.attach(owner: uid, to: view as? UIView)
-    }
-
-    /**
-     attachLocalView 把本端某条轨道挂到视图上做预览；传 nil 只从容器上摘下来，
-     视图本身与它的 sink **不销毁**（整通电话复用，见 `IMVideoRegistry.attach(owner:to:)`）。
-
-     **走的是同一张登记表**（键加 `:local:` 前缀），不是另起一套。
-     原先这里每调一次就 `addSubview` 一个新的 `RTCMTLVideoView`，
-     而 Kit 每次界面状态变化都会重挂一遍——格子里叠了一摞渲染视图，
-     且传 nil 时什么都不做，卸载不掉。
-
-     关摄像头再开摄像头走的就是这条路（`view` 非 nil 再传一次），
-     不是 `stopLocalPreview`——真正的释放只发生在挂断 / 进房前的
-     `stopLocalPreview()`（那两处调用 `registry.remove`/`removeAll`）。
-    */
-    public func attachLocalView(_ cid: String, _ view: AnyObject?) {
-        let key = imLocalViewKey(cid)
-        guard let container = view as? UIView else {
-            registry.attach(owner: key, to: nil)
-            return
-        }
-        lock.lock()
-        let track = localTracks[cid] as? RTCVideoTrack
-        lock.unlock()
-        if let track { registry.addTrack(cid, track, owner: key) }
-        registry.attach(owner: key, to: container)
-    }
-
-    /**
-     claimRemoteTracks 告诉媒体层「哪条 track_id 是谁的」。
-
-     媒体层自己**无从知道**这件事：`didAdd rtpReceiver` 只带 track_id，
-     归属写在信令帧 `room.track_published` 里。两者谁先到都可能，
-     所以轨道先按 track_id 收下，归属到了再认领。
-    */
-    public func claimRemoteTracks(_ owners: [String: String]) {
-        for (trackID, uid) in owners { registry.claim(trackID, owner: uid) }
-    }
-
     /// close 收掉这一轮的媒体面。**一次锁里全部摘干净**，再在锁外面真正关。
     ///
     /// 代际 +1 是给还挂在 await 上的采集流程看的：它们醒来会发现自己这一轮已经作废
@@ -554,24 +451,6 @@ public final class IMWebRTCAdapter: NSObject, IMMediaAdapter, @unchecked Sendabl
         lock.lock()
         localTracks[cid] = track
         lock.unlock()
-    }
-
-    /// handleRemoteTrack 处理一条下行轨道。
-    ///
-    /// **track_id 就是协议里的 track_id**：订阅侧 SDP 的 msid 即此值（协议 §2.5 表）。
-    private func handleRemoteTrack(_ track: RTCMediaStreamTrack) {
-        let trackID = track.trackId
-        events.onRemoteTrack?(trackID)
-        guard let video = track as? RTCVideoTrack else { return }
-        // **归属这时候通常还不知道**（信令帧可能后到），先按 track_id 收着，
-        // 等 claimRemoteTracks 认领。这里原先直接把 track_id 当 uid 挂进去，
-        // 而挂载侧传的是真 uid，两把钥匙永远对不上——协商全通但一格画面都没有。
-        registry.addTrack(trackID, video, owner: "")
-        // 第一帧探针。**判据是真的出帧**，不是协商完成——提前抛等于让 UI 撤了 loading 去露黑屏。
-        let probe = IMFirstFrameProbe { [weak self] _, _, _ in
-            self?.events.onFirstVideoFrame?(trackID)
-        }
-        video.add(probe)
     }
 
     /// startCapture 按当前朝向起摄像头（格式怎么挑见 `captureChoice`）。
