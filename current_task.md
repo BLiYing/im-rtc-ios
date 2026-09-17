@@ -16,8 +16,7 @@
 ## 下一步
 
 1. destroy 对表查出的本端欠账（CLIENT_PARITY `[^destroy]`）：`IMCallEngine+Lifecycle.swift` 注释与实际不符；`attachView` / `attachLocalView` 销毁后仍建空渲染视图。
-2. 会议房 M1「还有 N 人未显示」没凑人数真机看过（CLIENT_PARITY 仍 🟡）。
-3. 按需 / 后续期：自定义铃声没有 Demo UI、没真机验过；`IMInviteMemberProvider` / `presentInvitePicker` 没真实宿主跑过；IMProgram / 容信真实接入（M3~M7）。
+2. 按需 / 后续期：自定义铃声没有 Demo UI、没真机验过；`IMInviteMemberProvider` / `presentInvitePicker` 没真实宿主跑过；IMProgram / 容信真实接入（M3~M7）。
 
 ## 已知坑 / 限制
 
