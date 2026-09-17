@@ -7,20 +7,18 @@
 
 ## 当前焦点
 
-**2026-09-17 夜：逐项补了四件（本地已提交、未推送），单测 + `test.sh` 全绿，真机 / 模拟器交互都没点过**（模拟器没有点击工具，按坐标点桌面误点到别的终端，放弃了）。SDK 1.0.0 已公网发布，这些进下一个版本。
-- `c8da295` 通话里摄像头起不来说一句「没有摄像头权限 / 找不到可用的摄像头，已用语音继续通话」（`imCameraFailureActions`）。
-- `747f538` 收 `call.ringing` 抛 `callEngine(_:userIsRinging:)`，群通话里别人加的人也摆占位格；终局计时器到点先看终局还在不在。
-- `2714e7e` 监听 `routeChangeNotification`：记日志，插拔后系统清掉的外放覆盖补回去（`imShouldReapplySpeaker`）。
-- `527d391` 会议房「还有 N 人未显示」+ 屏外报 none（M1）；`20b4bc2` 打开网络质量图标，「对方网络不佳」只在 1v1。
-- **体量**：`IMCallOverlayViewController.swift` 598、`IMCallController.swift` 596，再往里加东西先拆。
+**2026-09-17 下午：旧「下一步」4（体量）与 5 里的「来电振动」「ObjC block 观察者」做完，本地已提交、未推送，`test.sh` 10 步全绿（320 例 + Demo 编译），真机没点过。**
+- 体量五刀（行为不变）：`86fc9a2` `IMCallController` 596 → 407（`+Media` / `+Timers`）· `e4eb8e7` `IMCallOverlayViewController` 598 → 434（协作对象 `IMCallControls` / `IMRemoteTiles` / `IMFullStage`，文案纯函数 `imCallTitle` / `imCallStatusLine`）· `d8b9c32` `SignalConnection` 594 → 440（`SignalConnectionTypes` / `+ResumeGiveUp`）· `1e66361` `IMCallEngine` 558 → 422（`+Media`）· `51b18e1` `IMWebRTCAdapter` 586 → 465（`+Negotiation` / `+Views`）。现在没有 WARN。
+- `558ede0` `IMCallController.addStateChangeHandler` / `removeStateChangeHandler`（block 形式，NSUUID 凭证）；来电振动 `IMCallKitConfig.incomingVibration`（默认开，与 `ringtoneMuted` 无关，判据 `imShouldVibrate`）。CLIENT_PARITY v1.41 新增一行（server `6111225`）。
+- 09-17 夜那几件（摄像头失败提示、`userIsRinging` 占位格、音频路由、会议房 M1、网络图标）见 git log，仍待真机。
 
 ## 下一步
 
 1. **累积的真机验收**：API 命名对齐的新签名（`callDidEnd` / `activeSpeakersDidChange` / `networkQualityDidChange` / `destroy()` / `openMicrophone` / `openCamera`）；
    M1/M2 两台设备群呼带 `chatGroupID`、中途 `joinCall`、选人页翻页 / 搜索 / 置灰；`inviter` 与「离场发起人可被重新邀请」双端联调；1409 两种文案连真服务端。
-2. **补验今晚四件**：模拟器关「合成画面」打视频电话看提示；三人群通话里看别人加的人占位格；插拔耳机 / 蓝牙；网络条与 1v1「对方网络不佳」。
-4. **体量**：`IMWebRTCAdapter` 594、`IMCallController` 597、`IMCallOverlayViewController` 596、`SignalConnection` 594、`IMCallEngine` 558 行——往里加东西前先规划拆分。
-5. 按需 / 后续期：来电振动；自定义铃声没有 Demo UI、没真机验过；`IMInviteMemberProvider` / `presentInvitePicker` 没真实宿主跑过；ObjC 状态观察者只有 delegate 没有 block；IMProgram / 容信真实接入（M3~M7）。
+2. **补验 09-17 的几件**：模拟器关「合成画面」打视频电话看提示；三人群通话里看别人加的人占位格；插拔耳机 / 蓝牙；网络条与 1v1「对方网络不佳」；**来电振动**（静音模式下也振、接听 / 拒接 / 对方取消即停）；拆分后的通话页按钮、1v1 互换、九宫格层上报走一遍。
+3. destroy 对表查出的本端欠账（CLIENT_PARITY `[^destroy]`）：`IMCallEngine+Lifecycle.swift` 注释与实际不符；`attachView` / `attachLocalView` 销毁后仍建空渲染视图。
+4. 按需 / 后续期：自定义铃声没有 Demo UI、没真机验过；`IMInviteMemberProvider` / `presentInvitePicker` 没真实宿主跑过；IMProgram / 容信真实接入（M3~M7）。
 
 ## 已知坑 / 限制
 
