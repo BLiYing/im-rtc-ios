@@ -87,13 +87,13 @@ public protocol IMCallControllerObserver: AnyObject {
     private var dismissTimer: DispatchSourceTimer?
 
     /// 红键按下之后盯着这一屏走没走的那只表。见 `armEndWatchdog`。
-    private var endWatchdog: DispatchSourceTimer?
+    var endWatchdog: DispatchSourceTimer?
     /// 提示自动撤掉的计时器。**提示是一次性的**：不撤的话它在 `statusLine` 里永久顶掉时长。
-    private var hintTimer: DispatchSourceTimer?
+    var hintTimer: DispatchSourceTimer?
     /// 邀请中的占位格拿到终局后停 2s 再收的计时器，按 uid 记。
-    private var settleTimers: [String: DispatchSourceTimer] = [:]
+    var settleTimers: [String: DispatchSourceTimer] = [:]
     /// 切后台时被自动暂停的摄像头；回前台恢复。**不改用户的开关**。
-    private var cameraPausedByBackground = false
+    var cameraPausedByBackground = false
     /// 最后一批邀请出去的 uid。加人被拒时用它把占位格收回来。
     private var lastInvited: [String] = []
     #if canImport(UIKit)
@@ -243,98 +243,6 @@ public protocol IMCallControllerObserver: AnyObject {
             case .reject:    await engine.reject()
             case .cancel:    await engine.cancel()
             case .hangup:    await engine.hangup()
-            }
-        }
-    }
-
-    /**
-     红键的看门狗：按下 `IMEndWatchdogSeconds` 之后这一屏还在原地，就**本地收场**。
-
-     为什么需要它：2026-09-09 在 Android 上复现——摄像头权限设成「每次询问」时权限门在
-     拨出中途没落定，`call.invite` **一帧没发**，而界面早已切成 outgoing。红键映射到
-     `cancel`，引擎的通话状态机却还在 Idle，于是**本地拒成 2005、一帧不发、
-     也没有任何结束事件回来**，界面永远停在「正在呼叫…」。
-
-     iOS 这一侧同形：`placeCall` 也是先 `apply(.callPlaced)` 再过权限门，而
-     `imEndAction` 连 Android 那条 `Action.none` 兜底都没有（`default` 直接给 `hangup`）。
-     判据因此只能是**「按下之后这一屏到底走没走」**——用户按红键时的意图没有歧义：
-     把我弄出去；这条路必须在本地就能走完，不许依赖服务端应答。
-     */
-    private func armEndWatchdog(reason: String) {
-        endWatchdog?.cancel()
-        let timer = DispatchSource.makeTimerSource(queue: .main)
-        timer.schedule(deadline: .now() + IMEndWatchdogSeconds)
-        timer.setEventHandler { [weak self] in
-            guard let self else { return }
-            self.endWatchdog = nil
-            guard self.state.phase != .idle, self.state.phase != .ended else { return }
-            IMRTCLog.warn("[Kit] 红按钮本地收场：没等到结束事件",
-                          ["phase": String(describing: self.state.phase)])
-            self.apply(.callEnd(reason: reason, durationSec: 0))
-            /*
-             **界面收了，Engine 也要收。** 只收界面的话，结束帧没发出去时 Engine 还留在通话与房间里：
-             服务端照样当他在场，别人一直看得见他，摄像头麦克风也还开着
-             （2026-09-13 14:54 frank，直到 14:58 整通结束才被带走）。
-             `forceEnd` 不走帧循环，直接把结束帧交给信令连接，并在本地收场。
-            */
-            self.engine.forceEnd()
-        }
-        endWatchdog = timer
-        timer.resume()
-    }
-
-    @objc public func toggleMic() {
-        let on = !state.selfState.micOn
-        apply(.setMic(on))
-        guard !micCID.isEmpty else { return }
-        Task { await engine.setMuted(micCID, muted: !on) }
-    }
-
-    /// 开关摄像头。**还没进房时只改界面，不去发布**；禁用态点了要出提示，不能静默（规范 §06）。
-    @objc public func toggleCamera() {
-        if state.selfState.cameraBlocked {
-            apply(.hint("没有摄像头权限"))
-            return
-        }
-        let on = !state.selfState.cameraOn
-        apply(.setCamera(on))
-        // 摄像头还没推上房间就关掉（来电页 / 拨出中 / 进了房还没发出去）：**真停采集**，灯立刻灭（设计 v3.7）。
-        if !on, !cameraPublished {
-            stopLocalPreview()
-            return
-        }
-        guard !state.roomID.isEmpty else {
-            // 群通话拨出中打开摄像头：权限拨出前问过了，这时起预览好让人看见自己。
-            // 来电页不在这里起：状态一变界面就重画，重画时 `startRingingPreviewIfAllowed` 会起。
-            if on, state.phase == .outgoing { Task { await self.startPreviewIfWanted() } }
-            return
-        }
-        Task {
-            // 第一次开摄像头要真的发布；之后只是开关，**不走 unpublish**（协议 §3.2 的重协商风暴）。
-            // 判「发布过没有」不看 cid：来电页上起过的预览也有 cid，但从没推上去（见 `cameraPublished`）。
-            guard !cameraPublished, on else {
-                if cameraPublished { await engine.setMuted(cameraCID, muted: !on) }
-                return
-            }
-            do {
-                let cid = try await engine.publishCamera() // 有预览轨道时引擎直接复用它
-                cameraCID = cid
-                cameraPublished = true
-                // 发布的这几百毫秒里用户又把摄像头关了：已经推上去的只能停采集，不补这一下灯就一直亮着。
-                if await MainActor.run(body: { !self.state.selfState.cameraOn }) {
-                    await engine.setMuted(cid, muted: true)
-                }
-                await MainActor.run { self.broadcast() }
-            } catch {
-                /*
-                 **发布失败要落到界面上。** 原先是 `try?` 吞掉：抛 2001（用户刚在系统设置里
-                 关掉摄像头）时按钮已经乐观地点亮了，**用户以为自己出镜了，对端什么也没收到**。
-                 */
-                IMRTCLog.warn("[Kit] 开摄像头失败", ["err": String(describing: error)])
-                await MainActor.run {
-                    self.apply(.setCamera(false))
-                    imCameraFailureActions(error).forEach(self.apply)
-                }
             }
         }
     }
@@ -496,101 +404,4 @@ public protocol IMCallControllerObserver: AnyObject {
         Task { await publishFor(mediaType: mediaType) }
     }
 
-    /**
-     提示（「通话已满员」「对方已拒接」）**停几秒就撤**。
-
-     `statusLine` 里 hint 优先于时长，不撤的话「通话已满员」会顶着标题栏直到通话结束，
-     计时器再也不出现（规范 §08：这些是 toast，不是常驻状态）。
-     */
-    private func scheduleHintExpiry(from before: IMCallViewState) {
-        guard state.hint != before.hint else { return }
-        hintTimer?.cancel()
-        hintTimer = nil
-        guard !state.hint.isEmpty else { return }
-        let shown = state.hint
-        let timer = DispatchSource.makeTimerSource(queue: .main)
-        timer.schedule(deadline: .now() + IMHintHoldSeconds)
-        timer.setEventHandler { [weak self] in
-            // 只清掉自己那条：中途又来一条新提示时，不该被上一条的计时器抹掉。
-            guard let self, self.state.hint == shown else { return }
-            self.apply(.hint(""))
-        }
-        hintTimer = timer
-        timer.resume()
-    }
-
-    /// 邀请中的格子拿到终局（已拒绝 / 未接听）后停 2s 再收（交互稿 §05 G3）。
-    private func scheduleSettledRemovals() {
-        for p in state.participants where p.settled != .none && settleTimers[p.uid] == nil {
-            let timer = DispatchSource.makeTimerSource(queue: .main)
-            timer.schedule(deadline: .now() + IMSettledHoldSeconds)
-            timer.setEventHandler { [weak self] in
-                guard let self else { return }
-                self.settleTimers[p.uid] = nil
-                // 停的这 2 秒里又被重新邀请（userRinging 清掉了终局）：不收。
-                if self.state.participants.contains(where: { $0.uid == p.uid && $0.settled != .none }) { self.apply(.userRemove(uid: p.uid)) }
-            }
-            settleTimers[p.uid] = timer
-            timer.resume()
-        }
-    }
-
-    func publishFor(mediaType: String) async {
-        micCID = (try? await engine.publishMicrophone()) ?? ""
-        // **本端摄像头是关着的就不推**：关着接听 = 以语音接听，连开都不开。
-        let wantsCamera = await MainActor.run { self.state.selfState.cameraOn }
-        if mediaType == "video", wantsCamera {
-            do {
-                cameraCID = try await engine.publishCamera()
-                cameraPublished = true
-            } catch {
-                IMRTCLog.warn("[Kit] 摄像头推流失败，本通只有声音", ["err": String(describing: error)])
-                await MainActor.run { imCameraFailureActions(error).forEach(self.apply) }
-            }
-        }
-        // 发布是异步的，**这期间用户完全可能已经点过静音或关摄像头**——补一遍，否则界面显示「已静音」而对方照样听得见。
-        let wanted = await MainActor.run { self.state.selfState }
-        if !micCID.isEmpty, !wanted.micOn { await engine.setMuted(micCID, muted: true) }
-        if !wanted.cameraOn {
-            // 推上去了就停采集、留轨道；还只是预览（没推成）就整个停掉——只关轨道的话灯不灭。
-            if cameraPublished {
-                await engine.setMuted(cameraCID, muted: true)
-            } else if !cameraCID.isEmpty {
-                await MainActor.run { self.stopLocalPreview() }
-            }
-        }
-        await MainActor.run { self.broadcast() }
-    }
-
-    // MARK: - 前后台
-
-    /**
-     切后台自动暂停本端视频、回前台恢复（交互稿 §03）。
-
-     iOS 在后台**不允许继续采集摄像头**，对端看到的就是一片黑——比看到头像糟糕得多。
-     所以进后台就把摄像头轨道 mute 掉（对端收到「摄像头已关闭」，看到头像）；
-     回前台**恢复到用户原来的选择**：他进后台前本来就关着摄像头，回前台不要替他打开。
-     */
-    private func observeAppLifecycle() {
-        #if canImport(UIKit)
-        let center = NotificationCenter.default
-        center.addObserver(self, selector: #selector(appDidEnterBackground),
-                           name: UIApplication.didEnterBackgroundNotification, object: nil)
-        center.addObserver(self, selector: #selector(appWillEnterForeground),
-                           name: UIApplication.willEnterForegroundNotification, object: nil)
-        #endif
-    }
-
-    @objc private func appDidEnterBackground() {
-        guard !cameraCID.isEmpty, state.selfState.cameraOn else { return }
-        cameraPausedByBackground = true
-        Task { await engine.setMuted(cameraCID, muted: true) }
-    }
-
-    @objc private func appWillEnterForeground() {
-        guard cameraPausedByBackground else { return }
-        cameraPausedByBackground = false
-        guard !cameraCID.isEmpty, state.selfState.cameraOn else { return }
-        Task { await engine.setMuted(cameraCID, muted: false) }
-    }
 }
