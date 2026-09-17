@@ -896,3 +896,14 @@ WebRTC 那部分 macOS 编不进来，**只有第 10 步把关，没真机验**�
   cd ../im-rtc-server && ./scripts/dev.sh                                   # 起服务端
   RTC_LIVE_SERVER=http://127.0.0.1:8787 swift test --filter LiveServerTests # 真服务端联调
   ```
+
+## 2026-09-17 傍晚（/simplify 清理收口时移出活快照）：「当前焦点」里更早的块
+
+> 原文照录，正文未改。
+
+**2026-09-17 下午：旧「下一步」4（体量）与 5 里的「来电振动」「ObjC block 观察者」做完并推送，`test.sh` 10 步全绿（320 例 + Demo 编译）。**
+- 体量五刀（行为不变）：`86fc9a2` `IMCallController` 596 → 407（`+Media` / `+Timers`）· `e4eb8e7` `IMCallOverlayViewController` 598 → 434（协作对象 `IMCallControls` / `IMRemoteTiles` / `IMFullStage`，文案纯函数 `imCallTitle` / `imCallStatusLine`）· `d8b9c32` `SignalConnection` 594 → 440（`SignalConnectionTypes` / `+ResumeGiveUp`）· `1e66361` `IMCallEngine` 558 → 422（`+Media`）· `51b18e1` `IMWebRTCAdapter` 586 → 465（`+Negotiation` / `+Views`）。现在没有 WARN。
+- `558ede0` `IMCallController.addStateChangeHandler` / `removeStateChangeHandler`（block 形式，NSUUID 凭证）；来电振动 `IMCallKitConfig.incomingVibration`（09-17 晚改为**默认关**，与 `ringtoneMuted` 无关，判据 `imShouldVibrate`）。CLIENT_PARITY v1.41 新增一行（server `6111225`）。
+- 09-17 夜那几件（摄像头失败提示、`userIsRinging` 占位格、音频路由、会议房 M1、网络图标）见 git log。
+- **09-17 下午用户真机验收了旧「下一步」1、2**（CLIENT_PARITY v1.42）：API 命名对齐的新签名、M1/M2 群呼带群号 / 中途 `joinCall` / 选人页、`inviter` 与离场发起人重邀、1409 两种文案；
+  合成画面提示、占位格、插拔耳机 / 蓝牙、网络条与「对方网络不佳」、来电振动、拆分后的通话页按钮 / 1v1 互换 / 九宫格层上报。

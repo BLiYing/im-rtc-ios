@@ -1,25 +1,21 @@
 # Current Task — im-rtc-ios（Swift Engine + Kit + Demo）
 
-> **活快照**：就地覆盖、不追加。历史见 `git log` 与 [current_task.archive.md](current_task.archive.md)（末节「2026-09-17（SDK 1.0.0 公网发布后精简）：精简前全文」）。
+> **活快照**：就地覆盖、不追加。历史见 `git log` 与 [current_task.archive.md](current_task.archive.md)（末节「2026-09-17 傍晚（/simplify 清理收口时移出活快照）」；再往前是「SDK 1.0.0 公网发布后精简：精简前全文」）。
 > 规范 [CONVENTIONS.md](CONVENTIONS.md) · 分期 server `docs/design/RTC_CALL_DESIGN.md` §10 · 发版 server `docs/ops/RELEASE.md` ·
 > 界面以设计稿 **v3.1** 为准：`../im-rtc-server/docs/design/sketches/RTC_CALL_UI_SPEC.html` / `RTC_CALL_UX_FLOWS.html`。
 > ✅ 状态只写在 `../im-rtc-server/docs/CLIENT_PARITY.md`。
 
 ## 当前焦点
 
-**2026-09-17 傍晚：四仓 /simplify 清理（本仓 5 个提交 `dc76a99`…`7c3f457`，未推送，`test.sh` 10 步全绿 322 例 + Demo 编译）。**
-- 行为不变：onError 工厂、sys.error 解码共用、状态机 out/本地拒绝合并、周期事件先判日志级别、sys.pong 不进帧泵、主题色值/弹簧/圆形按钮/贴边约束收进 Kit、悬浮球贴边下沉 `Layout/IMFloatingBubbleLayout.swift`（有单测）。
-- **行为变化只在 Demo**：通话记录改用 `imEndReasonText`（hangup 显示「通话结束 · 时长」）；`DemoSession` 改观察者列表。Kit 视觉未真机复看。
-
-**2026-09-17 下午：旧「下一步」4（体量）与 5 里的「来电振动」「ObjC block 观察者」做完并推送，`test.sh` 10 步全绿（320 例 + Demo 编译）。**
-- 体量五刀（行为不变）：`86fc9a2` `IMCallController` 596 → 407（`+Media` / `+Timers`）· `e4eb8e7` `IMCallOverlayViewController` 598 → 434（协作对象 `IMCallControls` / `IMRemoteTiles` / `IMFullStage`，文案纯函数 `imCallTitle` / `imCallStatusLine`）· `d8b9c32` `SignalConnection` 594 → 440（`SignalConnectionTypes` / `+ResumeGiveUp`）· `1e66361` `IMCallEngine` 558 → 422（`+Media`）· `51b18e1` `IMWebRTCAdapter` 586 → 465（`+Negotiation` / `+Views`）。现在没有 WARN。
-- `558ede0` `IMCallController.addStateChangeHandler` / `removeStateChangeHandler`（block 形式，NSUUID 凭证）；来电振动 `IMCallKitConfig.incomingVibration`（09-17 晚改为**默认关**，与 `ringtoneMuted` 无关，判据 `imShouldVibrate`）。CLIENT_PARITY v1.41 新增一行（server `6111225`）。
-- 09-17 夜那几件（摄像头失败提示、`userIsRinging` 占位格、音频路由、会议房 M1、网络图标）见 git log。
-- **09-17 下午用户真机验收了旧「下一步」1、2**（CLIENT_PARITY v1.42）：API 命名对齐的新签名、M1/M2 群呼带群号 / 中途 `joinCall` / 选人页、`inviter` 与离场发起人重邀、1409 两种文案；
-  合成画面提示、占位格、插拔耳机 / 蓝牙、网络条与「对方网络不佳」、来电振动、拆分后的通话页按钮 / 1v1 互换 / 九宫格层上报。
+**2026-09-17 傍晚：四仓 /simplify 清理做完并推送（本仓 `dc76a99`…`7c3f457`，`test.sh` 10 步全绿 322 例 + Demo 编译）。**
+- 行为不变：`IMEmittedEvent.error(_:)` 工厂、`IMSysErrorFrame.decode` 推送 / 应答共用、状态机 `out` / `invalidStateOutput` 合并、周期事件先 `IMRTCLog.isEnabled` 再拼字段、`sys.pong` 不进帧泵、`stampCallStart` 单字段比较；
+  WebRTC 适配器 `ensurePeers` 取一次、`close()` 取消开摄像头 Task；Kit 色值 / 弹簧 / 小头像 44 收进 `IMKitTheme`，`imPinEdges` / `imConfigureCircleIconButton`，悬浮球贴边下沉 `Layout/IMFloatingBubbleLayout.swift`（有单测）。
+- **行为变化只在 Demo**：通话记录改用 `imEndReasonText`（hangup 显示「通话结束 · 时长」，offline / answered_elsewhere 等不再显示英文）；`DemoSession.onChange` 改 `add/removeChangeObserver`。
+- 09-17 下午（体量五刀、block 状态观察者、来电振动、用户真机验收旧 1、2）已移进 archive。
 
 ## 下一步
 
+0. **/simplify 之后没真机复看**：通话页 / 横幅 / 悬浮球的颜色、弹簧手感、圆形按钮、悬浮球松手贴边；Demo 通话记录文案。数值是逐字搬的，看一眼没变就行。
 1. destroy 对表查出的本端欠账（CLIENT_PARITY `[^destroy]`）：`IMCallEngine+Lifecycle.swift` 注释与实际不符；`attachView` / `attachLocalView` 销毁后仍建空渲染视图。
 2. 会议房 M1「还有 N 人未显示」没凑人数真机看过（CLIENT_PARITY 仍 🟡）。
 3. 按需 / 后续期：自定义铃声没有 Demo UI、没真机验过；`IMInviteMemberProvider` / `presentInvitePicker` 没真实宿主跑过；IMProgram / 容信真实接入（M3~M7）。
@@ -41,6 +37,7 @@
 - `RTCPeerConnectionFactory` 全进程一份、永不销毁；挂载登记表只在主线程动；远端轨道要 `claimRemoteTracks` 认领。
 - 下行 call 帧必须按 call_id 过滤（第三方呼叫的 `call.ended{busy}` 带新来那通的 id）；还在响铃的来电结束不进 ended。
 - `IMPipView.setContent` 只摘还挂在自己身上的内容；格子恒为正方形（`imGridDimensions(_:aspect:)`，五端同算法）。
+- **Kit 的颜色 / 弹簧 / 尺寸字面量一律进 `IMKitTheme`**，贴边 / 吸角算术放 `Layout/` 纯函数配单测（macOS 能编）。状态机的 `out` / `invalidStateOutput` 是 `MachineTypes.swift` 里的模块级函数：别在状态机类型里再加同名 `static func out`，会把它遮住。
 - `UIStackView` 三段式要把两头钉死高度（64 / 96）；渐变头像用 `IMAvatarDiscView`；图标一律 SF Symbols（`IMKitIcon`）。
 - 权限状态查询只决定要不要出说明卡，判失败靠真探。
 - 公开 API 必须 ObjC 友好（`IMMediaAdapter` 刻意不是 `@objc`）；加公开 API 就往 `IMObjCAPICheck.m` 补一行。
