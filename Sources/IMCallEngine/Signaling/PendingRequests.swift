@@ -36,15 +36,12 @@ final class PendingRequests {
     /// track 登记一个在途请求。超时会以 `signalingTimeout` 结算。
     func track(reqID: String, type: String,
                complete: @escaping (Result<IMRequestResult, IMRTCError>) -> Void) {
-        let timer = DispatchSource.makeTimerSource(queue: queue)
-        timer.schedule(deadline: .now() + .milliseconds(timeoutMS))
-        timer.setEventHandler { [weak self] in
+        let timer = imAfter(.milliseconds(timeoutMS), on: queue) { [weak self] in
             guard let self, let waiter = self.waiters.removeValue(forKey: reqID) else { return }
             waiter.timer.cancel()
             waiter.complete(.failure(IMRTCError(.signalingTimeout, "\(type) 等应答超时", forType: type)))
         }
         waiters[reqID] = Waiter(type: type, timer: timer, complete: complete)
-        timer.resume()
     }
 
     /// settle 用一帧应答结算在途请求。

@@ -235,14 +235,10 @@ public final class IMCallOverlayViewController: UIViewController {
 
     /// startTicking 每秒刷一次时长。**只在通话中跑**，其余状态没有时长可显示。
     private func startTicking() {
-        let timer = DispatchSource.makeTimerSource(queue: .main)
-        timer.schedule(deadline: .now() + 1, repeating: 1)
-        timer.setEventHandler { [weak self] in
+        tickTimer = imEvery(1, on: .main) { [weak self] in
             guard let self, self.controller.state.phase == .active else { return }
             self.renderHeader(self.controller.state)
         }
-        tickTimer = timer
-        timer.resume()
     }
 
     private func render(_ state: IMCallViewState) {
@@ -303,11 +299,7 @@ public final class IMCallOverlayViewController: UIViewController {
             poorNetworkShown = true
             banner.apply(text: "对方网络不佳")
             networkBannerTimer?.cancel()
-            let timer = DispatchSource.makeTimerSource(queue: .main)
-            timer.schedule(deadline: .now() + IMKitTheme.current.networkBannerHold)
-            timer.setEventHandler { [weak self] in self?.banner.apply(text: "") }
-            networkBannerTimer = timer
-            timer.resume()
+            networkBannerTimer = imAfter(IMKitTheme.current.networkBannerHold, on: .main) { [weak self] in self?.banner.apply(text: "") }
         } else if !poor {
             poorNetworkShown = false
             banner.apply(text: "")

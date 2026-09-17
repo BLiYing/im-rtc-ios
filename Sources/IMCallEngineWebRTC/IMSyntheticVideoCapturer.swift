@@ -2,6 +2,7 @@
 import CoreGraphics
 import CoreVideo
 import Foundation
+import IMCallEngine
 import UIKit
 import WebRTC
 
@@ -63,11 +64,7 @@ public final class IMSyntheticVideoCapturer: RTCVideoCapturer {
             self.height = max(2, height)
             self.pool = Self.makePool(width: self.width, height: self.height)
             let interval = 1.0 / Double(max(1, min(fps, 15)))
-            let timer = DispatchSource.makeTimerSource(queue: self.queue)
-            timer.schedule(deadline: .now(), repeating: interval)
-            timer.setEventHandler { [weak self] in self?.emitFrame() }
-            self.timer = timer
-            timer.resume()
+            self.timer = imEvery(interval, fireNow: true, on: self.queue) { [weak self] in self?.emitFrame() }
         }
     }
 

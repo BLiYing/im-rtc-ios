@@ -7,6 +7,9 @@
 
 ## 当前焦点
 
+**2026-09-17 夜：可取消定时器抽成 `Support/IMTimer.swift`（队列 5 的定时器样板）**：`imAfter` / `imEvery` 是 `package` 级别（三个 target 共用、宿主看不见），
+`makeTimerSource` 15 处全换掉（Engine 5 / WebRTC 1 / Kit 9），`IMTimerTests` 3 例。`DispatchWorkItem + asyncAfter` 那几处语义不同，没动。行为不变。
+
 **2026-09-17 夜：结束帧映射表合并（队列 3）**：四份「这个状态怎么结束」合成 `StateMachine/CallStateMachine+Exit.swift` 的 `IMCallExit`
 （`reduceAct` 退出方法 / `endFrames` / 迟到帧补发与挂着的 cancel / 帧循环失败收场集合都查它），`CallExitTableTests` 逐条对 `call_fsm.json`。行为不变。
 
@@ -36,6 +39,7 @@
 - **别单独 `rm -rf DerivedData`**：Xcode 开着时 SwiftPM 命中缓存 zip 跳过下载然后 `fatalError`（`There is no XCFramework found`）。平时 ⇧⌘K；真要清先退 Xcode：
   `osascript -e 'quit app "Xcode"'; sleep 3; rm -rf ~/Library/Developer/Xcode/DerivedData ~/Library/Caches/org.swift.swiftpm/artifacts`。
 - **Kit 界面代码 macOS 上编不到**（`#if canImport(UIKit)`）：`swift test` 绿不算数，要跑完整 `test.sh`（第 10 步编 Demo）。macOS 也编的 Controller 文件不能引用 `IMKitTheme`；`IMCallController+Ringtone.swift` 全包在 `#if canImport(UIKit)`。
+- **新定时器用 `imAfter` / `imEvery`**（`package`，别改成 `public`）：返回的已经 resume 过，调用方自己持有、自己 `cancel()`。
 - **结束帧一律查 `IMCallExit`**：别在状态机 / 帧循环里再手写「某状态发 hangup / reject / cancel」，改表要同时过 `CallExitTableTests`。
 - **`join_denied` 不是协议 reason**：`IMCallController` 在 `joinCall` 被拒（任何码）时本地改写的伪原因，只用于结束画面，别拿去和其他端对齐。
 - **「人先进来、轨道后到」是常态**：摆格子时的动作（层上报、尺寸、订阅）要能在轨道到达时再做一遍，别让去重表吃掉（`report(_:layer:hasVideo:)`）。

@@ -401,11 +401,7 @@ public protocol IMCallControllerObserver: AnyObject {
             endWatchdog = nil
         }
         if state.phase == .ended, endedHoldSeconds > 0 {
-            let timer = DispatchSource.makeTimerSource(queue: .main)
-            timer.schedule(deadline: .now() + imEndedHoldSeconds(state.endReason))
-            timer.setEventHandler { [weak self] in self?.apply(.dismiss) }
-            dismissTimer = timer
-            timer.resume()
+            dismissTimer = imAfter(imEndedHoldSeconds(state.endReason), on: .main) { [weak self] in self?.apply(.dismiss) }
         }
         if state.phase == .idle {
             /*

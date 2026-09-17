@@ -24,9 +24,7 @@ extension IMCallController {
      */
     func armEndWatchdog(reason: String) {
         endWatchdog?.cancel()
-        let timer = DispatchSource.makeTimerSource(queue: .main)
-        timer.schedule(deadline: .now() + IMEndWatchdogSeconds)
-        timer.setEventHandler { [weak self] in
+        endWatchdog = imAfter(IMEndWatchdogSeconds, on: .main) { [weak self] in
             guard let self else { return }
             self.endWatchdog = nil
             guard self.state.phase != .idle, self.state.phase != .ended else { return }
@@ -41,8 +39,6 @@ extension IMCallController {
             */
             self.engine.forceEnd()
         }
-        endWatchdog = timer
-        timer.resume()
     }
 
     /**
@@ -57,30 +53,22 @@ extension IMCallController {
         hintTimer = nil
         guard !state.hint.isEmpty else { return }
         let shown = state.hint
-        let timer = DispatchSource.makeTimerSource(queue: .main)
-        timer.schedule(deadline: .now() + IMHintHoldSeconds)
-        timer.setEventHandler { [weak self] in
+        hintTimer = imAfter(IMHintHoldSeconds, on: .main) { [weak self] in
             // 只清掉自己那条：中途又来一条新提示时，不该被上一条的计时器抹掉。
             guard let self, self.state.hint == shown else { return }
             self.apply(.hint(""))
         }
-        hintTimer = timer
-        timer.resume()
     }
 
     /// 邀请中的格子拿到终局（已拒绝 / 未接听）后停 2s 再收（交互稿 §05 G3）。
     func scheduleSettledRemovals() {
         for p in state.participants where p.settled != .none && settleTimers[p.uid] == nil {
-            let timer = DispatchSource.makeTimerSource(queue: .main)
-            timer.schedule(deadline: .now() + IMSettledHoldSeconds)
-            timer.setEventHandler { [weak self] in
+            settleTimers[p.uid] = imAfter(IMSettledHoldSeconds, on: .main) { [weak self] in
                 guard let self else { return }
                 self.settleTimers[p.uid] = nil
                 // 停的这 2 秒里又被重新邀请（userRinging 清掉了终局）：不收。
                 if self.state.participants.contains(where: { $0.uid == p.uid && $0.settled != .none }) { self.apply(.userRemove(uid: p.uid)) }
             }
-            settleTimers[p.uid] = timer
-            timer.resume()
         }
     }
 }

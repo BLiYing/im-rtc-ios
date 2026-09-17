@@ -62,11 +62,7 @@ extension IMCallController {
         vibrationTimer?.cancel()
         vibrationTimer = nil
         guard wanted else { return }
-        let timer = DispatchSource.makeTimerSource(queue: .main)
-        timer.schedule(deadline: .now(), repeating: IMIncomingVibrationIntervalSeconds)
-        timer.setEventHandler { AudioServicesPlaySystemSound(kSystemSoundID_Vibrate) }
-        vibrationTimer = timer
-        timer.resume()
+        vibrationTimer = imEvery(IMIncomingVibrationIntervalSeconds, fireNow: true, on: .main) { AudioServicesPlaySystemSound(kSystemSoundID_Vibrate) }
     }
 
     /// ringtoneURL 取宿主给的文件；宿主没给就退回包内置的默认音（`Bundle.module`）。

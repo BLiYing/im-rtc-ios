@@ -77,12 +77,7 @@ final class IMStallProbe: @unchecked Sendable {
             guard self.timer == nil else { return }
             self.resetMeasurements()
             self.lastTickMS = 0
-            let timer = DispatchSource.makeTimerSource(queue: self.queue)
-            timer.schedule(deadline: .now() + .milliseconds(self.intervalMS),
-                           repeating: .milliseconds(self.intervalMS))
-            timer.setEventHandler { [weak self] in self?.tick() }
-            self.timer = timer
-            timer.resume()
+            self.timer = imEvery(.milliseconds(self.intervalMS), on: self.queue) { [weak self] in self?.tick() }
         }
     }
 

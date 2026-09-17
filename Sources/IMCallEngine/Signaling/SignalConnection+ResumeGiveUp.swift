@@ -46,9 +46,7 @@ extension IMSignalConnection {
         guard unrecoverableTimer == nil else { return }
         let delay = giveUpDelayMS
         IMRTCLog.info("恢复窗口倒计时已起", ["delay_ms": String(delay)])
-        let timer = DispatchSource.makeTimerSource(queue: queue)
-        timer.schedule(deadline: .now() + .milliseconds(delay))
-        timer.setEventHandler { [weak self] in
+        unrecoverableTimer = imAfter(.milliseconds(delay), on: queue) { [weak self] in
             guard let self else { return }
             self.unrecoverableTimer = nil
             // 服务端已经丢掉这个会话，再拿它去要 resume 只会白跑一趟。
@@ -56,7 +54,5 @@ extension IMSignalConnection {
             IMRTCLog.warn("断开已超过恢复窗口，会话不可恢复")
             self.events.onSessionUnrecoverable?()
         }
-        unrecoverableTimer = timer
-        timer.resume()
     }
 }

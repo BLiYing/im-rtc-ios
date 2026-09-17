@@ -422,9 +422,7 @@ public final class IMSignalConnection {
         reconnectAttempt += 1
         IMRTCLog.info("计划重连", ["attempt": String(reconnectAttempt), "delay_ms": String(delay)])
 
-        let timer = DispatchSource.makeTimerSource(queue: queue)
-        timer.schedule(deadline: .now() + .milliseconds(delay))
-        timer.setEventHandler { [weak self] in
+        let timer = imAfter(.milliseconds(delay), on: queue) { [weak self] in
             guard let self, self.state == .reconnecting else { return }
             Task { [weak self] in
                 guard let self else { return }
@@ -435,7 +433,6 @@ public final class IMSignalConnection {
         }
         reconnectTimer?.cancel()
         reconnectTimer = timer
-        timer.resume()
     }
 
     private func sendPing() {

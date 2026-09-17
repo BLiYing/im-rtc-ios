@@ -244,14 +244,10 @@ public final class IMCallWindow {
         (window as? IMPassthroughWindow)?.hitTarget = bubble
         refreshBubble(state)
 
-        let timer = DispatchSource.makeTimerSource(queue: .main)
-        timer.schedule(deadline: .now() + 1, repeating: 1)
-        timer.setEventHandler { [weak self] in
+        bubbleTimer = imEvery(1, on: .main) { [weak self] in
             guard let self else { return }
             self.refreshBubble(self.controller.state)
         }
-        bubbleTimer = timer
-        timer.resume()
     }
 
     private func refreshBubble(_ state: IMCallViewState) {

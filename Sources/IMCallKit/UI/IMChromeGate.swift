@@ -1,4 +1,5 @@
 #if canImport(UIKit)
+import IMCallEngine
 import UIKit
 
 /*
@@ -71,14 +72,10 @@ final class IMChromeGate {
     func armAutoHide() {
         timer?.cancel()
         guard canAutoHide() else { return }
-        let next = DispatchSource.makeTimerSource(queue: .main)
-        next.schedule(deadline: .now() + IMKitTheme.current.autoHideDelay)
-        next.setEventHandler { [weak self] in
+        timer = imAfter(IMKitTheme.current.autoHideDelay, on: .main) { [weak self] in
             guard let self, self.canAutoHide() else { return }
             self.set(visible: false)
         }
-        timer = next
-        next.resume()
     }
 
     /// 撤掉待触发的那一下。

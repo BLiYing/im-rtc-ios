@@ -30,11 +30,7 @@ final class Heartbeat {
         stop()
         missed = 0
         let interval = max(1, intervalSec)
-        let source = DispatchSource.makeTimerSource(queue: queue)
-        source.schedule(deadline: .now() + .seconds(interval), repeating: .seconds(interval))
-        source.setEventHandler { [weak self] in self?.tick() }
-        timer = source
-        source.resume()
+        timer = imEvery(.seconds(interval), on: queue) { [weak self] in self?.tick() }
     }
 
     /// noteFrameReceived 由读循环无差别调用：收到任何帧都算对端活着。
