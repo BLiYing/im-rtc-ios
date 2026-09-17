@@ -37,34 +37,13 @@ public final class IMCallOverlayViewController: UIViewController {
     /// 本端格子。群通话里它是格子之一；1v1 里在小窗（互换后到全屏）。
     private let selfTile = IMVideoTileView()
     private let controlsScrim = CAGradientLayer()
-    /**
-     控制条**两排**（v3.2）：上排三个开关（静音 / 摄像头 / 扬声器），
-     下排「挂断居中 + 翻转摄像头在它右边」。
-
-     下排用三格等宽：左边一格空着，挂断占中间那格所以**真的在屏幕正中**，翻转占右边那格。
-     少了左边那个占位，挂断就会偏左——红键偏了最容易点错。
-    */
-    private let controlsStack = UIStackView()
-    private let controlsTop = UIStackView()
-    private let controlsBottom = UIStackView()
-    /// 下排左边那个空位：有它挂断才真的在屏幕正中。
-    private let spacer = UIView()
-    /// 复用格子，按 uid 索引。**不每次重建**：重建会让媒体层挂上去的渲染视图跟着重来，画面会闪。
-    private var tiles: [String: IMVideoTileView] = [:]
-    private var reportedLayers: [String: String] = [:]
-    /// 上一轮每个人有没有画面。**只用来判「他的轨道刚到」**，见 `report(_:layer:hasVideo:)`。
-    private var lastHasVideo: [String: Bool] = [:]
+    /// 控制条两排按钮（IMCallControls.swift）。
+    private let controls = IMCallControls()
+    private var controlsStack: UIStackView { controls.stack }
+    /// 远端格子与层上报（IMOverlayTiles.swift）。
+    private lazy var remoteTiles = IMRemoteTiles(controller: controller)
     /// 当前把哪个格子钉成了全屏（视频版式）。
-    private var fullTile: IMVideoTileView?
-    private var fullConstraints: [NSLayoutConstraint] = []
-
-    private let micButton = IMControlButton(icon: .mic, caption: "静音", onIcon: .micSlash, onCaption: "已静音")
-    private let cameraButton = IMControlButton(icon: .videoSlash, caption: "开摄像头", onIcon: .video, onCaption: "关摄像头")
-    private let speakerButton = IMControlButton(icon: .speaker, caption: "扬声器", onIcon: .speaker, onCaption: "扬声器")
-    private let switchCameraButton = IMControlButton(icon: .cameraFlip, caption: "翻转")
-    private let endButton = IMControlButton(role: .danger, icon: .phoneDown, caption: "挂断")
-    private let acceptButton = IMControlButton(role: .accept, icon: .phone, caption: "接听")
-    private let rejectButton = IMControlButton(role: .danger, icon: .xmark, caption: "拒绝")
+    private lazy var fullStage = IMFullStage(host: videoFull)
 
     /// 计时器。**持有方释放时必须 cancel**（CONVENTIONS §5）。
     private var tickTimer: DispatchSourceTimer?
@@ -135,18 +114,6 @@ public final class IMCallOverlayViewController: UIViewController {
         controlsScrim.colors = [UIColor.clear.cgColor, UIColor(white: 0, alpha: 0.55).cgColor]
         controlsScrim.isHidden = true
 
-        for row in [controlsTop, controlsBottom] {
-            row.axis = .horizontal
-            row.distribution = .fillEqually
-            row.alignment = .top
-            row.spacing = 12
-        }
-        controlsStack.axis = .vertical
-        controlsStack.alignment = .fill
-        controlsStack.spacing = 12
-        controlsStack.addArrangedSubview(controlsTop)
-        controlsStack.addArrangedSubview(controlsBottom)
-
         endedLabel.font = .systemFont(ofSize: 17)
         endedLabel.textColor = theme.primaryText
         endedLabel.textAlignment = .center
@@ -210,13 +177,13 @@ public final class IMCallOverlayViewController: UIViewController {
 
         header.minimizeButton.addTarget(self, action: #selector(onMinimize), for: .touchUpInside)
         header.inviteButton.addTarget(self, action: #selector(onInvite), for: .touchUpInside)
-        micButton.addTarget(self, action: #selector(onMic), for: .touchUpInside)
-        cameraButton.addTarget(self, action: #selector(onCamera), for: .touchUpInside)
-        endButton.addTarget(self, action: #selector(onEnd), for: .touchUpInside)
-        acceptButton.addTarget(self, action: #selector(onAccept), for: .touchUpInside)
-        rejectButton.addTarget(self, action: #selector(onReject), for: .touchUpInside)
-        speakerButton.addTarget(self, action: #selector(onSpeaker), for: .touchUpInside)
-        switchCameraButton.addTarget(self, action: #selector(onSwitchCamera), for: .touchUpInside)
+        controls.micButton.addTarget(self, action: #selector(onMic), for: .touchUpInside)
+        controls.cameraButton.addTarget(self, action: #selector(onCamera), for: .touchUpInside)
+        controls.endButton.addTarget(self, action: #selector(onEnd), for: .touchUpInside)
+        controls.acceptButton.addTarget(self, action: #selector(onAccept), for: .touchUpInside)
+        controls.rejectButton.addTarget(self, action: #selector(onReject), for: .touchUpInside)
+        controls.speakerButton.addTarget(self, action: #selector(onSpeaker), for: .touchUpInside)
+        controls.switchCameraButton.addTarget(self, action: #selector(onSwitchCamera), for: .touchUpInside)
         pip.onTap = { [weak self] in
             guard let self else { return }
             // 拨出中小窗里只有自己、对端还没画面，没什么可换。
@@ -296,24 +263,19 @@ public final class IMCallOverlayViewController: UIViewController {
         let isEnded = state.phase == .ended
         renderHeader(state)
         endedLabel.isHidden = !isEnded
-        endedLabel.text = statusLine(state)
+        endedLabel.text = imCallStatusLine(state)
         gradient.isHidden = layout == .video && !isEnded
         controlsScrim.isHidden = layout != .video || isEnded
         audioStage.isHidden = layout != .audio || isEnded
         gridView.isHidden = layout != .grid || isEnded
         pip.isHidden = isEnded
-        micButton.isOn = !state.selfState.micOn
-        cameraButton.isOn = state.selfState.cameraOn
-        cameraButton.isDisabledLook = state.selfState.cameraBlocked
-        cameraButton.caption = state.selfState.cameraBlocked ? "无权限" : "开摄像头"
-        speakerButton.isOn = state.selfState.speakerOn
-        renderControls(state)
+        controls.render(state)
         renderBanner(state)
         if isEnded {
             controller.attachLocalPreview(to: nil)
             // **全屏画面也要摘掉**：1v1 视频挂断后版式仍是 .video，不摘的话结束原因那行字
             // 压在对方最后一帧上——看着像通话还在。Android 的 render 一直是这么做的。
-            unpinFull()
+            fullStage.unpin()
             return
         }
         // 来电页上看得见自己：摄像头开着且早就授权过才起，响铃时不申请（见 imShouldPreviewWhileRinging）。
@@ -336,7 +298,7 @@ public final class IMCallOverlayViewController: UIViewController {
          接通之后才有真正只属于顶栏的信息（对方名字 + 计时器 + 网络条）。
         */
         let bare = state.phase == .incoming || state.phase == .outgoing
-        header.apply(title: bare ? "" : title(state), subtitle: bare ? "" : statusLine(state),
+        header.apply(title: bare ? "" : imCallTitle(state), subtitle: bare ? "" : imCallStatusLine(state),
                      networkLevel: state.phase == .active ? peerLevel : 0,
                      showsMinimize: state.phase != .incoming && state.phase != .ended,
                      showsInvite: imCanShowInvite(for: state))
@@ -365,54 +327,17 @@ public final class IMCallOverlayViewController: UIViewController {
         }
     }
 
-    /// renderControls 按阶段换按钮组。来电时是「拒绝 / 接听」，其余是常规几件套。**结束态不显示任何按钮。**
-    private func renderControls(_ state: IMCallViewState) {
-        let top: [UIView]
-        let bottom: [UIView]
-        if state.phase == .ended {
-            top = []
-            bottom = []
-        } else if state.phase == .incoming {
-            // 视频来电多一个摄像头开关，而不是「以语音接听」按钮（拍板 §11-10）。
-            top = []
-            bottom = imShowsCameraButton(for: state) ? [cameraButton, rejectButton, acceptButton] : [rejectButton, acceptButton]
-        } else if imShowsCameraButton(for: state) {
-            // 「小窗」不在控制条里——它在标题栏左上角那一颗（IMCallHeaderView 的注释）。
-            top = [micButton, cameraButton, speakerButton]
-            bottom = [spacer, endButton, switchCameraButton]
-        } else {
-            // 语音通话不给摄像头按钮，也就没有翻转（imShowsCameraButton）。
-            top = [micButton, speakerButton]
-            bottom = [endButton]
-        }
-        fill(controlsTop, with: top)
-        fill(controlsBottom, with: bottom)
-        // 摄像头关着的时候翻转没有意义（也没有画面可翻）。
-        switchCameraButton.isEnabled = state.selfState.cameraOn && !state.selfState.cameraBlocked
-        switchCameraButton.alpha = switchCameraButton.isEnabled ? 1 : 0.4
-        // 红按钮的语义按房间类型分叉（规范 §05）：群 / 会议写「离开」，拨出中写「取消」。
-        endButton.caption = state.isGroup || state.isMeeting ? "离开" : state.phase == .outgoing ? "取消" : "挂断"
-    }
-
-    /// 摆一排按钮。内容没变就不重建（重建会打断按下动效）。
-    private func fill(_ row: UIStackView, with wanted: [UIView]) {
-        guard row.arrangedSubviews != wanted else { return }
-        row.arrangedSubviews.forEach { row.removeArrangedSubview($0); $0.removeFromSuperview() }
-        wanted.forEach { row.addArrangedSubview($0) }
-        row.isHidden = wanted.isEmpty
-    }
-
     // MARK: 三种版式
 
     private func renderAudio(_ state: IMCallViewState) {
         let peer = state.participants.first
         audioStage.apply(uid: state.peerUID, name: imResolvedName(controller.profileResolver, uid: state.peerUID, fallback: state.peerUID.isEmpty ? (peer?.uid ?? "通话中") : state.peerUID),
-                         status: statusLine(state), isRinging: state.phase == .outgoing,
+                         status: imCallStatusLine(state), isRinging: state.phase == .outgoing,
                          networkLevel: peer?.networkLevel ?? 0,
                          // 接通之后名字与时长归标题栏，中间只留头像——两处各走各的计时是重复也是打架。
                          showsCaption: state.phase != .active)
         gridView.layout([])
-        unpinFull()
+        fullStage.unpin()
         // 拨出视频时右上角叠本端预览（草图 §03-E：拨出时看得见自己）。
         let showPreview = state.mediaType == "video" && state.selfState.cameraOn && controller.hasLocalCamera
         applySelfTile(state, avatarSize: 44)
@@ -420,13 +345,13 @@ public final class IMCallOverlayViewController: UIViewController {
         pip.isHidden = !showPreview
         pip.liftsForControls = false
         controller.attachLocalPreview(to: showPreview ? selfTile.renderView : nil)
-        retireTiles(keeping: [])
+        remoteTiles.retire(keeping: [])
     }
 
     private func renderVideo(_ state: IMCallViewState) {
         guard let peer = state.participants.first else { return }
-        let remote = tiles[peer.uid] ?? makeTile(for: peer.uid)
-        retireTiles(keeping: [peer.uid])
+        let remote = remoteTiles.tile(for: peer.uid)
+        remoteTiles.retire(keeping: [peer.uid])
         gridView.layout([])
         // 默认远端全屏、本端小窗；互换后反过来。**层上界跟着换**：进小窗的报 l，上全屏的报 h。
         let (full, small): (IMVideoTileView, IMVideoTileView) = state.isSwapped ? (selfTile, remote) : (remote, selfTile)
@@ -441,27 +366,27 @@ public final class IMCallOverlayViewController: UIViewController {
                      avatarSize: state.isSwapped ? 44 : IMKitTheme.current.avatarLarge,
                      avatarImage: imResolvedAvatar(controller.profileResolver, uid: peer.uid))
         applySelfTile(state, avatarSize: state.isSwapped ? IMKitTheme.current.avatarLarge : 44)
-        pinFull(full)
+        fullStage.pin(full)
         pip.setContent(small)
         pip.isHidden = false
         pip.liftsForControls = chrome.visible
         pip.accessibilityLabel = state.isSwapped ? "对方画面" : "本端画面"
         controller.attachLocalPreview(to: selfTile.renderView)
-        report(peer.uid, layer: state.isSwapped ? "l" : "h", hasVideo: peer.hasVideo)
+        remoteTiles.report(peer.uid, layer: state.isSwapped ? "l" : "h", hasVideo: peer.hasVideo)
     }
 
     private func renderGrid(_ state: IMCallViewState) {
-        unpinFull()
+        fullStage.unpin()
         pip.setContent(nil)
         pip.isHidden = true
         let visible = imVisibleTiles(state.participants)
-        retireTiles(keeping: Set(visible.map(\.uid)))
+        remoteTiles.retire(keeping: Set(visible.map(\.uid)))
         var ordered: [UIView] = []
         applySelfTile(state, avatarSize: 44)
         controller.attachLocalPreview(to: state.mediaType == "video" ? selfTile.renderView : nil)
         ordered.append(selfTile)
         for p in visible {
-            let tile = tiles[p.uid] ?? makeTile(for: p.uid)
+            let tile = remoteTiles.tile(for: p.uid)
             tile.apply(uid: p.uid,
                        label: imResolvedName(controller.profileResolver, uid: p.uid, fallback: p.uid),
                        hasVideo: p.hasVideo, hasAudio: p.hasAudio, isSpeaking: p.isSpeaking, volume: p.volume,
@@ -478,7 +403,7 @@ public final class IMCallOverlayViewController: UIViewController {
         // 层上界按真人的格子数算，加号格不算——它不收流。
         let layer = imTileLayer(visible.count + 1)
         // 没格子的人视频报 none、并说一句「还有 N 人未显示」（会议房 M1 止血，MEETING_ROOM_DESIGN §4.3 / §4.5）。
-        for (i, p) in state.participants.enumerated() { report(p.uid, layer: i < visible.count ? layer : "none", hasVideo: p.hasVideo) }
+        for (i, p) in state.participants.enumerated() { remoteTiles.report(p.uid, layer: i < visible.count ? layer : "none", hasVideo: p.hasVideo) }
         gridView.hiddenCount = state.participants.count - visible.count
     }
 
@@ -499,95 +424,6 @@ public final class IMCallOverlayViewController: UIViewController {
                        isMirrored: controller.isUsingFrontCamera)
     }
 
-    private func pinFull(_ tile: IMVideoTileView) {
-        guard fullTile !== tile else { return }
-        unpinFull()
-        // 先离开原来的容器（互换时它正待在小窗里）：跨层级残留的约束会被 UIKit 静默丢掉，
-        // 只在控制台留一条警告，而画面已经没了。
-        tile.removeFromSuperview()
-        tile.layer.cornerRadius = 0
-        tile.translatesAutoresizingMaskIntoConstraints = false
-        videoFull.addSubview(tile)
-        fullConstraints = [
-            tile.topAnchor.constraint(equalTo: videoFull.topAnchor),
-            tile.leadingAnchor.constraint(equalTo: videoFull.leadingAnchor),
-            tile.trailingAnchor.constraint(equalTo: videoFull.trailingAnchor),
-            tile.bottomAnchor.constraint(equalTo: videoFull.bottomAnchor),
-        ]
-        NSLayoutConstraint.activate(fullConstraints)
-        fullTile = tile
-    }
-
-    private func unpinFull() {
-        NSLayoutConstraint.deactivate(fullConstraints)
-        fullConstraints = []
-        if let fullTile, fullTile.superview === videoFull { fullTile.removeFromSuperview() }
-        fullTile?.layer.cornerRadius = IMKitTheme.current.tileCornerRadius
-        fullTile = nil
-    }
-
-    /// retireTiles 收掉不再需要的远端格子。卸载要成对：不摘的话解码器还占着（CONVENTIONS §7）。
-    private func retireTiles(keeping wanted: Set<String>) {
-        for (uid, tile) in tiles where !wanted.contains(uid) {
-            controller.attachView(uid, to: nil)
-            tile.removeFromSuperview()
-            tiles[uid] = nil
-            reportedLayers[uid] = nil
-            lastHasVideo[uid] = nil
-        }
-    }
-
-    private func makeTile(for uid: String) -> IMVideoTileView {
-        let tile = IMVideoTileView()
-        tiles[uid] = tile
-        controller.attachView(uid, to: tile.renderView)
-        return tile
-    }
-
-    /**
-     格子大小变了就重报层上界，同一个值不重复发。**这是省带宽的关键一步**。
-
-     `hasVideo` 不是用来决定报不报的，是用来**把去重表划掉**的：
-     `setRemoteLayer` 按 uid 找他当前的视频轨道再发帧，而**人先进来、轨道后到是常态**
-     （`onUserEnter` 一到就摆格子并报层，那一次引擎手里还没有他的轨道，什么都没发出去），
-     可去重表已经记下「报过 l 了」——之后除非格数变化就再也不会重发，
-     服务端一直按默认的 `m` 给他下发，九宫格里八个小格子每格都收半高清。
-     症状只是「画面卡、掉帧」，一条报错都没有。
-     `hasVideo` 从 false 翻成 true 正是「他的轨道到了」那一刻，借它重报一次。
-     （Android 走 `IMCallKit.invalidateReportedLayer`，Web 把 `hasVideo` 放进 effect 依赖，同一条。）
-    */
-    private func report(_ uid: String, layer: String, hasVideo: Bool) {
-        let trackJustArrived = hasVideo && lastHasVideo[uid] != true
-        lastHasVideo[uid] = hasVideo
-        if trackJustArrived { reportedLayers[uid] = nil }
-        guard reportedLayers[uid] != layer else { return }
-        reportedLayers[uid] = layer
-        controller.reportLayer(uid, layer)
-    }
-
-    // MARK: 文案
-
-    private func title(_ state: IMCallViewState) -> String {
-        if state.isMeeting { return "会议 · \(state.participants.count + 1) 人" }
-        if state.isGroup { return "群通话 · \(state.participants.count + 1) 人" }
-        return state.peerUID.isEmpty ? "通话" : state.peerUID
-    }
-
-    private func statusLine(_ state: IMCallViewState) -> String {
-        if !state.hint.isEmpty { return state.hint }
-        switch state.phase {
-        case .incoming:   return state.mediaType == "video" ? "邀请你视频通话" : "邀请你语音通话"
-        case .outgoing:   return "正在呼叫…"
-        case .connecting: return state.isMeeting ? "正在进入会议…" : "接通中…"
-        case .ended:
-            // 时长用服务端给的那个（不变量 I8）。现算的话，没接通的通话 beganAt 是 0，
-            // 算出来是一九七〇年到现在的秒数。
-            return state.isMeeting ? "已离开会议"
-                : imEndReasonText(state.endReason, role: state.role, durationSec: state.endedDurationSec)
-        case .active:     return imFormatDuration(Int(Date().timeIntervalSince1970 - state.beganAt))
-        case .idle:       return ""
-        }
-    }
 }
 
 extension IMCallOverlayViewController: IMCallControllerObserver {
