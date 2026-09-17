@@ -15,6 +15,13 @@ import UIKit
 public final class IMCallHeaderView: UIView {
     public let minimizeButton = UIButton(type: .system)
     public let inviteButton = UIButton(type: .system)
+    /**
+     成员列表入口（MEETING_ROOM_DESIGN §4.6 的「👥 N」）。**只有会议房给**。
+
+     它与「添加成员」共用右上角那一个位置：会议房没有加人这回事
+     （`imCanShowInvite` 明确排除了会议），两颗按钮不会同时出现。
+     */
+    public let membersButton = UIButton(type: .system)
     private let titleLabel = UILabel()
     private let subtitleLabel = UILabel()
     private let networkBars = IMNetworkBars(compact: true)
@@ -27,16 +34,35 @@ public final class IMCallHeaderView: UIView {
     @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("Kit 不用 storyboard") }
 
-    public func apply(title: String, subtitle: String, networkLevel: Int, showsMinimize: Bool, showsInvite: Bool) {
+    public func apply(title: String, subtitle: String, networkLevel: Int,
+                      showsMinimize: Bool, showsInvite: Bool, memberCount: Int = 0) {
         titleLabel.text = title
         subtitleLabel.text = subtitle
         networkBars.apply(level: networkLevel)
         minimizeButton.isHidden = !showsMinimize
         inviteButton.isHidden = !showsInvite
+        // 两颗按钮同一个位置，互斥：加人按钮出现时就没有成员列表这一说（会议房才有它）。
+        membersButton.isHidden = showsInvite || memberCount <= 0
+        membersButton.setTitle("👥\(memberCount)", for: .normal)
     }
 
     private func build() {
         let theme = IMKitTheme.current
+        membersButton.titleLabel?.font = .systemFont(ofSize: 12)
+        membersButton.setTitleColor(theme.primaryText, for: .normal)
+        membersButton.backgroundColor = theme.controlBackground
+        membersButton.layer.cornerRadius = 16
+        membersButton.accessibilityLabel = "成员列表"
+        membersButton.isHidden = true
+        membersButton.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(membersButton)
+        NSLayoutConstraint.activate([
+            membersButton.widthAnchor.constraint(equalToConstant: 44),
+            membersButton.heightAnchor.constraint(equalToConstant: 32),
+            membersButton.centerYAnchor.constraint(equalTo: centerYAnchor),
+            membersButton.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -16),
+        ])
+
         for (button, icon, label) in [(minimizeButton, IMKitIcon.pip, "收进小窗"),
                                       (inviteButton, IMKitIcon.personAdd, "添加成员")] {
             imConfigureCircleIconButton(button, icon: icon, pointSize: 15, diameter: 32,

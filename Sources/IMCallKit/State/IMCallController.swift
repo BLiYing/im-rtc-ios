@@ -180,7 +180,13 @@ public protocol IMCallControllerObserver: AnyObject {
             }
             await startPreviewIfWanted()
             do {
-                try await engine.joinRoom(roomID, roomToken: roomToken)
+                /*
+                 **会议房发 `"audio"`**（MEETING_ROOM_DESIGN §4.3）：音频由服务端自动订上，
+                 页外的人说话照样听得见；视频一条都不自动订，由分页画廊按当前页
+                 `setRemoteLayer` 订与退。发 `"all"` 的话 25 人会议一进房就订满 24 路视频，
+                 sub offer 直接撞上 64 KiB 的帧上限——那正是 M2 要解决的那堵墙。
+                */
+                try await engine.joinRoom(roomID, roomToken: roomToken, autoSubscribe: "audio")
             } catch {
                 // 服务端拒绝时 Engine 已经抛过 `didLeaveRoom`（界面随它收起）；本地就拒掉的（2005 / 2007）
                 // 没有那条回调，自己把「接通中…」收回来。进房没成就不推流。

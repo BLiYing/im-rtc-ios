@@ -31,13 +31,40 @@ final class IMCallGridView: UIView {
     private var widthConstraint: NSLayoutConstraint!
     private var heightConstraint: NSLayoutConstraint!
 
-    /// 「还有 N 人未显示」胶囊（会议房 M1，文案见 `imHiddenCountText`）。**不可点**：成员列表是 M2。
+    /// 「还有 N 人未显示」胶囊（群通话截断时用，文案见 `imHiddenCountText`）。**不可点**。
     private let hiddenPill = UILabel()
     var hiddenCount = 0 {
         didSet {
             guard hiddenCount != oldValue else { return }
             hiddenPill.text = "  \(imHiddenCountText(hiddenCount))  "
             hiddenPill.isHidden = hiddenCount <= 0
+        }
+    }
+
+    /// 会议分页画廊的页码（`1 / 7`），**底部居中**。空串 = 不画。
+    ///
+    /// 它取代了 M1 那枚右下角的「还有 N 人未显示」胶囊（MEETING_ROOM_DESIGN §4.5）：
+    /// 分页之后没有「看不见的人」这回事，只有「在别的页上」。
+    private let pagePill = UILabel()
+    var pageText = "" {
+        didSet {
+            guard pageText != oldValue else { return }
+            pagePill.text = "  \(pageText)  "
+            pagePill.isHidden = pageText.isEmpty
+        }
+    }
+
+    /**
+     恒按这么多格算行列；nil = 按实际格数算（群通话）。
+
+     会议分页固定 3×3：**最后一页不满时格子和满页一样大**，不放大（§4.1）——
+     放大的话层会从 l 跳到 m、还要多等一次关键帧，翻页时整屏重排。
+     */
+    var fixedTileCount: Int? {
+        didSet {
+            guard fixedTileCount != oldValue else { return }
+            arranged = IMGridDimensions(columns: 0, rows: 0)
+            setNeedsLayout()
         }
     }
 
@@ -60,6 +87,18 @@ final class IMCallGridView: UIView {
         hiddenPill.isUserInteractionEnabled = false
         hiddenPill.translatesAutoresizingMaskIntoConstraints = false
         addSubview(hiddenPill)
+
+        pagePill.font = .systemFont(ofSize: 12)
+        pagePill.textColor = .white
+        pagePill.backgroundColor = IMKitTheme.current.pillBackground
+        pagePill.layer.cornerRadius = 11
+        pagePill.clipsToBounds = true
+        pagePill.isHidden = true
+        // 不可点：翻页靠左右滑（§4.1）。
+        pagePill.isUserInteractionEnabled = false
+        pagePill.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(pagePill)
+
         NSLayoutConstraint.activate([
             rowsStack.centerXAnchor.constraint(equalTo: centerXAnchor),
             rowsStack.centerYAnchor.constraint(equalTo: centerYAnchor),
@@ -67,6 +106,9 @@ final class IMCallGridView: UIView {
             hiddenPill.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
             hiddenPill.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -8),
             hiddenPill.heightAnchor.constraint(equalToConstant: 22),
+            pagePill.centerXAnchor.constraint(equalTo: centerXAnchor),
+            pagePill.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -8),
+            pagePill.heightAnchor.constraint(equalToConstant: 22),
         ])
     }
 
@@ -95,7 +137,8 @@ final class IMCallGridView: UIView {
         }
 
         let gap = IMKitTheme.current.tileGap
-        let dims = imGridDimensions(tiles.count, aspect: bounds.width / bounds.height)
+        let dims = imGridDimensions(fixedTileCount ?? tiles.count,
+                                    aspect: bounds.width / bounds.height)
         if dims != arranged {
             arranged = dims
             rebuild(dims, gap: gap)

@@ -16,7 +16,7 @@ import IMCallEngine
  */
 public final class IMCallOverlayViewController: UIViewController {
 
-    private let controller: IMCallController
+    let controller: IMCallController
     private let gradient = CAGradientLayer()
     private let banner = IMTopBannerView()
     private let header = IMCallHeaderView()
@@ -30,18 +30,22 @@ public final class IMCallOverlayViewController: UIViewController {
     */
     private let videoFull = UIView()
     private let audioStage = IMAudioStageView()
-    private let gridView = IMCallGridView()
+    let gridView = IMCallGridView()
+    /// 会议钉住后的演讲者视图（MEETING_ROOM_DESIGN §4.4）。只在会议房用得到。
+    let speakerStage = IMSpeakerStageView()
+    /// 会议画廊的页码、钉住与第一页排序（`IMMeetingGallery.swift`）。
+    let meeting = IMMeetingGallery()
     private let pip = IMPipView()
     /// 结束画面那一句话。**结束态不复用通话页的骨架**——那会把接通后才有的按钮铺出来。
     private let endedLabel = UILabel()
     /// 本端格子。群通话里它是格子之一；1v1 里在小窗（互换后到全屏）。
-    private let selfTile = IMVideoTileView()
+    let selfTile = IMVideoTileView()
     private let controlsScrim = CAGradientLayer()
     /// 控制条两排按钮（IMCallControls.swift）。
     private let controls = IMCallControls()
     private var controlsStack: UIStackView { controls.stack }
     /// 远端格子与层上报（IMOverlayTiles.swift）。
-    private lazy var remoteTiles = IMRemoteTiles(controller: controller)
+    lazy var remoteTiles = IMRemoteTiles(controller: controller)
     /// 当前把哪个格子钉成了全屏（视频版式）。
     private lazy var fullStage = IMFullStage(host: videoFull)
 
@@ -127,7 +131,7 @@ public final class IMCallOverlayViewController: UIViewController {
             view.addSubview(child)
         }
         view.layer.insertSublayer(controlsScrim, below: controlsStack.layer)
-        for child in [audioStage, gridView, pip] as [UIView] {
+        for child in [audioStage, gridView, speakerStage, pip] as [UIView] {
             child.translatesAutoresizingMaskIntoConstraints = false
             stage.addSubview(child)
         }
@@ -170,9 +174,14 @@ public final class IMCallOverlayViewController: UIViewController {
         ])
         audioStage.imPinEdges(to: stage)
         gridView.imPinEdges(to: stage, inset: 12)
+        speakerStage.imPinEdges(to: stage, inset: 12)
+        speakerStage.isHidden = true
 
         header.minimizeButton.addTarget(self, action: #selector(onMinimize), for: .touchUpInside)
         header.inviteButton.addTarget(self, action: #selector(onInvite), for: .touchUpInside)
+        header.membersButton.addTarget(self, action: #selector(onMembers), for: .touchUpInside)
+        speakerStage.unpinButton.addTarget(self, action: #selector(onUnpin), for: .touchUpInside)
+        installMeetingGestures()
         controls.micButton.addTarget(self, action: #selector(onMic), for: .touchUpInside)
         controls.cameraButton.addTarget(self, action: #selector(onCamera), for: .touchUpInside)
         controls.endButton.addTarget(self, action: #selector(onEnd), for: .touchUpInside)
@@ -241,7 +250,7 @@ public final class IMCallOverlayViewController: UIViewController {
         }
     }
 
-    private func render(_ state: IMCallViewState) {
+    func render(_ state: IMCallViewState) {
         let layout = currentLayout
         let isEnded = state.phase == .ended
         renderHeader(state)
@@ -250,12 +259,16 @@ public final class IMCallOverlayViewController: UIViewController {
         gradient.isHidden = layout == .video && !isEnded
         controlsScrim.isHidden = layout != .video || isEnded
         audioStage.isHidden = layout != .audio || isEnded
-        gridView.isHidden = layout != .grid || isEnded
+        gridView.isHidden = layout != .grid || isEnded || speakerPinned
+        speakerStage.isHidden = layout != .grid || isEnded || !speakerPinned
         pip.isHidden = isEnded
         controls.render(state)
         renderBanner(state)
         if isEnded {
             controller.attachLocalPreview(to: nil)
+            // 下一次进会议不带着上一次的页码与钉住。
+            meeting.reset()
+            speakerStage.detach()
             // **全屏画面也要摘掉**：1v1 视频挂断后版式仍是 .video，不摘的话结束原因那行字
             // 压在对方最后一帧上——看着像通话还在。Android 的 render 一直是这么做的。
             fullStage.unpin()
@@ -284,7 +297,9 @@ public final class IMCallOverlayViewController: UIViewController {
         header.apply(title: bare ? "" : imCallTitle(state), subtitle: bare ? "" : imCallStatusLine(state),
                      networkLevel: state.phase == .active ? peerLevel : 0,
                      showsMinimize: state.phase != .incoming && state.phase != .ended,
-                     showsInvite: imCanShowInvite(for: state))
+                     showsInvite: imCanShowInvite(for: state),
+                     // 会议房右上角是「👥 N」（§4.6）；它与加人按钮共用那个位置，互斥。
+                     memberCount: state.isMeeting && !bare ? state.participants.count + 1 : 0)
     }
 
     /// 顶部橙条：正在重连 / 连接已断开 / 对方网络不佳（2s 后收成角标，**不一直霸占顶部**）。
@@ -358,6 +373,14 @@ public final class IMCallOverlayViewController: UIViewController {
         fullStage.unpin()
         pip.setContent(nil)
         pip.isHidden = true
+        // 会议房走分页画廊 / 演讲者视图（IMCallOverlayViewController+Meeting.swift）；
+        // 群通话还是老的九宫格，一行都没变（设计 §3 的门控表）。
+        if state.isMeeting {
+            renderMeeting(state)
+            return
+        }
+        gridView.fixedTileCount = nil
+        gridView.pageText = ""
         let visible = imVisibleTiles(state.participants)
         remoteTiles.retire(keeping: Set(visible.map(\.uid)))
         var ordered: [UIView] = []
@@ -388,7 +411,7 @@ public final class IMCallOverlayViewController: UIViewController {
 
     /// 本端那格。**只表达麦克风开 / 关两态**（2026-09-09 拍板）——自己在不在说话自己知道，
     /// 所以不再需要「哪种版式才显示说话」那个参数，三种版式一视同仁。
-    private func applySelfTile(_ state: IMCallViewState, avatarSize: CGFloat) {
+    func applySelfTile(_ state: IMCallViewState, avatarSize: CGFloat) {
         selfTile.apply(uid: "", label: "我", hasVideo: state.selfState.cameraOn && controller.hasLocalCamera,
                        hasAudio: state.selfState.micOn,
                        isSpeaking: false, volume: 0, showsSpeaking: false,

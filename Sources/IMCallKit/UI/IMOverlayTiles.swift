@@ -30,6 +30,11 @@ final class IMRemoteTiles {
         return tile
     }
 
+    /// uid 反查某个格子是谁的。双击钉住时手势只拿得到视图，要靠它认回人。
+    func uid(of tile: IMVideoTileView) -> String? {
+        tiles.first(where: { $0.value === tile })?.key
+    }
+
     /// retire 收掉不再需要的格子。卸载要成对：不摘的话解码器还占着（CONVENTIONS §7）。
     func retire(keeping wanted: Set<String>) {
         for (uid, tile) in tiles where !wanted.contains(uid) {

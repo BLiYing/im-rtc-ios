@@ -12,7 +12,12 @@
 - `room.join.auto_subscribe` 布尔 → 三档字符串 `all | audio | none`（`IMProtocolEnums.autoSubscribeModes`，兜底 `all`）。`joinRoom(_:roomToken:autoSubscribe:)` 第三个参数从 `Bool` 变 `String`，**没有新增公开方法**（ObjC 那边同步，`IMObjCAPICheck.m` 跟着改）。
 - 会议房按页订阅（`StateMachine/RoomStateMachine+Paging.swift`）：`autoSubscribe == "audio"` 时 `setRemoteLayer` 就是订阅意图——`l/m/h` = 订阅或换层，`none` = 先停包再等 5 s 退订；翻回来只换层不重协商；同时订阅的视频封顶 16 路，满了先退最早翻走的那一条，一条都腾不出来才本地拒绝（**本地拒绝不带帧**）。定时器在 `Facade/IMUnsubscribeTimers.swift`，按 `pendingUnsubscribe` **整体对账**。
 - 新测 `RoomPagingTests`（11 例）+ `ProtocolTests` 两例（协议版本、收发上限不对称）；向量新增两组用例由 `RoomFSMTests` 跑。
-- **没做**：Kit 的分页画廊、钉住、成员列表（下一段）；`IMCallController` 进会议房还是发 `"all"`，等 Kit 那一段改成 `"audio"`。
+- Kit（同一轮，第四段）：**分页画廊 + 钉住 + 只读成员列表**。
+  - `Layout/IMMeetingPager.swift` 是纯算术 + 第一页发言人优先（1.5 s 晋升 / 10 s 驻留 / 2 s 限频），`UI/IMMeetingGallery.swift` 持有页码 / 钉住 / 排序记账并算出一个 `Plan`；`IMCallGridView` 只多了 `pageText` 与 `fixedTileCount` 两个入口，**摆格子的逻辑一行没改**。
+  - 会议房的渲染整块在 `UI/IMCallOverlayViewController+Meeting.swift`（VC 没胖）；左右滑翻页、双击格子钉住、点 📌 取消。
+  - 演讲者视图 `UI/IMSpeakerStageView.swift`（主画面 h、底部 4 格 l）；只读成员列表 `UI/IMMemberListViewController.swift`（半屏 sheet，自己 → 进房顺序 + 麦克风 / 摄像头角标），从标题栏新加的「👥 N」打开（与加人按钮同一个位置、互斥）。
+  - `IMCallController.joinMeeting` 改发 `autoSubscribe: "audio"`。
+  - 新测 `Tests/IMCallKitTests/MeetingPagerTests.swift` 15 例（与 Web 的 `firstPage.test.ts` 同一组场景）。
 
 **2026-09-17 夜：可取消定时器抽成 `Support/IMTimer.swift`（队列 5 的定时器样板）**：`imAfter` / `imEvery` 是 `package` 级别（三个 target 共用、宿主看不见），
 `makeTimerSource` 15 处全换掉（Engine 5 / WebRTC 1 / Kit 9），`IMTimerTests` 3 例。`DispatchWorkItem + asyncAfter` 那几处语义不同，没动。行为不变。
