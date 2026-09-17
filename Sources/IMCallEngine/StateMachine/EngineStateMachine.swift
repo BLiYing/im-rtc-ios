@@ -143,9 +143,16 @@ public enum IMEngineMachine {
         return IMMachineOutput(next, send: room.send, emit: emit)
     }
 
-    /// roomFailures 是帧循环把「房间帧没送到」翻译成的内部事件，全归房间机。
+    /// roomInternals 是**只归房间机**的内部事件。
+    ///
+    /// 前四条是帧循环把「房间帧没送到」翻译过来的回滚；最后一条是会议房翻页退订的五秒
+    /// 迟滞到点（`RoomStateMachine+Paging`）。**不显式路由的话它们会落到通话机去，被静默丢掉**——
+    /// 症状分别是「房间永远停在 joining」和「翻走的人五秒后没退订，订阅位一直占着」。
     /// 不显式路由的话它们会落到通话机去，被静默丢掉（Web 端 `engineMachine.ts` 同一份注释）。
-    private static let roomFailures: Set<String> = ["join_failed", "leave_failed", "publish_failed", "subscribe_failed"]
+    private static let roomInternals: Set<String> = [
+        "join_failed", "leave_failed", "publish_failed", "subscribe_failed",
+        "unsubscribe_hysteresis_elapsed",
+    ]
 
     private static func handleInternal(_ ctx: IMEngineContext,
                                        _ name: String,
@@ -181,7 +188,7 @@ public enum IMEngineMachine {
         // **leave_failed 少接一条的代价见 IMRoomMachine 那一支**——媒体停不掉、房也再进不去。
         // publish_failed / subscribe_failed 见静默失败审计 §A：`room.publish` 在通话里被拒
         // 由 `IMFrameLoop.rollback` 直接走强制收场，不会走到这里；走到这里的都是没有通话的会议房。
-        if Self.roomFailures.contains(name) {
+        if Self.roomInternals.contains(name) {
             let room = IMRoomMachine.reduce(ctx.room, .internalEvent(name: name, args: args))
             var next = ctx
             next.room = room.state

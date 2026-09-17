@@ -31,10 +31,22 @@ actor IMFrameLoop {
     /// 状态的只读镜像，给进不了 actor 的 `IMCallEngine.forceEnd()` 同步读（见 `IMContextMirror`）。
     nonisolated let mirror = IMContextMirror()
 
+    /// 会议房翻页退订的五秒迟滞（`RoomStateMachine+Paging`）。到点喂一个内部事件回状态机。
+    ///
+    /// **懒建**：闭包要捕获 `self`，而 `self` 在 init 跑完之前不能逃逸。
+    private lazy var unsubscribeTimers = IMUnsubscribeTimers(
+        queue: DispatchQueue(label: "im.rtc.unsubscribe")
+    ) { [weak self] trackID in
+        guard let self else { return }
+        Task { await self.dispatch(.internalEvent(name: "unsubscribe_hysteresis_elapsed",
+                                                  args: ["track_id": .string(trackID)])) }
+    }
+
     /// reset 把状态机归零（logout 用）。
     func reset() {
         ctx = IMEngineContext()
         mirror.set(ctx)
+        unsubscribeTimers.clear()
     }
 
     /// ping 什么都不做：卡顿探针拿它量「帧循环 actor 此刻排不排得上号」（见 `IMStallProbe`）。
@@ -186,6 +198,8 @@ actor IMFrameLoop {
         // 每推进一步就把「哪条轨道是谁的」同步给媒体层。**轨道与归属谁先到都可能**，
         // 所以这一步不能只在 track_published 那一支上做（Web 端同一处：`frameLoop.ts`）。
         media?.claimRemoteTracks(ctx.room.remoteTracks.mapValues(\.uid))
+        // 翻页退订的定时器**每轮对账一次**，不在各条来路上各排各撤（见 IMUnsubscribeTimers）。
+        unsubscribeTimers.sync(ctx.room.pendingUnsubscribe)
 
         // **一通结束就把媒体面归零**，而且在抛事件之前：宿主收到 callDidEnd 时
         // Engine 已经是干净的，下一通不会带着上一通的 PeerConnection。

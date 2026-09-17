@@ -27,8 +27,21 @@ public struct IMEnvelope: Equatable, Sendable {
 }
 
 extension IMEnvelope {
-    /// maxFrameBytes 是单帧上限（协议 §1.3），超了服务端直接以 4400 关连接。
+    /// maxFrameBytes 是单帧**上行**上限（协议 §2.6），超了服务端直接以 4400 关连接。
     public static let maxFrameBytes = 65536
+
+    /**
+     maxReceivedFrameBytes 是**收帧**的容忍上限（协议 §2.6，2.0.0 起）。
+
+     **发帧与收帧不是同一个数**：发仍卡 64 KiB，收放宽到 256 KiB。
+     服务端今天发的下行 offer 都远小于 64 KiB；放宽的是**以后**——会议到 100 人时
+     每人一条音频 m-line，整帧约 80 KB（MEETING_ROOM_DESIGN §9 ③）。那时只要改服务端，
+     不必让已经发出去的 2.0.0 客户端跟着升一次版本。
+
+     放宽收不放宽发，是因为收帧上限是「愿意为对端花多少内存」，
+     发帧上限是「允许对端为我花多少内存」——后者松不得。
+     */
+    public static let maxReceivedFrameBytes = 256 * 1024
 
     /// okSuffix 是应答帧的后缀：`room.join` 的应答是 `room.join.ok`。
     public static let okSuffix = ".ok"
@@ -44,8 +57,9 @@ extension IMEnvelope {
     /// 顺序是**先信封、再编码硬规则**：信封坏了就没必要再往里看，
     /// 而且两类错误的码不同（badEnvelope vs badParams），先后颠倒会报错码。
     public static func decode(_ raw: String) throws -> IMEnvelope {
-        guard raw.utf8.count <= maxFrameBytes else {
-            throw IMRTCError(.frameTooLarge, "帧 \(raw.utf8.count) 字节 > 上限 \(maxFrameBytes)")
+        guard raw.utf8.count <= maxReceivedFrameBytes else {
+            throw IMRTCError(.frameTooLarge,
+                             "帧 \(raw.utf8.count) 字节 > 收帧上限 \(maxReceivedFrameBytes)")
         }
         let parsed = try IMJSON.parse(raw)
         guard let top = parsed.objectValue else {

@@ -37,18 +37,46 @@ final class ProtocolTests: XCTestCase {
         XCTAssertThrowsError(try IMJSON.parse(#"{"n": 15e-1}"#))
     }
 
-    /// 发送侧的默认值陷阱：`room.join` 的 auto_subscribe / publish_audio 默认是 **true**。
+    /// 发送侧的默认值陷阱：`room.join` 的 auto_subscribe 默认 `all`、publish_audio 默认 true。
     ///
-    /// 直接发一个空 data，线路上会变成 false，人进了房却收不到任何流。
+    /// 直接发一个空 data，线路上会变成空串 / false，人进了房却收不到任何流。
     /// 三端都踩过这一条，所以每端都要有一条测试钉住它。
     func testJoinDefaultsAreNotZeroValues() throws {
         let defaults = FieldCodec.defaults(RoomFrames.join)
-        XCTAssertEqual(defaults["auto_subscribe"], .bool(true))
+        XCTAssertEqual(defaults["auto_subscribe"], .string("all"))
         XCTAssertEqual(defaults["publish_audio"], .bool(true))
         XCTAssertEqual(defaults["publish_video"], .bool(false))
     }
 
     /// 每个上行请求帧都要能查到字段声明，`.ok` 也要有（纯 ack 自动派生空对象）。
+    /// 协议版本是 **2**（2.0.0 起）。1.0.0 的客户端握手会被服务端拒掉（1006）。
+    func testHelloCarriesProtocolVersionTwo() throws {
+        let defaults = FieldCodec.defaults(SysFrames.hello)
+        XCTAssertEqual(defaults["protocol_version"], .int(2))
+    }
+
+    /**
+     **发帧与收帧的上限不是同一个数**（协议 §2.6，2.0.0 起）。
+
+     收放宽到 256 KiB 是为了以后会议到 100 人时只改服务端（设计 §9 ③）；
+     发仍卡 64 KiB——收帧上限是「愿意为对端花多少内存」，发帧上限是
+     「允许对端为我花多少内存」，后者松不得。
+     */
+    func testReceiveLimitIsLooserThanSendLimit() throws {
+        XCTAssertEqual(IMEnvelope.maxFrameBytes, 64 * 1024)
+        XCTAssertEqual(IMEnvelope.maxReceivedFrameBytes, 256 * 1024)
+
+        // 一帧 100 KB：收得下，发不出去。
+        let big = String(repeating: "v", count: 100 * 1024)
+        let raw = "{\"type\":\"room.offer\",\"req_id\":\"\",\"ts\":1,\"data\":{\"pc\":\"sub\",\"sdp\":\"\(big)\"}}"
+        XCTAssertGreaterThan(raw.utf8.count, IMEnvelope.maxFrameBytes)
+        let decoded = try IMEnvelope.decode(raw)
+        XCTAssertEqual(decoded.type, "room.offer")
+        XCTAssertThrowsError(try decoded.encode()) { error in
+            XCTAssertEqual((error as? IMRTCError)?.code, .frameTooLarge)
+        }
+    }
+
     func testEveryRequestTypeIsRegistered() {
         for type in IMFrameRegistry.requestTypes {
             XCTAssertNotNil(IMFrameRegistry.fields(for: type), "\(type) 没有登记字段声明")

@@ -393,13 +393,25 @@ import Foundation
 
     // MARK: - 房间（会议）
 
-    /// joinRoom 直接进一个会议房（不走振铃）。**返回 = `room.join.ok` 落进了状态机**。
+    /**
+     joinRoom 直接进一个会议房（不走振铃）。**返回 = `room.join.ok` 落进了状态机**。
+
+     `autoSubscribe` 是服务端替你自动订多少（协议 §3.1，2.0.0 起是三档字符串）：
+
+     - `"all"`（默认）音视频全自动订上，通话房与小会议用它；
+     - `"audio"` **会议分页画廊用这一档**：音频照旧自动订上（页外的人说话也听得见），
+       视频一条都不自动订，由 `setRemoteLayer(_:layer:)` 按当前页订与退
+       （`none` = 五秒后退订，见 MEETING_ROOM_DESIGN §4.3）；
+     - `"none"` 一条都不自动订，全部由宿主自己订。
+
+     认不出的值按 §2.4 规则 6 兜底成 `"all"`。
+     */
     @objc public func joinRoom(_ roomID: String, roomToken: String,
-                               autoSubscribe: Bool = true) async throws {
+                               autoSubscribe: String = "all") async throws {
         try await act("join", [
             "room_id": .string(roomID),
             "room_token": .string(roomToken),
-            "auto_subscribe": .bool(autoSubscribe),
+            "auto_subscribe": .string(autoSubscribe),
         ])
     }
 

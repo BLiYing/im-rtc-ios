@@ -7,6 +7,13 @@
 
 ## 当前焦点
 
+**2026-09-18 凌晨：会议房 M2 的 Engine 那一半已做完并提交（server `docs/design/MEETING_ROOM_DESIGN.md` §7 第 2 步）。`test.sh` 9 步全绿 + Demo 编译过。**
+- 协议 2：`sys.hello` 的 `protocol_version` 默认值 1 → 2；收帧上限拆成两个数（发仍 `IMEnvelope.maxFrameBytes` 64 KiB，收按 `maxReceivedFrameBytes` 256 KiB）。
+- `room.join.auto_subscribe` 布尔 → 三档字符串 `all | audio | none`（`IMProtocolEnums.autoSubscribeModes`，兜底 `all`）。`joinRoom(_:roomToken:autoSubscribe:)` 第三个参数从 `Bool` 变 `String`，**没有新增公开方法**（ObjC 那边同步，`IMObjCAPICheck.m` 跟着改）。
+- 会议房按页订阅（`StateMachine/RoomStateMachine+Paging.swift`）：`autoSubscribe == "audio"` 时 `setRemoteLayer` 就是订阅意图——`l/m/h` = 订阅或换层，`none` = 先停包再等 5 s 退订；翻回来只换层不重协商；同时订阅的视频封顶 16 路，满了先退最早翻走的那一条，一条都腾不出来才本地拒绝（**本地拒绝不带帧**）。定时器在 `Facade/IMUnsubscribeTimers.swift`，按 `pendingUnsubscribe` **整体对账**。
+- 新测 `RoomPagingTests`（11 例）+ `ProtocolTests` 两例（协议版本、收发上限不对称）；向量新增两组用例由 `RoomFSMTests` 跑。
+- **没做**：Kit 的分页画廊、钉住、成员列表（下一段）；`IMCallController` 进会议房还是发 `"all"`，等 Kit 那一段改成 `"audio"`。
+
 **2026-09-17 夜：可取消定时器抽成 `Support/IMTimer.swift`（队列 5 的定时器样板）**：`imAfter` / `imEvery` 是 `package` 级别（三个 target 共用、宿主看不见），
 `makeTimerSource` 15 处全换掉（Engine 5 / WebRTC 1 / Kit 9），`IMTimerTests` 3 例。`DispatchWorkItem + asyncAfter` 那几处语义不同，没动。行为不变。
 

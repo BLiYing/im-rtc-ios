@@ -44,7 +44,8 @@ public struct IMRoomContext: Equatable, Sendable {
     public var roomID: String = ""
     public var roomToken: String = ""
     public var participantID: String = ""
-    public var autoSubscribe: Bool = true
+    /// 进房时声明的自动订阅档位（协议 §3.1）。会议房是 `audio`，通话房是 `all`。
+    public var autoSubscribe: String = "all"
     /// cid → 发布状态。用 cid 而不是 track_id：发布请求发出时还没有 track_id。
     public var publish: [String: IMPublishState] = [:]
     /// cid → 服务端分配的 track_id。
@@ -57,6 +58,14 @@ public struct IMRoomContext: Equatable, Sendable {
     public var layers: [String: String] = [:]
     /// joining / reconnecting 期间缓存的用户意图（不变量 R2）。
     public var buffered: [IMBufferedIntent] = []
+    /**
+     翻页翻走、等五秒迟滞到点才退订的 track_id，**最早翻走的排在前面**
+     （见 `RoomStateMachine+Paging.swift`）。
+
+     顺序有用：订满 16 路要提前腾位置时，退的就是最早翻走的那一个。
+     不进一致性向量——向量只断言 `room` / `publish` / `subscribe` 三个键。
+     */
+    public var pendingUnsubscribe: [String] = []
     /**
      这个房间**真的收到过 `room.join.ok`** 吗。
 
@@ -153,6 +162,11 @@ public enum IMRoomMachine {
             return dropFailedPublish(ctx, Wire.string(args, "cid"))
         case "subscribe_failed":
             return dropFailedSubscribe(ctx, Wire.string(args, "track_id"))
+        case "unsubscribe_hysteresis_elapsed":
+            // 翻页退订的五秒到了。带 track_id 就只退那一条（帧循环按 track 排定时器），
+            // 不带就把排着的一次清掉（一致性向量用的是这一种）。
+            let trackID = Wire.string(args, "track_id")
+            return flushHysteresis(ctx, trackID: trackID.isEmpty ? nil : trackID)
         default:
             return out(ctx)
         }
@@ -234,7 +248,7 @@ public enum IMRoomMachine {
         return out(next, send: [IMOutgoingFrame(IMFrameType.roomJoin, [
             "room_id": .string(ctx.roomID),
             "room_token": .string(ctx.roomToken),
-            "auto_subscribe": .bool(ctx.autoSubscribe),
+            "auto_subscribe": .string(ctx.autoSubscribe),
         ])])
     }
 
@@ -301,9 +315,9 @@ public enum IMRoomMachine {
     private static func joinRoom(_ ctx: IMRoomContext,
                                  _ args: [String: IMJSON]) -> IMMachineOutput<IMRoomContext> {
         guard ctx.state == .idle else { return localReject(ctx) }
-        // auto_subscribe 默认 true——直接读 args 会把「没写」当成 false，
-        // 那正是 §2.4 点名的发送侧陷阱。
-        let autoSubscribe = args["auto_subscribe"]?.boolValue ?? true
+        // auto_subscribe 默认 `all`——直接读 args 会把「没写」当成空串，
+        // 那正是 §2.4 点名的发送侧陷阱。集合外的值按 §2.4 规则 6 兜底成 `all`。
+        let autoSubscribe = coerceAutoSubscribe(args["auto_subscribe"]?.stringValue)
         let roomID = Wire.string(args, "room_id")
         let roomToken = Wire.string(args, "room_token")
 
@@ -316,7 +330,7 @@ public enum IMRoomMachine {
         return out(next, send: [IMOutgoingFrame(IMFrameType.roomJoin, [
             "room_id": .string(roomID),
             "room_token": .string(roomToken),
-            "auto_subscribe": .bool(autoSubscribe),
+            "auto_subscribe": .string(autoSubscribe),
         ])])
     }
 
@@ -370,19 +384,34 @@ public enum IMRoomMachine {
         let trackID = Wire.string(args, "track_id")
         var next = ctx
         next.subscribe[trackID] = .unsubscribing
+        // 已经手动退了，排着的那次迟滞退订就不必再来一遍。
+        next.pendingUnsubscribe.removeAll { $0 == trackID }
         return out(next, send: [IMOutgoingFrame(IMFrameType.roomUnsubscribe,
                                                 ["track_id": .string(trackID)])])
     }
 
+    /// updateLayer 报某条流的层上界。
+    ///
+    /// **会议房里它同时是订阅意图**：视频不由服务端自动订，所以「看得见」= 订阅、
+    /// 「看不见」= 五秒后退订（见 `RoomStateMachine+Paging.swift`）。通话房照旧只换层。
     private static func updateLayer(_ ctx: IMRoomContext,
                                     _ args: [String: IMJSON]) -> IMMachineOutput<IMRoomContext> {
         let trackID = Wire.string(args, "track_id")
         let layer = Wire.string(args, "max_layer", fallback: "m")
+        if usesPagedVideo(ctx), ctx.remoteTracks[trackID]?.kind == "video" {
+            return pagedUpdateLayer(ctx, trackID: trackID, maxLayer: layer)
+        }
         var next = ctx
         next.layers[trackID] = layer
         return out(next, send: [IMOutgoingFrame(IMFrameType.roomUpdateLayer, [
             "track_id": .string(trackID), "max_layer": .string(layer),
         ])])
+    }
+
+    /// coerceAutoSubscribe 把线路上的档位归一化，认不出的一律按 `all`（§2.4 规则 6）。
+    static func coerceAutoSubscribe(_ value: String?) -> String {
+        guard let value, IMProtocolEnums.autoSubscribeModes.contains(value) else { return "all" }
+        return value
     }
 
     /// bufferIntent 把中间态期间的用户意图缓存起来（不变量 R2）。

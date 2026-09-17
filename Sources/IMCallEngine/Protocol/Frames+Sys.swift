@@ -9,7 +9,9 @@ enum SysFrames {
     ///
     /// token 走首帧而不是 URL 查询串：查询串会进网关日志、Referer 与浏览器历史。
     static let hello: IMFrameFields = [
-        "protocol_version": .int(defaultValue: 1),
+        // 协议版本（§10）。**2 = SDK 2.0.0**：`room.join.auto_subscribe` 从布尔变成三档枚举。
+        // 服务端只认自己实现的那一版，对不上在握手阶段就回 1006。
+        "protocol_version": .int(defaultValue: 2),
         "token": .string(),
         "device_id": .string(),
         // 重连恢复用；首次连接为 ""。

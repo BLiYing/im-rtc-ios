@@ -329,8 +329,8 @@ final class FacadeTests: XCTestCase {
 
         async let joining: Void = h.engine.joinRoom("r-1", roomToken: "rt-1")
         let join = try await waitForFrame(ws, ofType: IMFrameType.roomJoin)
-        // 顺带验一条：发送侧从全默认值起手，auto_subscribe 不能被写成 false（§2.4）。
-        XCTAssertEqual(join.data["auto_subscribe"]?.boolValue, true)
+        // 顺带验一条：发送侧从全默认值起手，auto_subscribe 不能被写成空串（§2.4）。
+        XCTAssertEqual(join.data["auto_subscribe"]?.stringValue, "all")
         ws.receive("""
         {"type":"room.join.ok","req_id":"\(join.reqID)","ts":1,"data":{\
         "room_id":"r-1","participant_id":"r-1-p1","participants":[],"tracks":[]}}
@@ -1284,7 +1284,7 @@ final class FailureRollbackTests: XCTestCase {
         let joining = IMEngineMachine.reduce(ctx, .act(op: "join", args: [
             "room_id": .string("r-1"),
             "room_token": .string("rt"),
-            "auto_subscribe": .bool(true),
+            "auto_subscribe": .string("all"),
         ]))
         ctx = joining.state
         XCTAssertEqual(ctx.room.state, .joining)
@@ -1300,13 +1300,13 @@ final class FailureRollbackTests: XCTestCase {
         var ctx = IMEngineContext()
         ctx = IMEngineMachine.reduce(ctx, .act(op: "join", args: [
             "room_id": .string("r-1"), "room_token": .string("rt"),
-            "auto_subscribe": .bool(true),
+            "auto_subscribe": .string("all"),
         ])).state
         ctx = IMEngineMachine.reduce(ctx, .internalEvent(name: "join_failed")).state
 
         let again = IMEngineMachine.reduce(ctx, .act(op: "join", args: [
             "room_id": .string("r-2"), "room_token": .string("rt2"),
-            "auto_subscribe": .bool(true),
+            "auto_subscribe": .string("all"),
         ]))
         XCTAssertEqual(again.state.room.state, .joining)
         XCTAssertEqual(again.send.map(\.type), [IMFrameType.roomJoin])

@@ -117,7 +117,10 @@ extension IMRoomMachine {
                 uid: uid, kind: kind, participantID: Wire.string(track, "participant_id"))
             emit.append(availability(kind: kind, uid: uid, available: !Wire.bool(track, "muted")))
             // 自动订阅是**服务端**做的，客户端这边只记账，等 sub offer 来把它们坐实。
-            if ctx.autoSubscribe { next.subscribe[trackID] = .subscribing }
+            // 会议房只有音频落这一路，视频等界面报「看得见」时再按页订（RoomStateMachine+Paging）。
+            if IMProtocolEnums.autoSubscribeCovers(ctx.autoSubscribe, kind: kind) {
+                next.subscribe[trackID] = .subscribing
+            }
         }
         // 进房成功之后**立刻重放 joining 期间攒下的意图**（不变量 R2）：
         // 宿主在 onCallBegin 里就发起的 publish 走的正是这条路。
@@ -149,12 +152,15 @@ extension IMRoomMachine {
                                               _ data: [String: IMJSON]) -> IMMachineOutput<IMRoomContext> {
         let participantID = Wire.string(data, "participant_id")
         var next = ctx
+        var gone: Set<String> = []
         for (trackID, track) in ctx.remoteTracks where track.participantID == participantID {
             // 人走了，他的 Track 与我们对它的订阅一起清掉——
             // 不清的话重连时会重放一个死订阅。
             next.remoteTracks.removeValue(forKey: trackID)
             next.subscribe.removeValue(forKey: trackID)
+            gone.insert(trackID)
         }
+        dropPending(&next, gone: gone)
         return out(next, emit: [IMEmittedEvent("onUserLeave",
                                                ["uid": .string(Wire.string(data, "uid"))])])
     }
@@ -168,7 +174,9 @@ extension IMRoomMachine {
         var next = ctx
         next.remoteTracks[trackID] = IMRemoteTrack(
             uid: uid, kind: kind, participantID: Wire.string(data, "participant_id"))
-        if ctx.autoSubscribe { next.subscribe[trackID] = .subscribing }
+        if IMProtocolEnums.autoSubscribeCovers(ctx.autoSubscribe, kind: kind) {
+            next.subscribe[trackID] = .subscribing
+        }
 
         return out(next, emit: [availability(kind: kind, uid: uid,
                                              available: !Wire.bool(data, "muted"))])
@@ -182,6 +190,7 @@ extension IMRoomMachine {
         var next = ctx
         next.remoteTracks.removeValue(forKey: trackID)
         next.subscribe.removeValue(forKey: trackID)
+        dropPending(&next, gone: [trackID])
 
         guard let known else { return out(next) }
         return out(next, emit: [availability(kind: known.kind, uid: known.uid, available: false)])

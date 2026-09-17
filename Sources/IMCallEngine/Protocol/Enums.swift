@@ -20,6 +20,27 @@ public enum IMProtocolEnums {
     ]
     /// simulcast 层。`none` = 暂停下发但保留订阅。兜底 `l`——宁可给小图。
     public static let layers = ["none", "l", "m", "h"]
+    /**
+     `room.join.auto_subscribe` 的三档（协议 2 起，之前是布尔）。
+
+     兜底 `all`——认不出的档位按「全订」处理。反过来兜成 `none` 的话，
+     一个字母写错就是「人进了房，谁都看不见也听不见」，而且没有任何一处报错。
+
+     - `all`   音频 + 视频都由服务端自动订阅（通话房）
+     - `audio` 只自动订音频，视频由客户端按当前页 `room.subscribe`（会议分页画廊）
+     - `none`  一条都不自动订
+     */
+    public static let autoSubscribeModes = ["all", "audio", "none"]
+
+    /// autoSubscribeCovers 报告这一档要不要让服务端自动订阅某种 kind 的 Track。
+    public static func autoSubscribeCovers(_ mode: String, kind: String) -> Bool {
+        switch mode {
+        case "all": return true
+        case "audio": return kind == "audio"
+        default: return false
+        }
+    }
+
     /// Track 类型。
     public static let trackKinds = ["audio", "video"]
     /// Track 来源。同一 participant 同一 source 最多一条 Track。

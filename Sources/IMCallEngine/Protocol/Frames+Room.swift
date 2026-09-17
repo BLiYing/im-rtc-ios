@@ -28,12 +28,13 @@ enum RoomFrames {
 
     /// 进房请求。
     ///
-    /// **注意 auto_subscribe / publish_audio 默认是 true**：直接发零值 data，
-    /// 线路上会变成 false，人进了房却收不到任何流。发送侧一律从 `defaults` 起手。
+    /// **注意 auto_subscribe 默认 `all`、publish_audio 默认 true**：直接发零值 data，
+    /// 线路上会变成空串、false，人进了房却收不到任何流。发送侧一律从 `defaults` 起手。
     static let join: IMFrameFields = [
         "room_id": .string(),
         "room_token": .string(),
-        "auto_subscribe": .bool(defaultValue: true),
+        "auto_subscribe": .enumeration(values: E.autoSubscribeModes,
+                                       fallback: "all", defaultValue: "all"),
         "publish_audio": .bool(defaultValue: true),
         "publish_video": .bool(defaultValue: false),
     ]

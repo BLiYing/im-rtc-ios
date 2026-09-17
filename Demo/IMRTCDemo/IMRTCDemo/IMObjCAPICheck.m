@@ -107,7 +107,9 @@
             }
         }];
         [self->_engine joinCall:@"call-1" completionHandler:^(NSError * _Nullable err) {}];
-        [self->_engine joinRoom:@"r-1" roomToken:@"rt" autoSubscribe:YES completionHandler:^(NSError * _Nullable err) {}];
+        // autoSubscribe 2.0.0 起是三档字符串（all | audio | none），不再是 BOOL：
+        // 会议分页画廊发 audio，视频由 setRemoteLayer 按当前页订。
+        [self->_engine joinRoom:@"r-1" roomToken:@"rt" autoSubscribe:@"audio" completionHandler:^(NSError * _Nullable err) {}];
         [self->_engine leaveRoomWithCompletionHandler:^(NSError * _Nullable err) {}];
         [self->_engine acceptWithCompletionHandler:^(NSError * _Nullable err) {}];
         [self->_engine hangupWithCompletionHandler:^(NSError * _Nullable err) {}];
