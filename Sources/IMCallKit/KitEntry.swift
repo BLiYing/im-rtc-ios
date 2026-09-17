@@ -74,9 +74,9 @@ public let IMCallKitVersion = IMCallEngineVersion
     @objc public var ringbackTone: URL?
     /// 静音铃声/回铃音（不影响通话本身的音频）。默认关。
     @objc public var ringtoneMuted: Bool = false
-    /// 来电响铃时振动（每 2 秒一下，接听 / 拒接 / 对方取消即停）。**默认开**，与 `ringtoneMuted` 互不影响；
+    /// 来电响铃时振动（每 2 秒一下，接听 / 拒接 / 对方取消即停）。**默认关**（宿主要振就置 `true`），与 `ringtoneMuted` 互不影响；
     /// 同样现用现读。只 iOS 有，判据见 `imShouldVibrate(_:enabled:)`。
-    @objc public var incomingVibration: Bool = true
+    @objc public var incomingVibration: Bool = false
 
     @objc public override init() {
         super.init()

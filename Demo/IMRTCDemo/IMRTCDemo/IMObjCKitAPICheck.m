@@ -81,7 +81,7 @@
                                                                  selectable:YES
                                                          unselectableReason:nil];
     config.inviteCandidates = @[candidate];
-    config.incomingVibration = NO;
+    config.incomingVibration = YES;
 
     // 入口：纯 ObjC 造 Kit，拿到控制器。
     _kit = [[IMCallKit alloc] initWithEngine:_engine config:config];
