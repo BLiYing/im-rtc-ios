@@ -73,7 +73,9 @@ public enum IMEngineMachine {
         } else {
             next.callStartedAtMS = ctx.callStartedAtMS
         }
-        guard next != result.state else { return result }
+        // next 只可能改了这一个字段（上面三条分支都只碰 callStartedAtMS）——
+        // 比这一个字段就够了，不必对整个 context 做深比较。
+        guard next.callStartedAtMS != result.state.callStartedAtMS else { return result }
         return IMMachineOutput(next, send: result.send, emit: result.emit)
     }
 

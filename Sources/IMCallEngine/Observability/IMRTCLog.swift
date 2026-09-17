@@ -73,6 +73,14 @@ public enum IMRTCLog {
         emit(.error, message, fields)
     }
 
+    /// isEnabled 报告这一级别现在有没有人要。**拼字段之前先问一句**：
+    /// 调用方（如 `IMEventDispatcher.deliver`）用它挡掉「日志被过滤掉了、但字段还是白拼了一遍」
+    /// 这种浪费——周期性事件（主讲人 / 网络质量）一通电话有几百条，拼字典本身不是免费的。
+    static func isEnabled(_ messageLevel: IMRTCLogLevel) -> Bool {
+        lock.lock(); defer { lock.unlock() }
+        return messageLevel >= level
+    }
+
     private static func emit(_ messageLevel: IMRTCLogLevel, _ message: String,
                              _ fields: [String: String]) {
         lock.lock()

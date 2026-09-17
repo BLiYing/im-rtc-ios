@@ -99,12 +99,6 @@ public enum IMRoomMachine {
         }
     }
 
-    static func out(_ ctx: IMRoomContext,
-                    send: [IMOutgoingFrame] = [],
-                    emit: [IMEmittedEvent] = []) -> IMMachineOutput<IMRoomContext> {
-        IMMachineOutput(ctx, send: send, emit: emit)
-    }
-
     /// cleared 把房间相关的记账全部清空，state 由调用方决定。
     static func cleared(_ state: IMRoomState) -> IMRoomContext {
         var ctx = IMRoomContext()
@@ -356,7 +350,7 @@ public enum IMRoomMachine {
     private static func subscribeTrack(_ ctx: IMRoomContext,
                                        _ args: [String: IMJSON]) -> IMMachineOutput<IMRoomContext> {
         let trackID = Wire.string(args, "track_id")
-        let layer = Wire.string(args, "max_layer").isEmpty ? "m" : Wire.string(args, "max_layer")
+        let layer = Wire.string(args, "max_layer", fallback: "m")
 
         var next = ctx
         next.layers[trackID] = layer
@@ -383,7 +377,7 @@ public enum IMRoomMachine {
     private static func updateLayer(_ ctx: IMRoomContext,
                                     _ args: [String: IMJSON]) -> IMMachineOutput<IMRoomContext> {
         let trackID = Wire.string(args, "track_id")
-        let layer = Wire.string(args, "max_layer").isEmpty ? "m" : Wire.string(args, "max_layer")
+        let layer = Wire.string(args, "max_layer", fallback: "m")
         var next = ctx
         next.layers[trackID] = layer
         return out(next, send: [IMOutgoingFrame(IMFrameType.roomUpdateLayer, [
@@ -407,9 +401,6 @@ public enum IMRoomMachine {
 
     /// localReject 是不变量 R1 的落点：错误状态下的调用**本地拒绝**，不发上去。
     static func localReject(_ ctx: IMRoomContext) -> IMMachineOutput<IMRoomContext> {
-        out(ctx, emit: [IMEmittedEvent("onError", [
-            "code": .int(Int64(IMErrorCode.invalidState.rawValue)),
-            "name": .string(IMErrorCode.invalidState.name),
-        ])])
+        invalidStateOutput(ctx)
     }
 }

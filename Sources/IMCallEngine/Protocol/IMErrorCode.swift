@@ -246,6 +246,29 @@ extension IMRTCError: CustomStringConvertible {
     }
 }
 
+/// decodeSysError 从 `sys.error` 的线路 data 里解出码与消息。**两条路都要用**：
+/// `SignalConnection.dispatchEvent`（推送）与 `PendingRequests.settle`（应答）各自解出的
+/// `known`/`msg` 完全一样，只是随后对「本端不认识这个码」的处置不同——推送路径折成
+/// `internalError` 就完了，应答路径还要把线路自带的 `retryable` 一起带走
+/// （`IMRTCError.unknownCodeRetryable`）。这里只共享解码，不替调用方做决定。
+enum IMSysErrorFrame {
+    static func decode(_ data: [String: IMJSON]) -> (known: IMErrorCode?, msg: String) {
+        let raw = Int(Wire.int(data, "code"))
+        return (IMErrorCode(rawValue: raw), Wire.string(data, "msg"))
+    }
+}
+
+extension IMEmittedEvent {
+    /// error 是 `onError` 事件的工厂：状态机与 Facade 手拼过好几次，字段形状固定为
+    /// `{"code": Int, "name": String}`——一致性向量按这个形状校验，**不许多字段少字段**。
+    static func error(_ code: IMErrorCode) -> IMEmittedEvent {
+        IMEmittedEvent("onError", [
+            "code": .int(Int64(code.rawValue)),
+            "name": .string(code.name),
+        ])
+    }
+}
+
 /// NSError 的 domain。**公开常量**：ObjC 宿主要靠它区分是不是我们的错误。
 ///
 /// 放在协议层而不是 Facade 层：`IMRTCError` 自己要用它做桥接（见下面的

@@ -18,10 +18,7 @@ extension IMCallEngine {
         do {
             try await requireMedia().probeMicrophone()
         } catch let error as IMRTCError {
-            dispatcher.emit(IMEmittedEvent("onError", [
-                "code": .int(Int64(error.code.rawValue)),
-                "name": .string(error.code.name),
-            ]))
+            dispatcher.emit(IMEmittedEvent.error(error.code))
             throw error
         }
     }

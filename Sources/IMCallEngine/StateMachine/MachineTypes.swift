@@ -67,6 +67,13 @@ enum Wire {
         data[key]?.stringValue ?? ""
     }
 
+    /// string 的默认值重载：字段缺失**或为空串**都取 `fallback`。
+    /// `RoomStateMachine` 里 `max_layer` 的两处 `.isEmpty ? "m" : ...` 用它替掉。
+    static func string(_ data: [String: IMJSON], _ key: String, fallback: String) -> String {
+        let value = string(data, key)
+        return value.isEmpty ? fallback : value
+    }
+
     static func int(_ data: [String: IMJSON], _ key: String) -> Int64 {
         data[key]?.intValue ?? 0
     }
@@ -78,4 +85,32 @@ enum Wire {
     static func stringArray(_ data: [String: IMJSON], _ key: String) -> [String] {
         (data[key]?.arrayValue ?? []).compactMap(\.stringValue)
     }
+}
+
+/// out 是状态机 reducer 的通用构造：把新状态包成一次 `IMMachineOutput`。
+///
+/// `CallStateMachine` 与 `RoomStateMachine` 原先各有一份逐行相同的 `static func out`，
+/// 现在共用这一个——两边的类型参数不同（`IMCallContext` / `IMRoomContext`），泛型化之后
+/// 各自内部对 `out(...)` 的调用不用改一个字，Swift 的名字查找会先找到本类型作用域，
+/// 这里作用域里没有同名静态方法了，就落到这个全局函数上。
+func out<State>(_ ctx: State, send: [IMOutgoingFrame] = [],
+                emit: [IMEmittedEvent] = []) -> IMMachineOutput<State> where State: Sendable {
+    IMMachineOutput(ctx, send: send, emit: emit)
+}
+
+/// invalidStateOutput 是不变量 I8/R1 共同的落点：错误状态下的调用**本地拒绝**，
+/// 不发上去，只抛一条 `onError(invalidState)`。`CallStateMachine.invalidState` 与
+/// `RoomStateMachine.localReject` 函数体完全一样，只是上下文类型不同，合到这一处。
+func invalidStateOutput<State>(_ ctx: State) -> IMMachineOutput<State> where State: Sendable {
+    out(ctx, emit: [IMEmittedEvent.error(.invalidState)])
+}
+
+/// IMEmittedCallbackName 收着几个要在多处按名字**过滤**的回调名字面量。
+///
+/// `onDisconnected` / `onKickedOut` 由连接层独占上报（见 `IMFrameLoop.dispatch` 的注释），
+/// 状态机那一份要在帧泵里被滤掉；`IMEventDispatcher.names` 拿同一个字符串当键。
+/// 两处原先各拼了一遍 `"onDisconnected"` / `"onKickedOut"`，集中到这里。
+enum IMEmittedCallbackName {
+    static let onDisconnected = "onDisconnected"
+    static let onKickedOut = "onKickedOut"
 }

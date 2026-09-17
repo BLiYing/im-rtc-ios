@@ -123,12 +123,19 @@ final class IMURLSessionWebSocket: NSObject, IMWebSocket, URLSessionWebSocketDel
         }
     }
 
-    func close(code: Int, reason: String) {
+    /// markClosedOnce 加锁读 `closed`、置 true、报告这是不是第一次关闭。
+    /// `close()`（主动关）与 `finish()`（服务端关闭 / 连接失败）各走各的收尾逻辑，
+    /// 但「判重」这一小段——加锁、读、置位——原先两处逐字重复。
+    private func markClosedOnce() -> Bool {
         lock.lock()
         let alreadyClosed = closed
         closed = true
         lock.unlock()
-        guard !alreadyClosed else { return }
+        return !alreadyClosed
+    }
+
+    func close(code: Int, reason: String) {
+        guard markClosedOnce() else { return }
 
         let closeCode = URLSessionWebSocketTask.CloseCode(rawValue: code) ?? .normalClosure
         task?.cancel(with: closeCode, reason: reason.data(using: .utf8))
@@ -186,11 +193,7 @@ final class IMURLSessionWebSocket: NSObject, IMWebSocket, URLSessionWebSocketDel
     }
 
     private func finish(code: Int, reason: String) {
-        lock.lock()
-        let alreadyClosed = closed
-        closed = true
-        lock.unlock()
-        guard !alreadyClosed else { return }
+        guard markClosedOnce() else { return }
         IMRTCLog.debug("连接关闭", ["code": String(code), "reason": reason])
         /*
          **这条路也必须 invalidate。**

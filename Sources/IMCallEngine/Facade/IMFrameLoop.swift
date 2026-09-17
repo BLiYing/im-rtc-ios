@@ -174,7 +174,7 @@ actor IMFrameLoop {
              更糟的是「鉴权连续失败」复用了 `ws_closed_4403` 这个内部事件，
              状态机那条要是带上码就会是一个**假的 4403**。
              */
-            if event.callback == "onDisconnected" { continue }
+            if event.callback == IMEmittedCallbackName.onDisconnected { continue }
             /*
              **`onKickedOut` 同理由连接层独占。**
 
@@ -184,7 +184,7 @@ actor IMFrameLoop {
              而「鉴权失败到顶」也复用了同一个内部事件。两边都发的话宿主会收到两条，
              其中一条还没有 reason。（Web 端就是在这里踩了双抛。）
             */
-            if event.callback == "onKickedOut" { continue }
+            if event.callback == IMEmittedCallbackName.onKickedOut { continue }
             dispatcher.emit(event)
         }
         for frame in result.send {
@@ -383,10 +383,7 @@ actor IMFrameLoop {
 
     private func emitError(_ error: Error) {
         let rtc = error as? IMRTCError ?? IMRTCError(.internalError, String(describing: error))
-        dispatcher.emit(IMEmittedEvent("onError", [
-            "code": .int(Int64(rtc.code.rawValue)),
-            "name": .string(rtc.code.name),
-        ]))
+        dispatcher.emit(IMEmittedEvent.error(rtc.code))
     }
 
     /**

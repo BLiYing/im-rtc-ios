@@ -51,10 +51,7 @@ extension IMCallEngine {
             self?.dispatcher.emitTokenWillExpire(expiresAtMS)
         }
         events.onError = { [weak self] error in
-            self?.dispatcher.emit(IMEmittedEvent("onError", [
-                "code": .int(Int64(error.code.rawValue)),
-                "name": .string(error.code.name),
-            ]))
+            self?.dispatcher.emit(IMEmittedEvent.error(error.code))
         }
         return IMSignalConnection(options: options, events: events)
     }

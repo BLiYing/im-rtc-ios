@@ -73,12 +73,6 @@ public enum IMCallMachine {
         }
     }
 
-    static func out(_ ctx: IMCallContext,
-                    send: [IMOutgoingFrame] = [],
-                    emit: [IMEmittedEvent] = []) -> IMMachineOutput<IMCallContext> {
-        IMMachineOutput(ctx, send: send, emit: emit)
-    }
-
     private static func reduceInternal(_ ctx: IMCallContext,
                                        _ name: String) -> IMMachineOutput<IMCallContext> {
         /*
@@ -222,10 +216,7 @@ public enum IMCallMachine {
     }
 
     static func invalidState(_ ctx: IMCallContext) -> IMMachineOutput<IMCallContext> {
-        out(ctx, emit: [IMEmittedEvent("onError", [
-            "code": .int(Int64(IMErrorCode.invalidState.rawValue)),
-            "name": .string(IMErrorCode.invalidState.name),
-        ])])
+        invalidStateOutput(ctx)
     }
 
     /// synthesizeNetworkEnd 是不变量 I8 的那个**唯一例外**。

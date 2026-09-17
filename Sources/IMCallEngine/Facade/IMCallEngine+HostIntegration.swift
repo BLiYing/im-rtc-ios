@@ -27,11 +27,11 @@ extension IMCallEngine {
                            options: IMCallOptions) async {
         let me = uid
         if !me.isEmpty, calleeIDs.contains(me) {
-            rejectCallLocally(reason: "呼叫名单里含自己")
+            rejectCallLocally(logMessage: "call() 本地校验不通过，已就地拒掉", logFields: ["reason": "呼叫名单里含自己"])
             return
         }
         if let badField = Self.invalidHostField(options) {
-            rejectCallLocally(reason: badField)
+            rejectCallLocally(logMessage: "call() 本地校验不通过，已就地拒掉", logFields: ["reason": badField])
             return
         }
         var args: [String: IMJSON] = [
@@ -70,19 +70,21 @@ extension IMCallEngine {
      调用方（Kit / 宿主）在调 `call()` 之前多半已经切到「正在呼叫…」，只抛一条 error
      界面不知道该退回哪儿；`onCallEnd` 让它有地方收场（与旧 `call(_:mediaType:isGroup:)`
      的「名单里含自己」同一个出口，见 `IMCallEngine.swift`）。
+
+     **`IMCallEngine.swift` 的 `call(_:mediaType:isGroup:)` 与这里的
+     `call(_:mediaType:options:)` 共用它**——两处原先各手拼一份完全相同的
+     onError(badParams) + onCallEnd(error)。`logMessage`/`logFields` 让两个调用点
+     各自保留原来的日志措辞，只共享事件构造本身。
      */
-    private func rejectCallLocally(reason: String) {
-        dispatcher.emit(IMEmittedEvent("onError", [
-            "code": .int(Int64(IMErrorCode.badParams.rawValue)),
-            "name": .string(IMErrorCode.badParams.name),
-        ]))
+    func rejectCallLocally(logMessage: String, logFields: [String: String]) {
+        dispatcher.emit(IMEmittedEvent.error(.badParams))
         dispatcher.emit(IMEmittedEvent("onCallEnd", [
             "call_id": .string(""),
             "reason": .string(IMCallEndReason.error.wireValue),
             "duration_sec": .int(0),
             "ended_by": .string(""),
         ]))
-        IMRTCLog.warn("call() 本地校验不通过，已就地拒掉", ["reason": reason])
+        IMRTCLog.warn(logMessage, logFields)
     }
 
     /**

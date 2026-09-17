@@ -101,10 +101,7 @@ import Foundation
 
     /// emitLocalError 抛一条**本地**错误码（协议 §7.2，永不出现在线路上）。
     func emitLocalError(_ code: IMErrorCode) {
-        dispatcher.emit(IMEmittedEvent("onError", [
-            "code": .int(Int64(code.rawValue)),
-            "name": .string(code.name),
-        ]))
+        dispatcher.emit(IMEmittedEvent.error(code))
     }
 
     /**
@@ -307,10 +304,6 @@ import Foundation
                            isGroup: Bool = false) async {
         let me = uid
         if !me.isEmpty, calleeIDs.contains(me) {
-            dispatcher.emit(IMEmittedEvent("onError", [
-                "code": .int(Int64(IMErrorCode.badParams.rawValue)),
-                "name": .string(IMErrorCode.badParams.name),
-            ]))
             /*
              **本地拒掉也要给界面一个出口。**
 
@@ -321,14 +314,10 @@ import Foundation
 
              `onCallEnd` 是所有结束分支的唯一出口（设计 §7.5），
              这一条与「服务端拒了 invite」（call_failed）走同一个出口。
+             与 `+HostIntegration.swift` 的 `call(_:mediaType:options:)` 共用
+             `rejectCallLocally`——两处原先各手拼一份完全相同的 onError+onCallEnd。
             */
-            dispatcher.emit(IMEmittedEvent("onCallEnd", [
-                "call_id": .string(""),
-                "reason": .string(IMCallEndReason.error.wireValue),
-                "duration_sec": .int(0),
-                "ended_by": .string(""),
-            ]))
-            IMRTCLog.warn("呼叫名单里含自己，已就地拒掉", ["uid": me])
+            rejectCallLocally(logMessage: "呼叫名单里含自己，已就地拒掉", logFields: ["uid": me])
             return
         }
         await loop.dispatch(.act(op: "call", args: [
@@ -371,10 +360,10 @@ import Foundation
     @objc public func inviteMore(_ calleeIDs: [String]) async {
         let me = uid
         if !me.isEmpty, calleeIDs.contains(me) {
-            dispatcher.emit(IMEmittedEvent("onError", [
-                "code": .int(Int64(IMErrorCode.badParams.rawValue)),
-                "name": .string(IMErrorCode.badParams.name),
-            ]))
+            // 与 call() 不同：这里已经在通话中，不需要（也不该）补一条 onCallEnd，
+            // 通话本身没受影响，只是这次加人没发出去。所以不走 rejectCallLocally，
+            // 只共享 onError 的事件构造。
+            dispatcher.emit(IMEmittedEvent.error(.badParams))
             IMRTCLog.warn("加人名单里含自己，已就地拒掉", ["uid": me])
             return
         }

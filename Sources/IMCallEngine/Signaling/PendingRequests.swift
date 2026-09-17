@@ -47,12 +47,6 @@ final class PendingRequests {
         timer.resume()
     }
 
-    /// abandon 撤掉一个还没发出去就失败的请求。
-    func abandon(reqID: String) {
-        guard let waiter = waiters.removeValue(forKey: reqID) else { return }
-        waiter.timer.cancel()
-    }
-
     /// settle 用一帧应答结算在途请求。
     ///
     /// 返回 false 表示这个 req_id 没人在等——调用方应当把它当事件处理。
@@ -62,16 +56,15 @@ final class PendingRequests {
 
         // sys.error 也是应答：**它带着 req_id 回来**，要结算成失败而不是当事件抛。
         if envelope.type == IMFrameType.error {
-            let raw = Int(Wire.int(envelope.data, "code"))
-            let known = IMErrorCode(rawValue: raw)
+            let decoded = IMSysErrorFrame.decode(envelope.data)
             // 本端不认识这个码时，把帧上自带的 retryable 一起带走：折成 internalError
             // 之后那一位就永远是 true 了，而新加的终局码恰恰要靠它才停得下来
             // （见 IMRTCError.unknownCodeRetryable）。认识的码不带，免得线路上的
             // 一位盖掉一致性向量里的定义。
-            let unknownCodeRetryable = known == nil ? envelope.data["retryable"]?.boolValue : nil
+            let unknownCodeRetryable = decoded.known == nil ? envelope.data["retryable"]?.boolValue : nil
             waiter.complete(.failure(IMRTCError(
-                known ?? .internalError,
-                Wire.string(envelope.data, "msg"),
+                decoded.known ?? .internalError,
+                decoded.msg,
                 unknownCodeRetryable: unknownCodeRetryable)))
             return true
         }
@@ -91,6 +84,4 @@ final class PendingRequests {
             waiter.complete(.failure(error))
         }
     }
-
-    var inFlightCount: Int { waiters.count }
 }

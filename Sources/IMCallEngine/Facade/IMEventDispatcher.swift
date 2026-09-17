@@ -163,12 +163,21 @@ final class IMEventDispatcher {
          **每一个公开事件都进日志。** 这是「四端日志合到一条时间轴」那条链路的前提：
          宿主装一个 sink 就能拿到完整事件流，不用再从事件面板里手动复制粘贴。
          （Web 端同一处：engineBus.ts。）
+
+         **先问 `IMRTCLog.isEnabled` 再拼字段**：周期性事件（主讲人 300ms、网络质量 2s）
+         一通电话几百条，级别被调高时没必要每一条都 `mapValues` + 序列化一遍。
+         这道门槛只挡「日志输出」，不挡下面的 observer / delegate 派发——宿主拿到的事件
+         流与调用 `IMRTCLog.setLevel` 之前完全一样。
          */
-        let fields = event.payload.mapValues { Self.fieldText($0) }
-        if Self.periodic.contains(event.name) {
-            IMRTCLog.debug("event " + event.name.name, fields)
-        } else {
-            IMRTCLog.info("event " + event.name.name, fields)
+        let isPeriodic = Self.periodic.contains(event.name)
+        let logLevel: IMRTCLogLevel = isPeriodic ? .debug : .info
+        if IMRTCLog.isEnabled(logLevel) {
+            let fields = event.payload.mapValues { Self.fieldText($0) }
+            if isPeriodic {
+                IMRTCLog.debug("event " + event.name.name, fields)
+            } else {
+                IMRTCLog.info("event " + event.name.name, fields)
+            }
         }
 
         mu.lock()
@@ -269,8 +278,8 @@ final class IMEventDispatcher {
 
     /// names 是状态机的回调名 → 公开事件名。**这张表就是那座桥**。
     private static let names: [String: IMCallEventName] = [
-        "onConnected": .connected, "onDisconnected": .disconnected,
-        "onKickedOut": .kickedOut, "onError": .error,
+        "onConnected": .connected, IMEmittedCallbackName.onDisconnected: .disconnected,
+        IMEmittedCallbackName.onKickedOut: .kickedOut, "onError": .error,
         "onCallReceived": .callReceived, "onCallBegin": .callBegin, "onCallEnd": .callEnd,
         "onCallCancelled": .callCancelled, "onCallRejected": .callRejected,
         "onCallBusy": .callBusy, "onCallNoAnswer": .callNoAnswer,

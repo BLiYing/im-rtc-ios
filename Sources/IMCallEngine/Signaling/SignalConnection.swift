@@ -337,10 +337,17 @@ public final class IMSignalConnection {
     }
 
     private func dispatchEvent(_ envelope: IMEnvelope) {
+        // sys.pong 没有任何消费者：心跳的判活在 handleMessage 里已经做过
+        // （收到**任何**帧都算对端活着，不只是 pong），到这里已经没有下文，
+        // 不必再走一遍 decode 把它送进 IMFrameLoop 的管线里空转。
+        if envelope.type == IMFrameType.pong {
+            return
+        }
         if envelope.type == IMFrameType.error {
-            let code = IMErrorCode(rawValue: Int(Wire.int(envelope.data, "code"))) ?? .internalError
+            let decoded = IMSysErrorFrame.decode(envelope.data)
+            let code = decoded.known ?? .internalError
             if code == .kickedOut { events.onKickedOut?(.takenOver) }
-            events.onError?(IMRTCError(code, Wire.string(envelope.data, "msg")))
+            events.onError?(IMRTCError(code, decoded.msg))
             return
         }
         guard IMFrameRegistry.fields(for: envelope.type) != nil else {
