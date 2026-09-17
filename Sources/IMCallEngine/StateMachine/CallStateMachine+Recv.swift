@@ -27,10 +27,10 @@ extension IMCallMachine {
             var next = ctx
             next.callID = Wire.string(data, "call_id")
             next.roomID = Wire.string(data, "room_id")
-            // invite.ok 回来之前按过取消（见 reduceAct 的 cancel）：现在有 call_id 了，立刻补发。
-            guard ctx.cancelPending, !next.callID.isEmpty else { return out(next) }
+            // invite.ok 回来之前按过取消（见 `exitCall`）：现在有 call_id 了，立刻补发。
+            guard ctx.cancelPending, !next.callID.isEmpty, let exit = IMCallExit.of(.inviting) else { return out(next) }
             next.cancelPending = false
-            return out(next, send: [callIDFrame(IMFrameType.callCancel, next)])
+            return out(next, send: exit.frames(callID: next.callID))
 
         case IMFrameType.callConnected:
             return handleConnected(ctx, data)
@@ -105,27 +105,19 @@ extension IMCallMachine {
     /**
      handleLateFrame：idle 下迟到的帧**照旧丢弃**（优先级规则 2），只有两条例外——
      它们说明服务端那边**还有一通挂着本端的电话**，而本地早就收场了
-     （红键强制收场时请求还在路上，或请求超时回滚之后应答才到）：
-
-     - `call.invite.ok`：邀请在服务端落地了，被叫正在响铃。补发 `call.cancel`，
-       否则被叫一直响到超时，而主叫这边一个界面都没有。
-     - `call.connected`：有人已经接起来了（cancel 来不及，或本端是被叫、accept 已落地）。
-       补发 `call.hangup`，否则服务端一直把本端当成在通话里。
+     （红键强制收场时请求还在路上，或请求超时回滚之后应答才到）。
+     哪两帧、按什么状态补发结束帧，见 `IMCallExit.serverState(afterLate:)`：
+     不补的话 invite.ok 那种被叫一直响到超时，connected 那种服务端一直把本端当成在通话里。
 
      本地状态不动、不抛回调。补发的帧被拒（比如通话已经结束）只换回一条 onError，无害。
     */
     private static func handleLateFrame(_ ctx: IMCallContext, _ type: String,
                                         _ data: [String: IMJSON]) -> IMMachineOutput<IMCallContext> {
         let callID = Wire.string(data, "call_id")
-        guard !callID.isEmpty else { return out(ctx) }
-        switch type {
-        case IMEnvelope.okType(IMFrameType.callInvite):
-            return out(ctx, send: [IMOutgoingFrame(IMFrameType.callCancel, ["call_id": .string(callID)])])
-        case IMFrameType.callConnected:
-            return out(ctx, send: [IMOutgoingFrame(IMFrameType.callHangup, ["call_id": .string(callID)])])
-        default:
-            return out(ctx)
-        }
+        guard !callID.isEmpty,
+              let state = IMCallExit.serverState(afterLate: type),
+              let exit = IMCallExit.of(state) else { return out(ctx) }
+        return out(ctx, send: exit.frames(callID: callID))
     }
 
     private static func handleIncoming(_ ctx: IMCallContext,

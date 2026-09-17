@@ -379,7 +379,7 @@ actor IMFrameLoop {
          （最常见的是通话已经结束 1402 / 1401）或根本没发出去，都不该让界面停在通话里。
          结束帧已经试过了，这里只落本地——与 `forceEnd` 同一份收场计算，只是不再发帧。
          */
-        if Self.exitFrames.contains(type) {
+        if IMCallExit.allFrameTypes.contains(type) {
             await endLocally()
             return
         }
@@ -518,11 +518,6 @@ actor IMFrameLoop {
     /// 而红按钮在那个状态下算出的动作又会被本地拒成 2005。
     private static let callFailFrames: Set<String> = [
         IMFrameType.callInvite, IMFrameType.callAccept, IMFrameType.callJoin,
-    ]
-
-    /// exitFrames 是「这一帧失败了也要本地收场」的结束帧（`room.leave` 单独处理，见 `rollback`）。
-    private static let exitFrames: Set<String> = [
-        IMFrameType.callHangup, IMFrameType.callReject, IMFrameType.callCancel,
     ]
 
     /// leaveCallbacks 是「这一轮媒体到此为止」的信号。

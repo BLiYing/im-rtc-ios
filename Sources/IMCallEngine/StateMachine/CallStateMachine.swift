@@ -110,31 +110,8 @@ public enum IMCallMachine {
             return startCall(ctx, args)
         case "accept":
             return acceptCall(ctx)
-        case "reject":
-            // reject 只发帧，状态由随后的 call.ended 推进——**服务端才是裁决方**。
-            return ctx.state == .ringing
-                ? out(ctx, send: [callIDFrame(IMFrameType.callReject, ctx)])
-                : invalidState(ctx)
-        case "cancel":
-            guard ctx.state == .inviting else { return invalidState(ctx) }
-            /*
-             **invite.ok 还没回来就按取消：先记下，不发。**
-
-             这时手里没有 call_id，发出去的 `call.cancel` 只会被服务端拒成 1401，
-             宿主平白多收一条 error，而被叫照样在响（2026-09-15 10:09 demo-react 真机）。
-             invite.ok 一回来就立刻补发（`reduceRecv` 的 invite.ok 分支）；
-             一直不回、红键看门狗先到点的，由 `forceEnd` 与 idle 下的迟到帧分支接着兜。
-            */
-            guard !ctx.callID.isEmpty else {
-                var next = ctx
-                next.cancelPending = true
-                return out(next)
-            }
-            return out(ctx, send: [callIDFrame(IMFrameType.callCancel, ctx)])
-        case "hangup":
-            return ctx.state == .connected || ctx.state == .connecting
-                ? out(ctx, send: [callIDFrame(IMFrameType.callHangup, ctx)])
-                : invalidState(ctx)
+        case "reject", "cancel", "hangup":
+            return exitCall(ctx, op)
         case "invite_more":
             return inviteMore(ctx, args)
         case "join_call":
@@ -183,7 +160,7 @@ public enum IMCallMachine {
         guard ctx.state == .ringing else { return invalidState(ctx) }
         var next = ctx
         next.state = .accepting
-        return out(next, send: [callIDFrame(IMFrameType.callAccept, ctx)])
+        return out(next, send: [IMOutgoingFrame(IMFrameType.callAccept, ["call_id": .string(ctx.callID)])])
     }
 
     private static func inviteMore(_ ctx: IMCallContext,
@@ -211,8 +188,27 @@ public enum IMCallMachine {
         return out(next, send: [IMOutgoingFrame(IMFrameType.callJoin, ["call_id": .string(callID)])])
     }
 
-    static func callIDFrame(_ type: String, _ ctx: IMCallContext) -> IMOutgoingFrame {
-        IMOutgoingFrame(type, ["call_id": .string(ctx.callID)])
+    /**
+     exitCall 是宿主调 reject / cancel / hangup：此刻的状态该用哪个方法、发哪帧，查 `IMCallExit`。
+
+     只发帧，状态由随后的 call.ended 推进——**服务端才是裁决方**。
+     */
+    private static func exitCall(_ ctx: IMCallContext, _ op: String) -> IMMachineOutput<IMCallContext> {
+        guard let exit = IMCallExit.of(ctx.state), exit.op == op else { return invalidState(ctx) }
+        /*
+         **invite.ok 还没回来就按取消：先记下，不发。**
+
+         这时手里没有 call_id，发出去的 `call.cancel` 只会被服务端拒成 1401，
+         宿主平白多收一条 error，而被叫照样在响（2026-09-15 10:09 demo-react 真机）。
+         invite.ok 一回来就立刻补发（`reduceRecv` 的 invite.ok 分支）；
+         一直不回、红键看门狗先到点的，由 `forceEnd` 与 idle 下的迟到帧分支接着兜。
+        */
+        if ctx.state == .inviting, ctx.callID.isEmpty {
+            var next = ctx
+            next.cancelPending = true
+            return out(next)
+        }
+        return out(ctx, send: exit.frames(callID: ctx.callID))
     }
 
     static func invalidState(_ ctx: IMCallContext) -> IMMachineOutput<IMCallContext> {

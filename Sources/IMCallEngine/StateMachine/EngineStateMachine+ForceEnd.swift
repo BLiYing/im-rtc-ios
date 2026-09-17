@@ -58,33 +58,14 @@ extension IMEngineMachine {
     }
 
     /**
-     endFrames 按通话此刻的状态挑结束帧，以及本地收场写哪个结束原因。
+     endFrames 按通话此刻的状态挑结束帧，以及本地收场写哪个结束原因（查 `IMCallExit`）。
 
-     - `accepting` 发 **reject + hangup 两帧**：accept 有没有在服务端落地，本端不知道。
-       还在响铃就是 reject 生效（随后那条 hangup 被拒，无害）；已经接起来就是 hangup 生效。
-     - `inviting` 还没拿到 call_id（`call.invite.ok` 没回来）时**此刻发不了 cancel**，
-       由那条 invite.ok 迟到时补发（`IMFrameLoop.forceEnd` 与 `IMCallMachine.handleLateFrame`）。
+     `inviting` 还没拿到 call_id（`call.invite.ok` 没回来）时**此刻发不了 cancel**，
+     由那条 invite.ok 迟到时补发（`IMFrameLoop.forceEnd` 与 `IMCallMachine.handleLateFrame`）。
      */
     static func endFrames(for call: IMCallContext) -> ([IMOutgoingFrame], IMCallEndReason) {
-        let reason: IMCallEndReason
-        let types: [String]
-        switch call.state {
-        case .idle:
-            return ([], .hangup)
-        case .ringing:
-            reason = .reject
-            types = [IMFrameType.callReject]
-        case .inviting:
-            reason = .cancel
-            types = [IMFrameType.callCancel]
-        case .accepting:
-            reason = .hangup
-            types = [IMFrameType.callReject, IMFrameType.callHangup]
-        case .connecting, .connected:
-            reason = .hangup
-            types = [IMFrameType.callHangup]
-        }
-        guard !call.callID.isEmpty else { return ([], reason) }
-        return (types.map { IMCallMachine.callIDFrame($0, call) }, reason)
+        guard let exit = IMCallExit.of(call.state) else { return ([], .hangup) }
+        guard !call.callID.isEmpty else { return ([], exit.reason) }
+        return (exit.frames(callID: call.callID), exit.reason)
     }
 }

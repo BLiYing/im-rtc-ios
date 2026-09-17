@@ -7,9 +7,12 @@
 
 ## 当前焦点
 
-**2026-09-17 夜：「调用结果回给调用方」2.0.0 改造（server `docs/design/ACTION_RESULT_DESIGN.md`）已在 main 工作区改完、未提交，等 code-review。**
+**2026-09-17 夜：结束帧映射表合并（队列 3）**：四份「这个状态怎么结束」合成 `StateMachine/CallStateMachine+Exit.swift` 的 `IMCallExit`
+（`reduceAct` 退出方法 / `endFrames` / 迟到帧补发与挂着的 cancel / 帧循环失败收场集合都查它），`CallExitTableTests` 逐条对 `call_fsm.json`。行为不变。
+
+**2026-09-17 夜：「调用结果回给调用方」2.0.0 改造（server `docs/design/ACTION_RESULT_DESIGN.md`）已提交 `d2d2ae9`（未推送），code-review 已过。**
 发起类方法改 `async throws`（`call` 返回 callID）、本地拒绝走 `IMMachineOutput.reject`、`IMFrameLoop.request` 结算直接帧、
-`IMRTCError.forType`、destroy 契约（`DestroyContractTests`）、Kit 从 throw 取码（删 `joiningCallID` / `pendingJoinDenial`）。`test.sh` 10 步全绿 337 例 + Demo 编译。
+`IMRTCError.forType`、destroy 契约（`DestroyContractTests`）、Kit 从 throw 取码（删 `joiningCallID` / `pendingJoinDenial`）；Kit 主动加入任何失败都是「无法加入该通话」（对齐 Web / Android）。`test.sh` 10 步全绿 + Demo 编译。
 真机未验（joinCall 1202/1402/1409 文案、拨号拿 callID、通话中断网再挂断）。
 
 **2026-09-17 傍晚：四仓 /simplify 清理做完并推送（本仓 `dc76a99`…`7c3f457`，`test.sh` 10 步全绿 322 例 + Demo 编译；用户已复看，正常）。**
@@ -20,7 +23,7 @@
 
 ## 下一步
 
-1. 2.0.0：code-review 通过后提交；真机验上面三项。destroy 欠账（注释 / 空视图）已随这次改掉。
+1. 2.0.0：真机验上面三项（断网再挂断顺带验结束帧表），用户通知后发版。
 2. 按需 / 后续期：自定义铃声没有 Demo UI、没真机验过；`IMInviteMemberProvider` / `presentInvitePicker` 没真实宿主跑过；IMProgram / 容信真实接入（M3~M7）。
 
 ## 已知坑 / 限制
@@ -33,6 +36,7 @@
 - **别单独 `rm -rf DerivedData`**：Xcode 开着时 SwiftPM 命中缓存 zip 跳过下载然后 `fatalError`（`There is no XCFramework found`）。平时 ⇧⌘K；真要清先退 Xcode：
   `osascript -e 'quit app "Xcode"'; sleep 3; rm -rf ~/Library/Developer/Xcode/DerivedData ~/Library/Caches/org.swift.swiftpm/artifacts`。
 - **Kit 界面代码 macOS 上编不到**（`#if canImport(UIKit)`）：`swift test` 绿不算数，要跑完整 `test.sh`（第 10 步编 Demo）。macOS 也编的 Controller 文件不能引用 `IMKitTheme`；`IMCallController+Ringtone.swift` 全包在 `#if canImport(UIKit)`。
+- **结束帧一律查 `IMCallExit`**：别在状态机 / 帧循环里再手写「某状态发 hangup / reject / cancel」，改表要同时过 `CallExitTableTests`。
 - **`join_denied` 不是协议 reason**：`IMCallController` 在 `joinCall` 被拒（任何码）时本地改写的伪原因，只用于结束画面，别拿去和其他端对齐。
 - **「人先进来、轨道后到」是常态**：摆格子时的动作（层上报、尺寸、订阅）要能在轨道到达时再做一遍，别让去重表吃掉（`report(_:layer:hasVideo:)`）。
 - **通话中关摄像头停的是采集、不是轨道**：重开失败只记日志；`stopCapture()` 在 async 上下文解析到 async 重载，同步停走 `IMWebRTCAdapter.halt`；本端画布靠 `IMVideoRegistry.firstFrameArrived` 揭示。
