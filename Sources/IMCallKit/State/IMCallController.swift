@@ -69,6 +69,8 @@ public protocol IMCallControllerObserver: AnyObject {
     /// 与 `observers` 分开一张表：`IMCallControllerObserver` 是非 `@objc` 的 Swift 协议，
     /// ObjC 类型天生实现不了，只能另起一张表、另一套广播。
     let objcObservers = NSHashTable<AnyObject>.weakObjects()
+    /// block 形式的状态观察者，按注册顺序（见 `addStateChangeHandler(_:)`）。**只在主线程读写**。
+    var stateChangeHandlers: [(token: UUID, handler: (IMCallController) -> Void)] = []
     /// 本端已发布轨道的 cid。**不进 state**：它不参与渲染。
     var micCID = ""
     /// 本端摄像头轨道的 cid：**可能只是预览、还没发布**（拨出中 / 来电页上起的预览），看 `cameraPublished`。
@@ -99,6 +101,7 @@ public protocol IMCallControllerObserver: AnyObject {
     #if canImport(UIKit)
     var ringtonePlayer: AVAudioPlayer? // 起停逻辑见 IMCallController+Ringtone.swift。
     var ringtoneKind: IMRingtoneKind = .none
+    var vibrationTimer: DispatchSourceTimer? // 来电振动，同上。
     #endif
     /// 正在 `joinCall(_:)` 加入的那通电话；拒绝时（1409 等）区分「加人被拒」与「加入被拒」两种文案。
     /// 见 `IMCallController+Delegate.swift` 的 `didFailWithError`。
@@ -123,6 +126,7 @@ public protocol IMCallControllerObserver: AnyObject {
         settleTimers.values.forEach { $0.cancel() }
         #if canImport(UIKit)
         ringtonePlayer?.stop() // 同一条规矩：持有方释放时要停（2026-09-16 新增）。
+        vibrationTimer?.cancel()
         #endif
     }
 
@@ -303,6 +307,8 @@ public protocol IMCallControllerObserver: AnyObject {
         objcObservers.allObjects.forEach {
             ($0 as? IMCallControllerStateObserver)?.callControllerDidUpdateState(self)
         }
+        // 遍历的是数组副本：回调里退订自己（或别人）不影响这一轮。
+        stateChangeHandlers.forEach { $0.handler(self) }
     }
 
     func apply(_ action: IMCallViewAction) {
@@ -334,6 +340,7 @@ public protocol IMCallControllerObserver: AnyObject {
     private func onStateChanged(from before: IMCallViewState) {
         #if canImport(UIKit)
         updateRingtone() // 铃声起停的唯一挂载点（2026-09-16 新增），见 IMCallController+Ringtone.swift。
+        updateVibration() // 来电振动，同一个挂载点、同一个理由。
         #endif
         dismissTimer?.cancel()
         dismissTimer = nil

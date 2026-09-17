@@ -59,3 +59,36 @@ final class RingtoneRulesTests: XCTestCase {
         XCTAssertEqual(ringtoneFor(viaHangup, muted: false), .none)
     }
 }
+
+/// `imShouldVibrate(_:enabled:)`：只在来电响铃时振，与铃声静音互不影响。
+final class VibrationRulesTests: XCTestCase {
+
+    private func state(phase: IMCallPhase, isMeeting: Bool = false) -> IMCallViewState {
+        var state = IMCallViewState()
+        state.phase = phase
+        state.isMeeting = isMeeting
+        return state
+    }
+
+    func testVibratesOnlyWhileIncoming() {
+        XCTAssertTrue(imShouldVibrate(state(phase: .incoming), enabled: true))
+        for phase: IMCallPhase in [.idle, .outgoing, .connecting, .active, .ended] {
+            XCTAssertFalse(imShouldVibrate(state(phase: phase), enabled: true), "\(phase) 不该振")
+        }
+    }
+
+    func testDisabledNeverVibrates() {
+        XCTAssertFalse(imShouldVibrate(state(phase: .incoming), enabled: false))
+    }
+
+    func testMeetingNeverVibrates() {
+        XCTAssertFalse(imShouldVibrate(state(phase: .incoming, isMeeting: true), enabled: true))
+    }
+
+    /// 铃声静音不连带关振动：`ringtoneFor` 已经是 none，振动判据照样为真。
+    func testRingtoneMutedDoesNotSilenceVibration() {
+        let incoming = state(phase: .incoming)
+        XCTAssertEqual(ringtoneFor(incoming, muted: true), .none)
+        XCTAssertTrue(imShouldVibrate(incoming, enabled: true))
+    }
+}

@@ -78,10 +78,8 @@ extension IMCallController {
  **只传 controller 自身，不带状态快照**：宿主随后读 `objcPhase` / `isGroupCall` 等属性即可，
  不需要在这里再维护第二份「ObjC 版 `IMCallViewState`」——那正是上面那条注释想避免的重复。
 
- 只提供 delegate 形式，没有另配一份 block 形式：CONVENTIONS §4「回调同时提供 delegate 与
- block 两种形式」针对的是 Engine 那张对外回调总表（§7.5，宿主必接的信令/媒体事件）；
- 这里是 Kit 内部一个「要不要都行」的轻量通知，块形式需要额外一个 token 对象管生命周期，
- 目前没有真实宿主提出这个需求，先不加，需要时再补。
+ delegate 与 block 两种形式都给（CONVENTIONS §4）：block 形式见 `addStateChangeHandler(_:)`，
+ 退订凭证是 `NSUUID`，与 `IMCallEngine.addEventObserver(_:)` 同一个形状。
  */
 @objc public protocol IMCallControllerStateObserver: AnyObject {
     func callControllerDidUpdateState(_ controller: IMCallController)
@@ -96,5 +94,27 @@ extension IMCallController {
 
     @objc public func removeStateObserver(_ observer: IMCallControllerStateObserver) {
         objcObservers.remove(observer)
+    }
+}
+
+extension IMCallController {
+    /**
+     用 block 接状态变化（与 `addStateObserver(_:)` 走同一次 `broadcast()`），返回退订用的 token。
+
+     **block 被 controller 强持有，直到 `removeStateChangeHandler(_:)`**——与 delegate 形式的弱引用不同。
+     block 里用到宿主自己的对象时请弱捕获（ObjC 里 `__weak typeof(self) weakSelf = self;`），
+     否则宿主对象会被 controller 一直留着。回调在主线程。
+     */
+    @discardableResult
+    @objc public func addStateChangeHandler(_ handler: @escaping (IMCallController) -> Void) -> NSUUID {
+        let token = UUID()
+        stateChangeHandlers.append((token: token, handler: handler))
+        return token as NSUUID
+    }
+
+    /// 退订 `addStateChangeHandler(_:)` 登记的 block。token 不认识时什么都不做。
+    @objc public func removeStateChangeHandler(_ token: NSUUID) {
+        let target = token as UUID
+        stateChangeHandlers.removeAll { $0.token == target }
     }
 }

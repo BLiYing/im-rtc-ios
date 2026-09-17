@@ -81,6 +81,7 @@
                                                                  selectable:YES
                                                          unselectableReason:nil];
     config.inviteCandidates = @[candidate];
+    config.incomingVibration = NO;
 
     // 入口：纯 ObjC 造 Kit，拿到控制器。
     _kit = [[IMCallKit alloc] initWithEngine:_engine config:config];
@@ -88,6 +89,12 @@
 
     IMCallController *controller = _kit.controller;
     [controller addStateObserver:self];
+    // block 形式：返回 NSUUID 退订凭证，block 被强持有，里面弱捕获 self。
+    __weak typeof(self) weakSelf = self;
+    NSUUID *stateToken = [controller addStateChangeHandler:^(IMCallController *c) {
+        NSLog(@"[objc] block 状态变化：phase=%ld 群=%d %@", (long)c.objcPhase, c.isGroupCall, weakSelf);
+    }];
+    [controller removeStateChangeHandler:stateToken];
 
     // 发起（完整形态：isGroup / chatGroupID / userData / timeoutSec）。
     [controller placeCall:@[@"bob", @"carol"]

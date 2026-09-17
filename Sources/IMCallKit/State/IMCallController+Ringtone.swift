@@ -1,10 +1,11 @@
 import Foundation
 #if canImport(UIKit)
+import AudioToolbox
 import AVFoundation
 import IMCallEngine
 
 /*
- 来电铃声 + 回铃音的播放（2026-09-16）。
+ 来电铃声 + 回铃音的播放（2026-09-16），以及来电振动（2026-09-17）。
 
  判据在 `IMCallViewRules.swift` 的 `ringtoneFor(_:muted:)`——**纯函数、不带 UIKit**，
  单独放在那个文件里才能被 `swift test` 覆盖到（这个文件全包在 `#if canImport(UIKit)` 里，
@@ -46,6 +47,26 @@ extension IMCallController {
         } catch {
             IMRTCLog.warn("[Kit] 铃声播放失败", ["kind": kind.rawValue, "err": String(describing: error)])
         }
+    }
+
+    /**
+     updateVibration 来电时每 `IMIncomingVibrationIntervalSeconds` 振一下，离开来电阶段立刻停。
+
+     挂在 `onStateChanged` 上，状态每变一次都会进来：**已经在振就不重起**，否则来电页上
+     每次状态小变动（对方信息解析回来、预览起来）都会把节奏重置、连振两下。
+     没有振动马达的设备（iPad、模拟器）上系统调用本身是空操作。
+     */
+    func updateVibration() {
+        let wanted = imShouldVibrate(state, enabled: config.incomingVibration)
+        guard wanted != (vibrationTimer != nil) else { return }
+        vibrationTimer?.cancel()
+        vibrationTimer = nil
+        guard wanted else { return }
+        let timer = DispatchSource.makeTimerSource(queue: .main)
+        timer.schedule(deadline: .now(), repeating: IMIncomingVibrationIntervalSeconds)
+        timer.setEventHandler { AudioServicesPlaySystemSound(kSystemSoundID_Vibrate) }
+        vibrationTimer = timer
+        timer.resume()
     }
 
     /// ringtoneURL 取宿主给的文件；宿主没给就退回包内置的默认音（`Bundle.module`）。

@@ -135,6 +135,50 @@ final class ObjCBridgeTests: XCTestCase {
         XCTAssertGreaterThan(objcObserver.updateCount, 0)
     }
 
+    // MARK: - block 形式的状态观察者
+
+    func testStateChangeHandlerFiresAndUnsubscribes() {
+        let controller = makeController()
+        var phases: [IMCallKitPhase] = []
+        let token = controller.addStateChangeHandler { phases.append($0.objcPhase) }
+
+        controller.apply(.callPlaced(calleeIDs: ["bob"], mediaType: "audio", isGroup: false))
+        XCTAssertEqual(phases.last, .outgoing)
+
+        let count = phases.count
+        controller.removeStateChangeHandler(token)
+        controller.apply(.dismiss)
+        XCTAssertEqual(phases.count, count, "退订之后不该再收到")
+    }
+
+    /// 回调里退订自己：这一轮后面的 handler 照常收到，下一轮自己不再收到。
+    func testHandlerMayUnsubscribeItselfDuringBroadcast() {
+        let controller = makeController()
+        var selfCalls = 0
+        var otherCalls = 0
+        var token: NSUUID?
+        token = controller.addStateChangeHandler { c in
+            selfCalls += 1
+            if let token { c.removeStateChangeHandler(token) }
+        }
+        controller.addStateChangeHandler { _ in otherCalls += 1 }
+
+        controller.apply(.callPlaced(calleeIDs: ["bob"], mediaType: "audio", isGroup: false))
+        controller.apply(.dismiss)
+
+        XCTAssertEqual(selfCalls, 1)
+        XCTAssertEqual(otherCalls, 2)
+    }
+
+    func testRemovingUnknownTokenIsNoop() {
+        let controller = makeController()
+        var calls = 0
+        controller.addStateChangeHandler { _ in calls += 1 }
+        controller.removeStateChangeHandler(NSUUID())
+        controller.apply(.callPlaced(calleeIDs: ["bob"], mediaType: "audio", isGroup: false))
+        XCTAssertEqual(calls, 1)
+    }
+
     // MARK: - Kit 版本号 ObjC 可读
 
     func testKitVersionMatchesEngineVersion() {

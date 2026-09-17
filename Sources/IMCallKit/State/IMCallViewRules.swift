@@ -242,3 +242,19 @@ public func ringtoneFor(_ state: IMCallViewState, muted: Bool) -> IMRingtoneKind
     default: return .none
     }
 }
+
+/// 来电振动的间隔：系统振动一下约 0.4 秒，停 1.6 秒再来，节奏接近系统来电。
+public let IMIncomingVibrationIntervalSeconds: TimeInterval = 2
+
+/**
+ imShouldVibrate 决定此刻该不该振动（播放动作在 `IMCallController+Ringtone.swift`）。
+
+ 只在**来电响铃**时振（交互稿 §F「铃声 + 震动」）；拨出中的回铃不振，会议没有振铃。
+ **与 `ringtoneMuted` 无关**：静音铃声是「别出声」，振动是另一个开关（`IMCallKitConfig.incomingVibration`）——
+ 手机开着静音模式时，振动恰恰是用户唯一能察觉来电的方式。
+ 振动只在 iOS 做：Android 要宿主多声明 `VIBRATE` 权限、Web 振不了，见 CLIENT_PARITY「来电铃声」一行。
+ */
+public func imShouldVibrate(_ state: IMCallViewState, enabled: Bool) -> Bool {
+    enabled && !state.isMeeting && state.phase == .incoming
+}
+
