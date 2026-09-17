@@ -32,13 +32,19 @@ final class DialerViewController: UIViewController {
     /// 群呼默认名单。**不能含登录的那个人**——服务端会以 1004 拒掉整通电话
     /// （"callee_ids 不能含主叫自己"）。登录后 refresh() 会把自己剔掉。
     private var groupPick: [String] = ["alice", "carol"]
+    /// `session.addChangeObserver` 的退订 token。
+    private var changeObserverToken: UUID?
+
+    deinit {
+        if let changeObserverToken { session.removeChangeObserver(changeObserverToken) }
+    }
 
     override func viewDidLoad() {
         super.viewDidLoad()
         title = "拨号"
         view.backgroundColor = .systemGroupedBackground
         build()
-        session.onChange = { [weak self] in self?.refresh() }
+        changeObserverToken = session.addChangeObserver { [weak self] in self?.refresh() }
         refresh()
         // 上次登录过就自动重登——**杀掉 app 再打开不该回到登录页**。
         Task { await session.autoLogin() }

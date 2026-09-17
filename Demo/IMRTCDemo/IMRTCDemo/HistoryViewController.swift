@@ -11,6 +11,12 @@ import IMCallKit
 final class HistoryViewController: UITableViewController {
 
     private let session = DemoSession.shared
+    /// `session.addChangeObserver` 的退订 token。
+    private var changeObserverToken: UUID?
+
+    deinit {
+        if let changeObserverToken { session.removeChangeObserver(changeObserverToken) }
+    }
 
     override func viewDidLoad() {
         super.viewDidLoad()
@@ -18,8 +24,7 @@ final class HistoryViewController: UITableViewController {
         tableView.register(UITableViewCell.self, forCellReuseIdentifier: "r")
         navigationItem.rightBarButtonItem = UIBarButtonItem(
             barButtonSystemItem: .trash, target: self, action: #selector(clear))
-        let previous = session.onChange
-        session.onChange = { [weak self] in previous?(); self?.tableView.reloadData() }
+        changeObserverToken = session.addChangeObserver { [weak self] in self?.tableView.reloadData() }
     }
 
     override func viewWillAppear(_ animated: Bool) {
@@ -49,18 +54,22 @@ final class HistoryViewController: UITableViewController {
         return cell
     }
 
+    /*
+     结束原因的文案**改调 IMCallKit 公开的 `imEndReasonText(_:role:durationSec:)`**（2026-09-17）。
+
+     原先这里自己手拼了一份 switch，漏了 offline / answered_elsewhere / rejected_elsewhere /
+     room_closed / kicked 这几种——这些原因发生时会掉进 `default: outcome = record.reason`，
+     直接把线路上的 snake_case 原样显示给用户（比如一行「呼出 · offline · 10:32」）。
+     SDK 那份是四端对齐维护的唯一权威来源，Demo 不该自己另存一份随时间漂走的映射。
+
+     **行为变化**：hangup 分支的文案从纯时长（如 "12:34"）变成 "通话结束 · 12:34"
+     （无时长时 "通话结束"），与 Kit 结束页、Android/Web Demo 的措辞一致；
+     去掉了本地独有的 "timeout" 分支——它不在协议的结束原因表里，
+     真实场景不会收到，SDK 那份也没有对应分支。
+     */
     private static func summary(_ record: DemoSession.Record) -> String {
         let direction = record.role == "callee" ? "来电" : "呼出"
-        let outcome: String
-        switch record.reason {
-        case "hangup": outcome = imFormatDuration(record.durationSec)
-        case "cancel": outcome = "已取消"
-        case "reject": outcome = record.role == "callee" ? "已拒接" : "对方拒接"
-        case "busy": outcome = "对方忙线"
-        case "no_answer", "timeout": outcome = record.role == "callee" ? "未接来电" : "无应答"
-        case "network": outcome = "网络中断"
-        default: outcome = record.reason
-        }
+        let outcome = imEndReasonText(record.reason, role: record.role, durationSec: record.durationSec)
         let time = DateFormatter.localizedString(
             from: Date(timeIntervalSince1970: Double(record.endedAtMS) / 1000),
             dateStyle: .short, timeStyle: .short)

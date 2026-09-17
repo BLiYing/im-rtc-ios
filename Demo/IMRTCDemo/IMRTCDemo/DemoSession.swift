@@ -60,8 +60,33 @@ final class DemoSession {
     private(set) var records: [Record] = []
     private(set) var connectionText = "未登录"
 
-    /// 状态变了通知界面。三个 tab 各自订阅。
-    var onChange: (() -> Void)?
+    /**
+     状态变了通知界面。三个 tab 各自订阅。
+
+     **观察者列表，不是单槽闭包**——仿 `IMCallEngine.addEventObserver` /
+     `removeEventObserver` 的形状。原先 `onChange` 是单个属性：`HistoryViewController`
+     读出旧值再链式包一层（`{ previous?(); self?.tableView.reloadData() }`），
+     而 `DialerViewController` 直接整个覆盖赋值——两边谁后注册就把谁顶掉，
+     顶掉的那个 tab 从此再也收不到状态变化通知。
+     */
+    private var changeObservers: [UUID: () -> Void] = [:]
+
+    /// addChangeObserver 订阅状态变化，返回退订用的 token。
+    @discardableResult
+    func addChangeObserver(_ handler: @escaping () -> Void) -> UUID {
+        let token = UUID()
+        changeObservers[token] = handler
+        return token
+    }
+
+    /// removeChangeObserver 退订。
+    func removeChangeObserver(_ token: UUID) {
+        changeObservers[token] = nil
+    }
+
+    private func notifyChange() {
+        for handler in changeObservers.values { handler() }
+    }
 
     /// 当前这通电话的元数据，等 callEnd 时拼成记录。
     private var current: (peer: String, mediaType: String, isGroup: Bool, role: String)?
@@ -451,7 +476,7 @@ final class DemoSession {
     }
 
     private func notify() {
-        DispatchQueue.main.async { self.onChange?() }
+        DispatchQueue.main.async { self.notifyChange() }
     }
 
     // MARK: - 持久化
