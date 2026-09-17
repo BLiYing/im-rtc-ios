@@ -172,7 +172,7 @@ extension IMCallController {
         guard state.phase == .incoming, cameraCID.isEmpty, !previewStarting else { return }
         guard imShouldPreviewWhileRinging(mediaType: state.mediaType, cameraOn: state.selfState.cameraOn,
                                           cameraBlocked: state.selfState.cameraBlocked,
-                                          cameraStatus: IMSystemPermissionProbe().status(of: .camera)) else { return }
+                                          cameraStatus: systemProbe.status(of: .camera)) else { return }
         Task { await self.startPreviewIfWanted() }
     }
 }

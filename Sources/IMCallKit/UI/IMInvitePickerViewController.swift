@@ -68,12 +68,22 @@ final class IMInvitePickerViewController: UIViewController, UITableViewDataSourc
         requestTimeout?.cancel()
     }
 
+    /**
+     `candidates` / `inCall` 原是计算属性，`cellForRowAt` 每一行都要重算一遍——
+     `candidates` 要过滤整个候选名单，`inCall` 要重新拼一个 Set，n 行就是 O(n²)。
+     现在只在 `reloadData()` 前调一次 `refreshListCache()`，行内只读缓存。
+     */
+    private var candidatesCache: [IMInviteCandidate] = []
+    private var inCallCache: Set<String> = []
+
     /// 在通话里的人（含自己）。`state.participants` 不含自己，不补上的话自己会被当成可邀请。
-    private var inCall: Set<String> { Set([controller.engine.uid] + controller.state.participants.map(\.uid)) }
+    private func computeInCall() -> Set<String> {
+        Set([controller.engine.uid] + controller.state.participants.map(\.uid))
+    }
 
     /// candidates 是**这一屏此刻该展示的候选人**：provider 有数据就用它的累计页，
     /// 没有 provider 时退回静态名单本地过滤。宿主给什么列什么（含自己与发起人），在通话里的人置灰。
-    private var candidates: [IMInviteCandidate] {
+    private func computeCandidates() -> [IMInviteCandidate] {
         let base: [IMInviteCandidate]
         if provider != nil {
             base = pages
@@ -85,10 +95,17 @@ final class IMInvitePickerViewController: UIViewController, UITableViewDataSourc
         return base
     }
 
+    /// refreshListCache 在每次 `tableView.reloadData()` 之前调一次：定住这一轮渲染要用的
+    /// `candidates` / `inCall`，行内不再各自重算。
+    private func refreshListCache() {
+        inCallCache = computeInCall()
+        candidatesCache = computeCandidates()
+    }
+
     private var typedUID: String? {
-        guard controller.allowsManualUIDInput, candidates.isEmpty else { return nil }
+        guard controller.allowsManualUIDInput, candidatesCache.isEmpty else { return nil }
         let q = query.trimmingCharacters(in: .whitespaces)
-        guard !q.isEmpty, !inCall.contains(q), !picked.contains(q) else { return nil }
+        guard !q.isEmpty, !inCallCache.contains(q), !picked.contains(q) else { return nil }
         return q
     }
 
@@ -156,6 +173,9 @@ final class IMInvitePickerViewController: UIViewController, UITableViewDataSourc
             loadPage(reset: true)
         } else {
             loadState = .loaded
+            // 没有 provider 时 `loadPage` 不会走，缓存要在这里现算一次——否则
+            // `tableView` 第一次自动布局时 `candidatesCache` 还是空数组，页面开出来空空如也。
+            refreshListCache()
         }
     }
 
@@ -182,6 +202,7 @@ final class IMInvitePickerViewController: UIViewController, UITableViewDataSourc
             picked.append(uid)
         }
         refreshChrome()
+        refreshListCache()
         tableView.reloadData()
     }
 
@@ -201,6 +222,7 @@ final class IMInvitePickerViewController: UIViewController, UITableViewDataSourc
             guard !isLoadingMore, nextCursor != nil else { return }
             isLoadingMore = true
         }
+        refreshListCache()
         tableView.reloadData()
 
         requestTimeout?.cancel()
@@ -236,6 +258,7 @@ final class IMInvitePickerViewController: UIViewController, UITableViewDataSourc
             self.nextCursor = (nextCursor?.isEmpty ?? true) ? nil : nextCursor
             loadState = .loaded
         }
+        refreshListCache()
         tableView.reloadData()
     }
 
@@ -246,6 +269,7 @@ final class IMInvitePickerViewController: UIViewController, UITableViewDataSourc
     func searchBar(_ searchBar: UISearchBar, textDidChange searchText: String) {
         query = searchText
         guard provider != nil else {
+            refreshListCache()
             tableView.reloadData()
             return
         }
@@ -269,7 +293,7 @@ final class IMInvitePickerViewController: UIViewController, UITableViewDataSourc
     //          正常 → 候选人列表，滚到底且有下一页时追加取。
 
     private var extraRows: [String] {
-        let outside = picked.filter { uid in !candidates.contains { $0.uid == uid } }
+        let outside = picked.filter { uid in !candidatesCache.contains { $0.uid == uid } }
         return outside + (typedUID.map { [$0] } ?? [])
     }
 
@@ -282,8 +306,8 @@ final class IMInvitePickerViewController: UIViewController, UITableViewDataSourc
             tableView.backgroundView = statusView(for: loadState)
             return 0
         case .loaded:
-            tableView.backgroundView = candidates.isEmpty ? statusView(for: .loaded) : nil
-            return candidates.count
+            tableView.backgroundView = candidatesCache.isEmpty ? statusView(for: .loaded) : nil
+            return candidatesCache.count
         }
     }
 
@@ -338,7 +362,7 @@ final class IMInvitePickerViewController: UIViewController, UITableViewDataSourc
         let theme = IMKitTheme.current
         let cell = tableView.dequeueReusableCell(withIdentifier: IMInviteCandidateCell.reuseID, for: indexPath)
         guard let row = cell as? IMInviteCandidateCell else { return cell }
-        row.backgroundColor = UIColor(white: 1, alpha: 0.05)
+        row.backgroundColor = theme.hairlineFill
         if indexPath.section == 0 {
             let uid = extraRows[indexPath.row]
             let isPicked = picked.contains(uid)
@@ -348,8 +372,8 @@ final class IMInvitePickerViewController: UIViewController, UITableViewDataSourc
             row.selectionStyle = .default
             return row
         }
-        let candidate = candidates[indexPath.row]
-        let already = inCall.contains(candidate.uid)
+        let candidate = candidatesCache[indexPath.row]
+        let already = inCallCache.contains(candidate.uid)
         let blocked = already || !candidate.selectable
         let subtitle: String?
         if already {
@@ -371,11 +395,11 @@ final class IMInvitePickerViewController: UIViewController, UITableViewDataSourc
         if indexPath.section == 0 {
             let uid = extraRows[indexPath.row]
             toggle(uid)
-            if !candidates.contains(where: { $0.uid == uid }) { query = ""; searchBar.text = "" }
+            if !candidatesCache.contains(where: { $0.uid == uid }) { query = ""; searchBar.text = "" }
             return
         }
-        let candidate = candidates[indexPath.row]
-        guard !inCall.contains(candidate.uid), candidate.selectable else { return }
+        let candidate = candidatesCache[indexPath.row]
+        guard !inCallCache.contains(candidate.uid), candidate.selectable else { return }
         toggle(candidate.uid)
     }
 
@@ -383,7 +407,7 @@ final class IMInvitePickerViewController: UIViewController, UITableViewDataSourc
     func tableView(_ tableView: UITableView, willDisplay cell: UITableViewCell,
                    forRowAt indexPath: IndexPath) {
         guard provider != nil, indexPath.section == 1, nextCursor != nil, !isLoadingMore,
-              indexPath.row >= candidates.count - 3 else { return }
+              indexPath.row >= candidatesCache.count - 3 else { return }
         loadPage(reset: false)
     }
 }

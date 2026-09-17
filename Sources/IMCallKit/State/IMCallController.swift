@@ -108,8 +108,11 @@ public protocol IMCallControllerObserver: AnyObject {
     var joiningCallID: String?
     /// 加入被 1409 拒绝：下一条 `callDidEnd` 要把 reason 改写成本地伪原因 `join_denied`。
     var pendingJoinDenial = false
+    /// 系统权限探针。**只这一份、controller 全程复用**——`startRingingPreviewIfAllowed()`
+    /// 原先每次来电都 `IMSystemPermissionProbe()` 现造一个，探针本身无状态，没必要每次都新建。
+    let systemProbe: IMDevicePermissionProbe = IMSystemPermissionProbe()
     /// 权限门。系统探针默认走 AVFoundation，测试可换。
-    lazy var permissionGate = makePermissionGate(systemProbe: IMSystemPermissionProbe())
+    lazy var permissionGate = makePermissionGate(systemProbe: systemProbe)
 
     @objc public init(engine: IMCallEngine) {
         self.engine = engine
@@ -149,16 +152,8 @@ public protocol IMCallControllerObserver: AnyObject {
             let outcome = await permissionGate.ensure(
                 imPermissionDevicesForPlacing(mediaType: mediaType, isGroup: isGroup))
             guard await settle(outcome, onBlocked: { self.apply(.dismiss) }) else { return }
-            /*
-             **过完权限门要再看一眼这一屏还在不在。** 权限门可能停在系统框 / 说明卡上好几秒，
-             这期间用户完全可能按了红键（甚至已经被 `armEndWatchdog` 本地收场）。
-             不看的话：屏幕早就收了，invite 却在用户授权的那一刻才发出去——
-             对方响起铃来，主叫这边一个界面都没有。
-            */
-            guard await MainActor.run(body: { self.state.phase == .outgoing }) else {
-                IMRTCLog.warn("[Kit] 过完权限门时这一屏已经不在了，invite 不发")
-                return
-            }
+            // 过完权限门要再看一眼这一屏还在不在，见 `stillOnScreen(expecting:whenGone:)`。
+            guard await stillOnScreen(expecting: .outgoing, whenGone: "[Kit] 过完权限门时这一屏已经不在了，invite 不发") else { return }
             // 群通话默认关着摄像头：权限照问（交互稿 §01），摄像头不开。
             await startPreviewIfWanted()
             let options = IMCallOptions(isGroup: isGroup, chatGroupID: chatGroupID,
@@ -195,16 +190,32 @@ public protocol IMCallControllerObserver: AnyObject {
             let outcome = await permissionGate.ensure(devices)
             guard await settle(outcome, onBlocked: { Task { await self.engine.reject() } }) else { return }
             // 同 `placeCall`：权限门期间对方可能已经取消、用户也可能已经按了拒接。
-            guard await MainActor.run(body: { self.state.phase == .incoming }) else {
-                IMRTCLog.warn("[Kit] 过完权限门时这通来电已经不在了，accept 不发")
-                return
-            }
+            guard await stillOnScreen(expecting: .incoming, whenGone: "[Kit] 过完权限门时这通来电已经不在了，accept 不发") else { return }
             await startPreviewIfWanted()
             await engine.accept()
         }
     }
 
     @objc public func reject() { Task { await engine.reject() } }
+
+    /**
+     stillOnScreen 在过完权限门之后再确认这一屏还在——`placeCall` 与 `accept` 共用。
+
+     权限门可能停在系统框 / 说明卡上好几秒，这期间用户完全可能已经按了红键
+     （甚至已经被 `armEndWatchdog` 本地收场）。不看的话：屏幕早就收了，
+     invite / accept 却在用户授权的那一刻才发出去。
+
+     `expectedPhase` 是这一动作期望当时处在的阶段（`placeCall` 是 `.outgoing`、
+     `accept` 是 `.incoming`）；不在了就记一条 `whenGone` 日志，返回 `false`。
+     */
+    private func stillOnScreen(expecting expectedPhase: IMCallPhase, whenGone: String) async -> Bool {
+        let stillThere = await MainActor.run { self.state.phase == expectedPhase }
+        guard stillThere else {
+            IMRTCLog.warn(whenGone)
+            return false
+        }
+        return true
+    }
 
     /// 前后摄像头翻转。**纯媒体动作，不改视图状态**——镜像由媒体层自己处理。
     @objc public func switchCamera() {
