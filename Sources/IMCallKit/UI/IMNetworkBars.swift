@@ -48,7 +48,7 @@ public final class IMNetworkBars: UIView {
         // 5 以上是「网络很差」，柱子变橙（规范 §02 warn）。
         let litColor = level >= 5 ? theme.warning : theme.primaryText
         for (index, bar) in bars.enumerated() {
-            bar.backgroundColor = index < lit ? litColor : UIColor(white: 1, alpha: 0.25)
+            bar.backgroundColor = index < lit ? litColor : theme.subtleStroke
         }
         textLabel.text = imNetworkText(level: level)
         textLabel.textColor = level >= 5 ? theme.warning : theme.secondaryText

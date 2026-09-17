@@ -53,7 +53,7 @@ final class IMCallGridView: UIView {
         heightConstraint = rowsStack.heightAnchor.constraint(equalToConstant: 0)
         hiddenPill.font = .systemFont(ofSize: 12)
         hiddenPill.textColor = .white
-        hiddenPill.backgroundColor = UIColor(white: 0, alpha: 0.6)
+        hiddenPill.backgroundColor = IMKitTheme.current.pillBackground
         hiddenPill.layer.cornerRadius = 11
         hiddenPill.clipsToBounds = true
         hiddenPill.isHidden = true

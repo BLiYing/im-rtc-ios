@@ -38,11 +38,8 @@ public final class IMAvatarDiscView: UIView {
         NSLayoutConstraint.activate([
             initial.centerXAnchor.constraint(equalTo: centerXAnchor),
             initial.centerYAnchor.constraint(equalTo: centerYAnchor),
-            photo.topAnchor.constraint(equalTo: topAnchor),
-            photo.leadingAnchor.constraint(equalTo: leadingAnchor),
-            photo.trailingAnchor.constraint(equalTo: trailingAnchor),
-            photo.bottomAnchor.constraint(equalTo: bottomAnchor),
         ])
+        photo.imPinEdges(to: self)
     }
 
     @available(*, unavailable)

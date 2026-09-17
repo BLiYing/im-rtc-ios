@@ -47,8 +47,9 @@ public final class IMAudioStageView: UIView {
         let key = "imrtc.breathe"
         if ringing, ring.layer.animation(forKey: key) == nil {
             let breathe = CABasicAnimation(keyPath: "borderColor")
-            breathe.fromValue = UIColor(white: 1, alpha: 0.25).cgColor
-            breathe.toValue = UIColor(white: 1, alpha: 0.05).cgColor
+            let theme = IMKitTheme.current
+            breathe.fromValue = theme.subtleStroke.cgColor
+            breathe.toValue = theme.hairlineFill.cgColor
             breathe.duration = 0.8
             breathe.autoreverses = true
             breathe.repeatCount = .infinity
@@ -64,7 +65,7 @@ public final class IMAudioStageView: UIView {
         let size = theme.avatarLarge
         // 光环：3pt 外环，offset 8（规范 §04）。
         ring.layer.borderWidth = 3
-        ring.layer.borderColor = UIColor(white: 1, alpha: 0.25).cgColor
+        ring.layer.borderColor = theme.subtleStroke.cgColor
         ring.layer.cornerRadius = (size + 22) / 2
         ring.isUserInteractionEnabled = false
 

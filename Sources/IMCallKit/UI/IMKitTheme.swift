@@ -46,6 +46,20 @@ public struct IMKitTheme: Sendable {
     public var banner = UIColor(red: 0x1E / 255, green: 0x23 / 255, blue: 0x30 / 255, alpha: 1)
     /// 格子上名字标签、角标的黑底 55%。
     public var scrim = UIColor(white: 0, alpha: 0.55)
+    /// 极浅的白描边 / 填充（5%）：选人页行底、呼吸动效的暗端。
+    public var hairlineFill = UIColor(white: 1, alpha: 0.05)
+    /// 半透明白描边 / 填充（25%）：网络条未点亮格、说话呼吸环、呼吸动效的亮端。
+    public var subtleStroke = UIColor(white: 1, alpha: 0.25)
+    /// 分割线（白 12%）。
+    public var divider = UIColor(white: 1, alpha: 0.12)
+    /// 小窗（PiP）描边（白 55%）。
+    public var pipBorder = UIColor(white: 1, alpha: 0.55)
+    /// 小窗拖动时四角「幽灵格」描边（白 35%）。
+    public var pipGhostBorder = UIColor(white: 1, alpha: 0.35)
+    /// 「还有 N 人」之类的黑底胶囊（60%）。
+    public var pillBackground = UIColor(white: 0, alpha: 0.6)
+    /// 通话页背后的蒙层色（比 `overlayBackground` 略暗、带 42% 透明度，用于弹出通话页时的过渡）。
+    public var dimmerBackground = UIColor(red: 8 / 255, green: 10 / 255, blue: 16 / 255, alpha: 0.42)
 
     // MARK: 尺寸（规范 §04）
 
@@ -53,6 +67,9 @@ public struct IMKitTheme: Sendable {
     public var controlSize: CGFloat = 56
     public var controlSizeBig: CGFloat = 64
     public var controlSizeSmall: CGFloat = 44
+    /// 格子互换 / 拨出预览等场景下的小头像。与 `controlSizeSmall` 恰好同值，但语义不同
+    /// （一个是按钮尺寸，一个是头像尺寸），分开一个字段防止「改按钮尺寸时头像跟着变」。
+    public var avatarSmall: CGFloat = 44
     public var iconPointSize: CGFloat = 22
     public var iconPointSizeBig: CGFloat = 26
     public var iconPointSizeSmall: CGFloat = 18
@@ -83,6 +100,13 @@ public struct IMKitTheme: Sendable {
     public var settledHold: TimeInterval = IMSettledHoldSeconds
     /// 「对方网络不佳」横幅多久后收起成角标。
     public var networkBannerHold: TimeInterval = 2
+    /// 贴边 / 落位这类弹簧动画的阻尼与初速（悬浮球、小窗）。
+    public var snapSpringDamping: CGFloat = 0.8
+    public var snapSpringVelocity: CGFloat = 0.5
+    /// 来电横幅弹入的弹簧参数（时长 / 阻尼 / 初速）。
+    public var bannerSpringDuration: TimeInterval = 0.3
+    public var bannerSpringDamping: CGFloat = 0.85
+    public var bannerSpringVelocity: CGFloat = 0.6
 
     public init() {}
 

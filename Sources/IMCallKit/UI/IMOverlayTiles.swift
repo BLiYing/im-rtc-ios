@@ -82,13 +82,7 @@ final class IMFullStage {
         tile.layer.cornerRadius = 0
         tile.translatesAutoresizingMaskIntoConstraints = false
         host.addSubview(tile)
-        constraints = [
-            tile.topAnchor.constraint(equalTo: host.topAnchor),
-            tile.leadingAnchor.constraint(equalTo: host.leadingAnchor),
-            tile.trailingAnchor.constraint(equalTo: host.trailingAnchor),
-            tile.bottomAnchor.constraint(equalTo: host.bottomAnchor),
-        ]
-        NSLayoutConstraint.activate(constraints)
+        constraints = tile.imPinEdges(to: host)
         self.tile = tile
     }
 

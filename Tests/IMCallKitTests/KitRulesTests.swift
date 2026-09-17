@@ -43,6 +43,42 @@ final class PipLayoutTests: XCTestCase {
     }
 }
 
+/// 悬浮球贴边算术：从 `IMFloatingBubble.snapToEdge(in:)` 下沉出来的纯函数
+/// （`Layout/IMFloatingBubbleLayout.swift`）。数按原先内联算法手算：容器 400×800，
+/// 悬浮球（含挂断）56×88，离边缘 8pt、离上下 60pt。
+final class FloatingBubbleLayoutTests: XCTestCase {
+    private let bubble = IMPipSize(width: 56, height: 88)
+
+    func testSnapsToNearerEdge() {
+        // 中心在左半边 → 贴左边缘：inset = 200 - 8 - 28 = 164，targetX = 200 - 164 = 36。
+        XCTAssertEqual(
+            imFloatingBubbleSnapCenter(IMPipPoint(x: 50, y: 400), containerWidth: 400, containerHeight: 800, bubbleSize: bubble),
+            IMPipPoint(x: 36, y: 400))
+        // 中心在右半边 → 贴右边缘：targetX = 200 + 164 = 364。
+        XCTAssertEqual(
+            imFloatingBubbleSnapCenter(IMPipPoint(x: 350, y: 400), containerWidth: 400, containerHeight: 800, bubbleSize: bubble),
+            IMPipPoint(x: 364, y: 400))
+    }
+
+    func testVerticalClampedToInset() {
+        // 顶部越界夹到 minY = 44 + 60 = 104。
+        XCTAssertEqual(
+            imFloatingBubbleSnapCenter(IMPipPoint(x: 50, y: 10), containerWidth: 400, containerHeight: 800, bubbleSize: bubble),
+            IMPipPoint(x: 36, y: 104))
+        // 底部越界夹到 maxY = 800 - 44 - 60 = 696。
+        XCTAssertEqual(
+            imFloatingBubbleSnapCenter(IMPipPoint(x: 50, y: 790), containerWidth: 400, containerHeight: 800, bubbleSize: bubble),
+            IMPipPoint(x: 36, y: 696))
+    }
+
+    func testExactHalfGoesRight() {
+        // center.x == half 时 `<` 判假，走右边缘分支——与原实现的分支判据一致。
+        XCTAssertEqual(
+            imFloatingBubbleSnapCenter(IMPipPoint(x: 200, y: 400), containerWidth: 400, containerHeight: 800, bubbleSize: bubble),
+            IMPipPoint(x: 364, y: 400))
+    }
+}
+
 /// 头像取色：`fnv1a32(uid) % 9`，四端共用。数与 Web 的 `avatar.test.ts` 一致。
 final class AvatarTests: XCTestCase {
     func testFNV1a32Vectors() {

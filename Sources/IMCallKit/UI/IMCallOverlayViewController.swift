@@ -111,7 +111,7 @@ public final class IMCallOverlayViewController: UIViewController {
         gradient.endPoint = CGPoint(x: 1.2, y: 0.7)
         view.layer.insertSublayer(gradient, at: 0)
         // 视频页控制条底下垫一层透明 → 黑 55% 的渐变，否则浅色画面上白图标看不见（规范 §04）。
-        controlsScrim.colors = [UIColor.clear.cgColor, UIColor(white: 0, alpha: 0.55).cgColor]
+        controlsScrim.colors = [UIColor.clear.cgColor, theme.scrim.cgColor]
         controlsScrim.isHidden = true
 
         endedLabel.font = .systemFont(ofSize: 17)
@@ -139,12 +139,8 @@ public final class IMCallOverlayViewController: UIViewController {
          hugging 优先级博弈（它没有固有尺寸，优先级对它不起作用；实测就是「内容缩在顶部一条细带」）。
          头部与控制条都钉了高度（规范 §04：64 / 96），中间的高度就被完全确定了。
         */
+        videoFull.imPinEdges(to: view)
         NSLayoutConstraint.activate([
-            videoFull.topAnchor.constraint(equalTo: view.topAnchor),
-            videoFull.leadingAnchor.constraint(equalTo: view.leadingAnchor),
-            videoFull.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-            videoFull.bottomAnchor.constraint(equalTo: view.bottomAnchor),
-
             header.topAnchor.constraint(equalTo: guide.topAnchor, constant: 8),
             header.leadingAnchor.constraint(equalTo: guide.leadingAnchor),
             header.trailingAnchor.constraint(equalTo: guide.trailingAnchor),
@@ -172,8 +168,8 @@ public final class IMCallOverlayViewController: UIViewController {
             controlsStack.trailingAnchor.constraint(equalTo: guide.trailingAnchor, constant: -16),
             controlsStack.bottomAnchor.constraint(equalTo: guide.bottomAnchor, constant: -26),
         ])
-        pin(audioStage, to: stage)
-        pin(gridView, to: stage, inset: 12)
+        audioStage.imPinEdges(to: stage)
+        gridView.imPinEdges(to: stage, inset: 12)
 
         header.minimizeButton.addTarget(self, action: #selector(onMinimize), for: .touchUpInside)
         header.inviteButton.addTarget(self, action: #selector(onInvite), for: .touchUpInside)
@@ -192,15 +188,6 @@ public final class IMCallOverlayViewController: UIViewController {
         }
         // 单击画面空白处：显示 / 隐藏控制条（视频版式才生效）。
         stage.addGestureRecognizer(UITapGestureRecognizer(target: self, action: #selector(onStageTap)))
-    }
-
-    private func pin(_ child: UIView, to parent: UIView, inset: CGFloat = 0) {
-        NSLayoutConstraint.activate([
-            child.topAnchor.constraint(equalTo: parent.topAnchor, constant: inset),
-            child.leadingAnchor.constraint(equalTo: parent.leadingAnchor, constant: inset),
-            child.trailingAnchor.constraint(equalTo: parent.trailingAnchor, constant: -inset),
-            child.bottomAnchor.constraint(equalTo: parent.bottomAnchor, constant: -inset),
-        ])
     }
 
     // MARK: - 动作
@@ -340,7 +327,7 @@ public final class IMCallOverlayViewController: UIViewController {
         fullStage.unpin()
         // 拨出视频时右上角叠本端预览（草图 §03-E：拨出时看得见自己）。
         let showPreview = state.mediaType == "video" && state.selfState.cameraOn && controller.hasLocalCamera
-        applySelfTile(state, avatarSize: 44)
+        applySelfTile(state, avatarSize: IMKitTheme.current.avatarSmall)
         pip.setContent(showPreview ? selfTile : nil)
         pip.isHidden = !showPreview
         pip.liftsForControls = false
@@ -363,9 +350,9 @@ public final class IMCallOverlayViewController: UIViewController {
                      label: imResolvedName(controller.profileResolver, uid: peer.uid, fallback: peer.uid),
                      hasVideo: peer.hasVideo, hasAudio: peer.hasAudio,
                      isSpeaking: false, networkLevel: peer.networkLevel,
-                     avatarSize: state.isSwapped ? 44 : IMKitTheme.current.avatarLarge,
+                     avatarSize: state.isSwapped ? IMKitTheme.current.avatarSmall : IMKitTheme.current.avatarLarge,
                      avatarImage: imResolvedAvatar(controller.profileResolver, uid: peer.uid))
-        applySelfTile(state, avatarSize: state.isSwapped ? IMKitTheme.current.avatarLarge : 44)
+        applySelfTile(state, avatarSize: state.isSwapped ? IMKitTheme.current.avatarLarge : IMKitTheme.current.avatarSmall)
         fullStage.pin(full)
         pip.setContent(small)
         pip.isHidden = false
@@ -382,7 +369,7 @@ public final class IMCallOverlayViewController: UIViewController {
         let visible = imVisibleTiles(state.participants)
         remoteTiles.retire(keeping: Set(visible.map(\.uid)))
         var ordered: [UIView] = []
-        applySelfTile(state, avatarSize: 44)
+        applySelfTile(state, avatarSize: IMKitTheme.current.avatarSmall)
         controller.attachLocalPreview(to: state.mediaType == "video" ? selfTile.renderView : nil)
         ordered.append(selfTile)
         for p in visible {

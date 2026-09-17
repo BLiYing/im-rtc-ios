@@ -91,7 +91,7 @@ public final class IMCallWindow {
         }
         guard let host = window.rootViewController?.view else { return }
         let dimmer = UIView()
-        dimmer.backgroundColor = UIColor(red: 8 / 255, green: 10 / 255, blue: 16 / 255, alpha: 0.42)
+        dimmer.backgroundColor = IMKitTheme.current.dimmerBackground
         let cardView = IMPromptCardView()
         cardView.apply(card)
         cardView.onAnswer = { ok in card.answer(ok) }
@@ -220,8 +220,9 @@ public final class IMCallWindow {
         (window as? IMPassthroughWindow)?.hitTarget = banner
         // 从顶部滑入——横幅突然出现像 bug，滑入才像通知。
         banner.transform = CGAffineTransform(translationX: 0, y: -120)
-        UIView.animate(withDuration: 0.3, delay: 0, usingSpringWithDamping: 0.85,
-                       initialSpringVelocity: 0.6) { banner.transform = .identity }
+        let theme = IMKitTheme.current
+        UIView.animate(withDuration: theme.bannerSpringDuration, delay: 0, usingSpringWithDamping: theme.bannerSpringDamping,
+                       initialSpringVelocity: theme.bannerSpringVelocity) { banner.transform = .identity }
     }
 
     private func mountBubble(in host: UIViewController, scene: UIWindowScene,

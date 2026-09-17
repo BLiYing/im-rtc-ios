@@ -73,11 +73,8 @@ public final class IMIncomingBanner: UIView {
             (rejectButton, theme.danger, theme.primaryText, IMKitIcon.xmark, "拒绝"),
             (acceptButton, theme.accept, theme.acceptText, IMKitIcon.phone, "接听"),
         ] {
-            button.backgroundColor = color
-            button.tintColor = tint
-            button.setImage(icon.image(pointSize: 16), for: .normal)
-            button.layer.cornerRadius = 19
-            button.accessibilityLabel = label
+            imConfigureCircleIconButton(button, icon: icon, pointSize: 16, diameter: 38,
+                                        tint: tint, background: color, accessibilityLabel: label)
         }
         cameraButton.backgroundColor = theme.controlBackground
         cameraButton.tintColor = theme.primaryText

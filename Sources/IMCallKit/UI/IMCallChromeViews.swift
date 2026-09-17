@@ -39,11 +39,9 @@ public final class IMCallHeaderView: UIView {
         let theme = IMKitTheme.current
         for (button, icon, label) in [(minimizeButton, IMKitIcon.pip, "收进小窗"),
                                       (inviteButton, IMKitIcon.personAdd, "添加成员")] {
-            button.setImage(icon.image(pointSize: 15), for: .normal)
-            button.tintColor = theme.primaryText
-            button.backgroundColor = theme.controlBackground
-            button.layer.cornerRadius = 16
-            button.accessibilityLabel = label
+            imConfigureCircleIconButton(button, icon: icon, pointSize: 15, diameter: 32,
+                                        tint: theme.primaryText, background: theme.controlBackground,
+                                        accessibilityLabel: label)
             button.translatesAutoresizingMaskIntoConstraints = false
             addSubview(button)
             NSLayoutConstraint.activate([
@@ -175,7 +173,7 @@ public final class IMPromptCardView: UIView {
         actions.axis = .horizontal
         actions.distribution = .fillEqually
         let divider = UIView()
-        divider.backgroundColor = UIColor(white: 1, alpha: 0.12)
+        divider.backgroundColor = theme.divider
 
         for view in [text, divider, actions] {
             view.translatesAutoresizingMaskIntoConstraints = false

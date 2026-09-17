@@ -126,20 +126,14 @@ public final class IMFloatingBubble: UIView {
         stack.spacing = 0
         stack.translatesAutoresizingMaskIntoConstraints = false
         body.addSubview(stack)
+        renderView.imPinEdges(to: body)
         NSLayoutConstraint.activate([
-            renderView.topAnchor.constraint(equalTo: body.topAnchor),
-            renderView.leadingAnchor.constraint(equalTo: body.leadingAnchor),
-            renderView.trailingAnchor.constraint(equalTo: body.trailingAnchor),
-            renderView.bottomAnchor.constraint(equalTo: body.bottomAnchor),
             stack.centerXAnchor.constraint(equalTo: body.centerXAnchor),
             stack.centerYAnchor.constraint(equalTo: body.centerYAnchor),
         ])
 
-        hangupButton.setImage(IMKitIcon.phoneDown.image(pointSize: 13), for: .normal)
-        hangupButton.tintColor = theme.primaryText
-        hangupButton.backgroundColor = theme.danger
-        hangupButton.layer.cornerRadius = Self.hangupSize / 2
-        hangupButton.accessibilityLabel = "挂断"
+        imConfigureCircleIconButton(hangupButton, icon: .phoneDown, pointSize: 13, diameter: Self.hangupSize,
+                                    tint: theme.primaryText, background: theme.danger, accessibilityLabel: "挂断")
         hangupButton.addTarget(self, action: #selector(hangupTapped), for: .touchUpInside)
         hangupButton.translatesAutoresizingMaskIntoConstraints = false
         addSubview(hangupButton)
@@ -188,16 +182,17 @@ public final class IMFloatingBubble: UIView {
     }
 
     /// snapToEdge 吸附到最近的左右边缘，并夹在安全区内。四端同一组弹簧参数（阻尼 .8 / 初速 .5）。
+    ///
+    /// 位置算术本身是纯函数 `imFloatingBubbleSnapCenter`（`Layout/IMFloatingBubbleLayout.swift`），
+    /// 这里只负责喂参数与做动画。
     public func snapToEdge(in bounds: CGRect) {
-        let half = bounds.width / 2
-        let inset = bounds.width * 0.5 - 8 - self.bounds.width / 2 // 离边缘 8pt
-        let targetX = center.x < half ? bounds.midX - inset : bounds.midX + inset
-        let minY = self.bounds.height / 2 + 60
-        let maxY = bounds.height - self.bounds.height / 2 - 60
-        let targetY = min(max(center.y, minY), maxY)
+        let target = imFloatingBubbleSnapCenter(
+            IMPipPoint(x: center.x, y: center.y),
+            containerWidth: bounds.width, containerHeight: bounds.height,
+            bubbleSize: IMPipSize(width: self.bounds.width, height: self.bounds.height))
         UIView.animate(withDuration: IMKitTheme.current.snapDuration, delay: 0, usingSpringWithDamping: 0.8,
                        initialSpringVelocity: 0.5) {
-            self.center = CGPoint(x: targetX, y: targetY)
+            self.center = CGPoint(x: target.x, y: target.y)
         }
     }
 }

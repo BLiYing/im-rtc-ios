@@ -42,7 +42,7 @@ public final class IMPipView: UIView {
         let theme = IMKitTheme.current
         layer.cornerRadius = theme.pipCornerRadius
         layer.borderWidth = 1.5
-        layer.borderColor = UIColor(white: 1, alpha: 0.55).cgColor
+        layer.borderColor = theme.pipBorder.cgColor
         layer.shadowColor = UIColor.black.cgColor
         layer.shadowOpacity = 0.45
         layer.shadowRadius = 13
@@ -80,12 +80,7 @@ public final class IMPipView: UIView {
         view.layer.cornerRadius = IMKitTheme.current.pipCornerRadius
         view.translatesAutoresizingMaskIntoConstraints = false
         addSubview(view)
-        NSLayoutConstraint.activate([
-            view.topAnchor.constraint(equalTo: topAnchor),
-            view.leadingAnchor.constraint(equalTo: leadingAnchor),
-            view.trailingAnchor.constraint(equalTo: trailingAnchor),
-            view.bottomAnchor.constraint(equalTo: bottomAnchor),
-        ])
+        view.imPinEdges(to: self)
     }
 
     /// 容器尺寸变了（转屏、首次布局）就按当前角重摆。调用方在 `viewDidLayoutSubviews` 里调。
@@ -162,7 +157,7 @@ public final class IMPipView: UIView {
             let ghost = UIView(frame: restFrame(for: c))
             ghost.layer.cornerRadius = IMKitTheme.current.pipCornerRadius
             ghost.layer.borderWidth = 1.5
-            ghost.layer.borderColor = UIColor(white: 1, alpha: 0.35).cgColor
+            ghost.layer.borderColor = IMKitTheme.current.pipGhostBorder.cgColor
             ghost.isUserInteractionEnabled = false
             container.insertSubview(ghost, belowSubview: self)
             ghosts.append(ghost)

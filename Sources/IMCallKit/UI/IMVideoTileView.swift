@@ -76,12 +76,8 @@ public final class IMVideoTileView: UIView {
             avatarDisc.widthAnchor.constraint(equalToConstant: 44),
             avatarDisc.heightAnchor.constraint(equalToConstant: 44),
         ]
+        renderView.imPinEdges(to: self)
         NSLayoutConstraint.activate(avatarSizeConstraints + [
-            renderView.topAnchor.constraint(equalTo: topAnchor),
-            renderView.leadingAnchor.constraint(equalTo: leadingAnchor),
-            renderView.trailingAnchor.constraint(equalTo: trailingAnchor),
-            renderView.bottomAnchor.constraint(equalTo: bottomAnchor),
-
             avatarDisc.centerXAnchor.constraint(equalTo: centerXAnchor),
             avatarDisc.centerYAnchor.constraint(equalTo: centerYAnchor),
 
