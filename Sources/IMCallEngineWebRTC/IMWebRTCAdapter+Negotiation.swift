@@ -58,11 +58,14 @@ extension IMWebRTCAdapter {
     /// **2026-09-16 新增**：开头也调 `ensureAudioSessionConfigured()`——服务端推下行 offer 与 Kit 调 `acquireMicrophone` 是两条独立异步路径，前者可能先到，理由见该方法顶部注释。
     public func answerSubOffer(_ sdp: String) async throws -> String {
         ensureAudioSessionConfigured()
-        try await ensurePeers().setRemoteDescription(
+        // 取一次局部变量复用：`IMPeerConnections` 是引用类型，自己不会在三步之间
+        // 把 pub/sub 换掉——会让 peers 整个换掉的只有 `close()`（调用方持有旧引用即可）。
+        let peers = ensurePeers()
+        try await peers.setRemoteDescription(
             RTCSessionDescription(type: .offer, sdp: sdp), for: .sub)
         let constraints = RTCMediaConstraints(mandatoryConstraints: nil, optionalConstraints: nil)
-        let answer = try await ensurePeers().sub.answer(for: constraints)
-        try await ensurePeers().sub.setLocalDescription(answer)
+        let answer = try await peers.sub.answer(for: constraints)
+        try await peers.sub.setLocalDescription(answer)
         return answer.sdp
     }
 

@@ -139,13 +139,16 @@ public final class IMWebRTCAdapter: NSObject, IMMediaAdapter, @unchecked Sendabl
     public func acquireMicrophone() async throws -> IMLocalTrackInfo {
         ensureAudioSessionConfigured()
         let cid = "mic-\(UUID().uuidString.prefix(8))"
-        let source = ensurePeers().factory.audioSource(with: RTCMediaConstraints(
+        // 取一次局部变量复用：下面三步之间没有任何会让 peers 换掉的步骤
+        // （不涉及 await，纯同步的 factory / addTransceiver 调用）。
+        let peers = ensurePeers()
+        let source = peers.factory.audioSource(with: RTCMediaConstraints(
             mandatoryConstraints: nil, optionalConstraints: nil))
-        let track = ensurePeers().factory.audioTrack(with: source, trackId: cid)
+        let track = peers.factory.audioTrack(with: source, trackId: cid)
         let transceiverInit = RTCRtpTransceiverInit()
         transceiverInit.direction = .sendOnly
         transceiverInit.streamIds = ["im-rtc"]
-        ensurePeers().pub.addTransceiver(with: track, init: transceiverInit)
+        peers.pub.addTransceiver(with: track, init: transceiverInit)
         remember(cid: cid, track: track)
         return IMLocalTrackInfo(cid: cid, kind: "audio", source: "microphone")
     }
@@ -181,7 +184,14 @@ public final class IMWebRTCAdapter: NSObject, IMMediaAdapter, @unchecked Sendabl
                 continue
             }
             let generation = captureGeneration
-            let task = Task { try await self.openCamera(generation) }
+            // **弱捕获**：`close()` 现在会主动取消这个 Task（见下）。self 真被释放了
+            // 就安静地失败——没有摄像头可开、也没有谁还在等这个结果。
+            let task = Task { [weak self] () throws -> IMLocalTrackInfo in
+                guard let self else {
+                    throw IMRTCError(.invalidState, "适配器已释放")
+                }
+                return try await self.openCamera(generation)
+            }
             opening = (task, generation)
             lock.unlock()
             return try await task.value
@@ -414,6 +424,11 @@ public final class IMWebRTCAdapter: NSObject, IMMediaAdapter, @unchecked Sendabl
         // **关掉就丢掉**：RTCPeerConnection 不能复用，下一通电话由 ensurePeers 现造一对。
         let oldPeers = peers
         let wasAudioSessionActive = audioSessionActive
+        // 还在路上的那一路预览没人再等了：取消它，别让弹权限框、开设备这些耗时步骤
+        // 白跑到底。`captureGeneration` 已经 +1，就算取消没能立刻打断它，
+        // `openCamera` 的代际判定也会让它安全地作废退出，不会把摄像头留在那儿亮着。
+        let staleOpening = opening
+        opening = nil
         capturer = nil
         syntheticCapturer = nil
         videoSource = nil
@@ -425,6 +440,8 @@ public final class IMWebRTCAdapter: NSObject, IMMediaAdapter, @unchecked Sendabl
         audioSessionActive = false
         desiredSpeakerOn = false
         lock.unlock()
+
+        staleOpening?.task.cancel()
 
         // 真正的关闭动作放在锁外面：不把 libwebrtc 的调用圈进自己的锁里。
         stopObservingRouteChanges()
