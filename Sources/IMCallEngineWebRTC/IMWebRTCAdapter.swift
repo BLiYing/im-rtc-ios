@@ -492,9 +492,6 @@ public final class IMWebRTCAdapter: NSObject, IMMediaAdapter, @unchecked Sendabl
         let front = usingFrontCamera
         lock.unlock()
         let choice = try Self.captureChoice(front: front, profile: profile)
-        // **起采集前再挡一次**：构造时挡过一次，但包里两个 setter 都在，别赌它不会再改。
-        // 这两个旗标是视频通话双向无声的根因，见 `shieldAudioSession(of:)`。
-        Self.shieldAudioSession(of: capturer.captureSession)
         // **先盯上再起**：中断通知可能在 startCapture 过程中就发出来，晚一步就听不到了。
         captureWatch.watch(capturer.captureSession)
         do {
@@ -505,8 +502,8 @@ public final class IMWebRTCAdapter: NSObject, IMMediaAdapter, @unchecked Sendabl
         }
         // `isRunning` 把「startCapture 没报错」和「AVCaptureSession 真的跑起来了」分开：
         // 前者为真、后者为假，就是 AVFoundation 那一侧的事，别再去翻 libwebrtc。
-        // **两个音频旗标要回读**：期望 `uses_app_audio=true auto_configures_audio=false`。
-        // 回读对不上就是包又在别处改了它们，那是双向无声会复发的信号。
+        // 两个音频旗标只作记录：它们**不是**双向无声的原因（20:13 设成 true/false 照样犯，
+        // 真正的根因见 IMWebRTCAudioConfiguration），留着是为了以后换包时能对比。
         IMRTCLog.info("摄像头采集已启动", [
             "fps": String(choice.fps),
             "session_running": String(capturer.captureSession.isRunning),

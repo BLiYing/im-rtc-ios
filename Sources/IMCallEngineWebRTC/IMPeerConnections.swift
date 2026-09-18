@@ -151,6 +151,11 @@ final class IMPeerConnections: NSObject {
     private static let sharedFactory: RTCPeerConnectionFactory = {
         // 先把 libwebrtc 的音频日志接进来（见 IMWebRTCLogBridge），再碰任何 WebRTC 对象。
         IMWebRTCLogBridge.start()
+        #if os(iOS)
+        // **必须在任何 WebRTC 音频对象存在之前**：这个 fork 的 webRTCConfiguration 默认值是
+        // 首次被碰那一刻的会话快照，拍在 SoloAmbient 上就是双向无声。见 IMWebRTCAudioConfiguration。
+        IMWebRTCAudioConfiguration.install()
+        #endif
         RTCInitializeSSL()
         /*
          libwebrtc 的默认编解码工厂，**编码器先后顺序由它决定，我们没有排序**。

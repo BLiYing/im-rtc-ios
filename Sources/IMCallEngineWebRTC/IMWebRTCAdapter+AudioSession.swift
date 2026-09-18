@@ -179,26 +179,6 @@ extension IMWebRTCAdapter {
         let wanted = desiredSpeakerOn
         lock.unlock()
         guard active else { return }
-        /*
-         **先灭再点，不能只补类目。**
-
-         2026-09-18 真机 19:47 三通群视频：类目被打回 `SoloAmbient`，这里补成
-         `PlayAndRecord`，回读也确认补上了（`inputs=1`）——然而三十秒里
-         `packetsSent=0`、`totalSamplesDuration=0`，**一个采样都没录到**。
-         也就是说被打翻的那一下把 libwebrtc 的 VoIP 音频单元拆掉了，
-         而它不会因为类目恢复就自己重建：擦桌子救不了灶。
-
-         `isAudioEnabled` 走一遍 false→true 才是重建的手柄（头文件原话：设 NO
-         会 stop and uninitialize，设 YES 会在需要时 initialize and start）。
-         它要 `useManualAudio = YES` 才生效，那一句在 `applyCallAudioCategory` 里。
-
-         顺序是**先关掉、再配类目、最后打开**：类目还不对的时候点火，
-         点起来的也是错的那一路。
-        */
-        let session = RTCAudioSession.sharedInstance()
-        session.lockForConfiguration()
-        session.isAudioEnabled = false
-        session.unlockForConfiguration()
         applyCallAudioCategory(why: why)
         applySpeakerRoute(wanted)
     }

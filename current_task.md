@@ -9,18 +9,16 @@
 
 **2026-09-18 傍晚：真机上两个还没收口的症状——「iOS 说话对方听不见」与「切后台一会儿通话就断」。已提交 `c05f4e7` + `bfbf7c9`（未推送），`test.sh` 10 步全绿 381 例。等用户装机跑下一通。**
 
-- **视频通话双向无声——写手仍未找到，三次盲修全错，现在改为抓现行**。
-  现象：接通那一刻我们配成 PlayAndRecord，100~150ms 后被打回 `SoloAmbient`（输出口同时跳 Speaker），
-  补回再打回，一秒拉锯六轮；音频单元第一下就被掀翻，`packetsSent`/`totalSamplesDuration` 三十秒全 0。
-  只在视频通话犯（19:32 纯音频 30 秒 `packetsSent=1065`；19:36 视频偶尔不犯）。
-  **已排除的写手**：我们的代码（只有 `applyCallAudioCategory` 设类目）；这个包
-  （反汇编 150.7871.01：唯一引用 SoloAmbient 的是 `audio_engine_device.mm` 的 `isEqualToString:` 比较，
-  `RTCAudioSession` configure 设 `webRTCConfiguration`、unconfigure 只 `setActive:NO`，不存不恢复旧配置）；
-  `AVCaptureSession`（`7cbbc8f` 把 `uses=true/auto=false` 设在构造**之后**，20:13 回读已留住，拉锯照旧）。
-  **已装的探针**（`IMWebRTCLogBridge` 接 libwebrtc 音频日志；Demo `AudioSessionTracer` swizzle
-  `setCategory…`/`setActive:` 记调用栈）：下一通视频日志里看 `[Demo] 有人把音频会话写成非通话类目 stack=`——
-  那一行就是写手；一条都没有 = 写手不走本进程 ObjC 层。`useManualAudio`/`isAudioEnabled`（`8dd9e29`）
-  的 bounce 没能让音频恢复（重配后 `packetsSent` 仍 0），原因待 libwebrtc 日志。
+- **视频通话双向无声——20:27 抓到现行，根因已修，未装机验**（`IMWebRTCAudioConfiguration`）：
+  写手是 libwebrtc 自己。ADM 开麦（`InitRecording` → `configureWebRTCSession:`）把会话配成
+  `webRTCConfiguration`，而这个 fork 的 `-[RTCAudioSessionConfiguration init]`（`0x250bb0`）
+  **读的是当下会话的 category/mode**——默认值是首次被碰那一刻的快照（上游是写死 PlayAndRecord）。
+  视频通话响铃期预览先建工厂 → 快照 = SoloAmbient → 开麦时 `-50` → `InitPlayOrRecord failed`。
+  纯音频没预览、先配会话后建工厂 → 快照对 → **同进程之后的视频也好**（19:32→19:36 那次"好了"就是这个）。
+  修法：`sharedFactory` 建之前 + 每次 `applyCallAudioCategory` 时 `setWebRTC(_:)` 钉死 PlayAndRecord/VoiceChat。
+  同时撤回按错误理论加的 `useManualAudio`（`8dd9e29`）与采集会话旗标（`4fa128a`/`7cbbc8f`），回到 19:36 那时的写法。
+  验收：首装后**直接**打视频，`音频会话已配成通话态 webrtc_config=…PlayAndRecord/…VoiceChat`、
+  不出现 `[Demo] 有人把音频会话写成非通话类目`、`上行音频采样 packetsSent` 在涨。
 - **后台掉线 = App 被系统挂起**（18:04:38 断 → 18:05:08 窗口到期 → `reason=network`）：
   `采集会话被中断 reason=后台不给用摄像头` 实锤切了后台；服务端**立刻**就察觉了断开（不是 45 秒后），
   窗口只有 30 秒，而 App 整整 4 分钟零日志。**客户端任何定时参数都救不了没在运行的进程**——
@@ -93,7 +91,7 @@
 
 ## 下一步
 
-1. **装机打视频通话（首装后连打几通）**：找 `[Demo] 有人把音频会话写成非通话类目 stack=` 与 `libwebrtc msg=`，定位写手；顺带验发布超时不再收掉整通。
+1. **装机后第一通就打视频**（这是必现路径）：看上面三条验收；过了之后把 Demo 的 `AudioSessionTracer` 撤掉或关掉（swizzle 不该长留）。
 2. iOS 补 `setAppForeground`（照搬 Android `IMSignalConnection.setForeground`），并给
    `ping_interval_sec` 补 `[5,60]` 钳制；Web 的 `heartbeat.ts` `>` 改 `>=`。三条都要进 `CLIENT_PARITY.md`。
 3. 2.0.0：真机验上面三项（断网再挂断顺带验结束帧表），用户通知后发版。
