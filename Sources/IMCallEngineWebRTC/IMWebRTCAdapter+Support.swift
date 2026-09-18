@@ -121,15 +121,52 @@ extension IMWebRTCAdapter {
      只在拿到 `room_token`（`IMMediaDriver.drive` 的判据）才调用是同一条时间线。
      */
     func configureAudioSession() {
+        applyCallAudioCategory(why: "首次配置")
+    }
+
+    /**
+     applyCallAudioCategory 把会话切成通话态，**并把结果回读出来**。
+
+     原先只有「失败了记一条」，而 2026-09-18 真机上的失败**根本不报错**：
+     `上行音频采样` 抓到会话在毫秒之间从 `PlayAndRecord/VoiceChat/inputs=1`
+     退回系统默认的 `SoloAmbient/Default/inputs=0`，采集侧
+     `totalSamplesDuration=0`（一个采样都没录到），八秒后
+     `overrideOutputAudioPort` 回 `-50`（category 不对时正是这个码）。
+     两个方向都没声音，而日志里一个 WARN 都没有。
+
+     所以这里三件事一起做：**量耗时**（同一天两通都在这一步前后卡了 11~18 秒，
+     是不是卡在 `setActive` 上此前分不出来）、**回读**（设完真的是那个 category 吗）、
+     **说清楚是哪一次**（首次配置 / 被打断后补回 / 媒体服务重置后重建）。
+     */
+    func applyCallAudioCategory(why: String) {
         let session = RTCAudioSession.sharedInstance()
         session.lockForConfiguration()
         defer { session.unlockForConfiguration() }
+        let startedNS = DispatchTime.now().uptimeNanoseconds
+        var failure: String?
         do {
             try session.setCategory(.playAndRecord, mode: .voiceChat, options: [.allowBluetooth])
             try session.setActive(true)
         } catch {
             // 配不上不该让通话直接失败：多数情况下仍能出声，只是路由不理想。
-            IMRTCLog.warn("音频会话配置失败", ["err": String(describing: error)])
+            failure = String(describing: error)
+        }
+        let elapsedMS = (DispatchTime.now().uptimeNanoseconds - startedNS) / 1_000_000
+        let av = AVAudioSession.sharedInstance()
+        let landed = av.category == .playAndRecord
+        var fields = [
+            "why": why,
+            "elapsed_ms": String(elapsedMS),
+            "category": av.category.rawValue,
+            "mode": av.mode.rawValue,
+            "inputs": String(av.currentRoute.inputs.count),
+        ]
+        if let failure { fields["err"] = failure }
+        // **回读对不上比抛错更值得喊**：抛错至少还有个错误码，回读对不上是纯静默。
+        if failure != nil || !landed {
+            IMRTCLog.warn("音频会话没配成通话态", fields)
+        } else {
+            IMRTCLog.info("音频会话已配成通话态", fields)
         }
     }
 

@@ -92,7 +92,8 @@ public final class IMWebRTCAdapter: NSObject, IMMediaAdapter, @unchecked Sendabl
     var pubICERestartPending = false
     var audioSessionActive = false // 见 IMWebRTCAdapter+AudioSession.swift。
     var desiredSpeakerOn = false // 同上：会话还没配好时先记下来，配好再补应用。
-    var routeChangeObserver: NSObjectProtocol? // 同上：路由变化的监听，close() 时摘。
+    /// 同上：音频会话的三个监听（路由变化 / 被打断 / 媒体服务重置），`close()` 时一起摘。
+    var sessionObservers: [NSObjectProtocol] = []
 
     /// - Parameters:
     ///   - videoProfile: 画质档位，默认 720p。

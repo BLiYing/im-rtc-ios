@@ -39,8 +39,10 @@ import IMCallEngine
  */
 final class IMUplinkAudioStats: @unchecked Sendable {
 
-    /// 发布麦克风后第几秒各采一行。+2s 等协商跑完，+10s 看有没有中途停掉。
-    static let sampleOffsets = [2, 10]
+    /// 发布麦克风后第几秒各采一行。+2s 等协商跑完，+10s 看有没有中途停掉，
+    /// +30s 是**稳态**——前两个点会被开局那阵卡顿挤到一起（2026-09-18 真机上
+    /// 协商前卡了 11 秒，+2s 与 +10s 同一毫秒才落地，等于只得到一个时刻的读数）。
+    static let sampleOffsets = [2, 10, 30]
 
     /// 上行音频（outbound-rtp）要看的字段。缺席的不写（见 `imStatsFields`）。
     ///

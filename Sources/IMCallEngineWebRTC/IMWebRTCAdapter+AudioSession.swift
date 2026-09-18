@@ -102,22 +102,85 @@ extension IMWebRTCAdapter {
      */
     func observeRouteChanges() {
         stopObservingRouteChanges()
-        let token = NotificationCenter.default.addObserver(
-            forName: AVAudioSession.routeChangeNotification, object: nil, queue: nil
+        let center = NotificationCenter.default
+        var tokens = [
+            center.addObserver(
+                forName: AVAudioSession.routeChangeNotification, object: nil, queue: nil
+            ) { [weak self] note in
+                self?.routeDidChange(note)
+            },
+        ]
+        /*
+         **会话被踢掉的两条路，原先一条都没听（2026-09-18 加）。**
+
+         真机上会话在通话中途退回系统默认的 `SoloAmbient`、输入口变 0，
+         采集一个采样都没录到，两个方向都没声音——而我们对此一无所知，
+         直到八秒后 `overrideOutputAudioPort` 回 `-50` 才留下一条无头无尾的 WARN。
+
+         - `interruptionNotification`：来电、闹钟、Siri 抢走会话。**结束时系统不会替我们恢复**，
+           `.shouldResume` 也只是建议，category 要自己再设一遍。
+         - `mediaServicesWereResetNotification`：媒体服务守护进程重启。
+           **所有音频对象全部作废、会话回到默认 category**，Apple 的要求就是整套重建。
+           这一条完全符合上面的现象，但**还没有真机日志证实是它**——先把它变成看得见的。
+        */
+        tokens.append(center.addObserver(
+            forName: AVAudioSession.interruptionNotification, object: nil, queue: nil
         ) { [weak self] note in
-            self?.routeDidChange(note)
-        }
+            self?.audioSessionInterrupted(note)
+        })
+        tokens.append(center.addObserver(
+            forName: AVAudioSession.mediaServicesWereResetNotification, object: nil, queue: nil
+        ) { [weak self] _ in
+            IMRTCLog.warn("媒体服务已重置，音频会话要整套重建", [:])
+            self?.reassertCallAudioCategory(why: "媒体服务重置")
+        })
         lock.lock()
-        routeChangeObserver = token
+        sessionObservers = tokens
         lock.unlock()
     }
 
     func stopObservingRouteChanges() {
         lock.lock()
-        let token = routeChangeObserver
-        routeChangeObserver = nil
+        let tokens = sessionObservers
+        sessionObservers = []
         lock.unlock()
-        if let token { NotificationCenter.default.removeObserver(token) }
+        for token in tokens { NotificationCenter.default.removeObserver(token) }
+    }
+
+    /// audioSessionInterrupted 被抢走 / 还回来。**还回来时要自己把 category 设回去**——
+    /// 系统只发通知，不负责恢复，而我们的 `.playAndRecord` 一丢就是两个方向都哑。
+    private func audioSessionInterrupted(_ note: Notification) {
+        let raw = note.userInfo?[AVAudioSessionInterruptionTypeKey] as? UInt ?? 0
+        guard let type = AVAudioSession.InterruptionType(rawValue: raw) else { return }
+        switch type {
+        case .began:
+            IMRTCLog.warn("音频会话被打断", [:])
+        case .ended:
+            let options = note.userInfo?[AVAudioSessionInterruptionOptionKey] as? UInt ?? 0
+            IMRTCLog.info("音频会话打断结束", [
+                "should_resume": String(AVAudioSession.InterruptionOptions(rawValue: options)
+                    .contains(.shouldResume)),
+            ])
+            reassertCallAudioCategory(why: "打断结束")
+        @unknown default:
+            break
+        }
+    }
+
+    /**
+     reassertCallAudioCategory 会话被踢掉之后补回通话态，并把响铃期记下的扬声器选择再应用一遍。
+
+     **只在配置过之后才补**：响铃期故意还没配（回铃音要用默认类目，见本文件头部），
+     这时补等于把当初要避免的事又做一遍。
+     */
+    func reassertCallAudioCategory(why: String) {
+        lock.lock()
+        let active = audioSessionActive
+        let wanted = desiredSpeakerOn
+        lock.unlock()
+        guard active else { return }
+        applyCallAudioCategory(why: why)
+        applySpeakerRoute(wanted)
     }
 
     private func routeDidChange(_ note: Notification) {
@@ -130,6 +193,23 @@ extension IMWebRTCAdapter {
         guard active else { return }
         IMRTCLog.info("音频路由变化", ["reason": String(reason), "outputs": outputs.joined(separator: ","),
                                      "speaker": String(wanted)])
+        /*
+         **兜底：category 被谁踢掉了都补回来。**
+
+         上面那两个通知只盖住「被打断」与「媒体服务重置」两条已知来路；真机上那次
+         究竟是谁把会话打回 `SoloAmbient` 还没查清。而 category 一变必然伴随一次
+         路由变化（`reason=3` categoryChange），所以在这里加一道无差别的检查——
+         **不管是谁干的，发现不是通话态就设回去**，并且喊一声。
+         不会自激：设回去之后这个判据就不成立了。
+        */
+        if AVAudioSession.sharedInstance().category != .playAndRecord {
+            IMRTCLog.warn("通话中音频会话被打回非通话类目", [
+                "category": AVAudioSession.sharedInstance().category.rawValue,
+                "reason": String(reason),
+            ])
+            reassertCallAudioCategory(why: "路由变化时发现类目不对")
+            return
+        }
         guard imShouldReapplySpeaker(wantsSpeaker: wanted, reason: reason, outputPorts: outputs) else { return }
         IMRTCLog.info("插拔后系统清掉了外放覆盖，按钮还亮着：补回扬声器", [:])
         applySpeakerRoute(true)
