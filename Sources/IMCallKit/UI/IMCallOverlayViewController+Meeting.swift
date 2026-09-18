@@ -1,5 +1,6 @@
 #if canImport(UIKit)
 import UIKit
+import IMCallEngine
 
 /*
  通话页的**会议房**那一半：分页画廊、翻页手势、钉住进演讲者视图、成员列表
@@ -57,9 +58,12 @@ extension IMCallOverlayViewController {
         let plan = meeting.plan(state, nowMS: Int64(Date().timeIntervalSince1970 * 1000))
 
         // 只留还要用的格子，其余摘掉（卸载要成对，否则解码器还占着）。
+        // 翻走的人多留五秒：引擎那边也正等着这五秒才退订，滑回来就一次协商都不用。
         var keep = Set(plan.visible.map(\.uid))
         if let pinned = plan.pinned { keep.insert(pinned.uid) }
-        remoteTiles.retire(keeping: keep)
+        remoteTiles.retire(keeping: keep,
+                           linger: Set(plan.offscreen.map(\.uid)),
+                           grace: IMRoomMachine.unsubscribeHysteresis)
 
         applySelfTile(state, avatarSize: IMKitTheme.current.avatarSmall)
         controller.attachLocalPreview(to: state.mediaType == "video" ? selfTile.renderView : nil)
@@ -70,7 +74,17 @@ extension IMCallOverlayViewController {
             renderGallery(state, plan: plan)
         }
 
-        // 层上界：主画面 h、底部条 l、画廊按格数算；没格子的人 none（§4.3）。
+        /*
+         层上界：主画面 h、底部条 l、画廊按格数算；没格子的人 none（§4.3）。
+
+         **`none` 要先报**：会议房里它就是「排退订」，而新一页的 `l` 是「订阅」，
+         订阅那头顶着 16 路的硬上限。反过来先报 `l` 的话，翻页的那一瞬间
+         旧页还整整占着 8 路、新页又要 8 路，第 17 路直接被本地拒掉——
+         表现成「翻过去有一格永远是头像」，而且一条报错都不抛。
+        */
+        for p in plan.offscreen {
+            remoteTiles.report(p.uid, layer: "none", hasVideo: p.hasVideo)
+        }
         let galleryLayer = imTileLayer(plan.fixedTileCount ?? (plan.visible.count + 1))
         for p in plan.visible {
             remoteTiles.report(p.uid, layer: plan.pinned == nil ? galleryLayer : "l",
@@ -78,9 +92,6 @@ extension IMCallOverlayViewController {
         }
         if let pinned = plan.pinned {
             remoteTiles.report(pinned.uid, layer: "h", hasVideo: pinned.hasVideo)
-        }
-        for p in plan.offscreen {
-            remoteTiles.report(p.uid, layer: "none", hasVideo: p.hasVideo)
         }
     }
 

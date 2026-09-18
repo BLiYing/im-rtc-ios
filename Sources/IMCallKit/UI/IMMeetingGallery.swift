@@ -46,9 +46,7 @@ final class IMMeetingGallery {
         let ordered = reorder(state, nowMS: nowMS)
 
         // 钉住的人走了要自动回画廊，否则主画面会一直盯着一个不在房里的 uid。
-        if !pinnedUID.isEmpty, !ordered.contains(where: { $0.uid == pinnedUID }) {
-            pinnedUID = ""
-        }
+        dropPinnedIfGone(ordered)
 
         if let pinned = ordered.first(where: { $0.uid == pinnedUID }) {
             let rest = ordered.filter { $0.uid != pinned.uid }
@@ -72,6 +70,18 @@ final class IMMeetingGallery {
                     pinned: nil,
                     pageText: imMeetingPageLabel(page: page, total: total),
                     fixedTileCount: IMMeetingTilesPerPage)
+    }
+
+    /**
+     钉住的人走了就自动回画廊，否则主画面会一直盯着一个不在房里的 uid。
+
+     **渲染的最前面也要调一次**：通话页是先按 `pinnedUID` 决定画廊与演讲者视图谁露面，
+     再调 ``plan(_:nowMS:)``。只在 plan 里清的话，那个人离开的那一帧两者会对不上——
+     演讲者视图露着而主画面已经空了，整块黑到下一次渲染节拍。幂等，多调无害。
+     */
+    func dropPinnedIfGone(_ people: [IMParticipant]) {
+        guard !pinnedUID.isEmpty, !people.contains(where: { $0.uid == pinnedUID }) else { return }
+        pinnedUID = ""
     }
 
     /// 翻页。`delta` 取 +1（下一页）/ -1（上一页）。返回页码有没有真的变。

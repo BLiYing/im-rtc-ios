@@ -193,12 +193,18 @@ public enum IMRoomMachine {
      不摘的话不变量 R3 会把之后的每次重订都当成「已经订过、只换层」，
      只发 `room.update_layer`，**再也发不出 `room.subscribe`**。最常见的来路是 1301：
      订阅与对方的 `track_unpublished` 赛跑输了，此时摘掉正是实情。
+
+     **待退订队列要一起摘**：会议房里「订上 → 翻走排退订 → 订阅这时才被拒」是能排到的顺序
+     （订阅与翻页各走各的），队列里留着一个已经没有订阅记账的 track，
+     五秒后会发一条打在空处的 `room.unsubscribe`；要是这中间那个人又翻回来了，
+     那一条会把**刚重新订上的**那一路退掉，表现成「翻回来看了五秒，画面自己没了」。
      */
     private static func dropFailedSubscribe(_ ctx: IMRoomContext, _ trackID: String) -> IMMachineOutput<IMRoomContext> {
         guard ctx.subscribe[trackID] == .subscribing else { return out(ctx) }
         var next = ctx
         next.subscribe.removeValue(forKey: trackID)
         next.layers.removeValue(forKey: trackID)
+        next.pendingUnsubscribe.removeAll { $0 == trackID }
         return out(next)
     }
 

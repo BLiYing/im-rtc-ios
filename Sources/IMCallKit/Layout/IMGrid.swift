@@ -68,6 +68,20 @@ public struct IMGridDimensions: Equatable, Sendable {
      默认 1（正方形容器），此时退化成老的 `ceil(sqrt(n))`。
    - gapRatio: 间距占容器短边的比例，只影响边界情况，默认 0.02。
  */
+/**
+ imFixedGridDimensions 算**不看容器形状**的方阵行列：`ceil(sqrt(n))` 列。
+
+ 会议分页用它，9 格恒为 3×3（MEETING_ROOM_DESIGN §4.1）。``imGridDimensions``
+ 那套「按容器形状挑最大格子」在这里是错的：横屏上 9 格会被排成 5×2、竖屏排成 2×5，
+ 而分页的前提是**每一页的格子位置固定**——左滑一页格子还在原地，只是换了人。
+ 跟着方向变行列的话，翻页看起来像整屏重新洗牌，而且最后一页不满时排法还会再变一次。
+ */
+public func imFixedGridDimensions(_ count: Int) -> IMGridDimensions {
+    let n = min(max(count, 1), IMMaxTiles)
+    let cols = Int(ceil(Double(n).squareRoot()))
+    return IMGridDimensions(columns: cols, rows: Int(ceil(Double(n) / Double(cols))))
+}
+
 public func imGridDimensions(_ count: Int,
                              aspect: Double = 1,
                              gapRatio: Double = 0.02) -> IMGridDimensions {

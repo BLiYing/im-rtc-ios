@@ -176,4 +176,33 @@ final class MeetingPagerTests: XCTestCase {
         XCTAssertEqual(imMeetingPageLabel(page: 0, total: 7), "1 / 7")
         XCTAssertEqual(imMeetingPageLabel(page: 6, total: 7), "7 / 7")
     }
+
+    func testDemotedPersonRestartsStayClockWhenBack() {
+        let base = settle()
+        let speaking: Set<String> = ["u10"]
+        // u1 最久没说话，被 u10 顶掉。
+        var state = imReorderFirstPage(base.state, input(speaking: speaking, nowMS: base.nowMS))
+        state = imReorderFirstPage(state, input(speaking: speaking,
+                                                nowMS: base.nowMS + IMPromoteAfterMS))
+        XCTAssertFalse(firstPage(state).contains("u1"))
+        XCTAssertNil(state.enteredAt["u1"])
+
+        // u1 因为有人离开补位回第一页：驻留时刻要从此刻重新起算，
+        // 留着旧的那一条的话他会被下一个说话的人立刻再顶掉，位置一闪就没。
+        // 走两个人 u1 才从第 10 位补回来（换位是跟第 10 位对调，不是挪一格）。
+        let back = base.nowMS + IMPromoteAfterMS + 1
+        let fewer = names(10).filter { $0 != "u2" && $0 != "u3" }
+        state = imReorderFirstPage(state, input(uids: fewer, nowMS: back))
+        XCTAssertTrue(firstPage(state).contains("u1"))
+        XCTAssertEqual(state.enteredAt["u1"], back)
+    }
+
+    func testPagedGalleryIsAFixedSquare() {
+        // 9 格按「格子最大」算在横屏上是 5×2、竖屏上是 2×5；
+        // 分页要的是格子位置固定，左滑只换人。
+        XCTAssertEqual(imFixedGridDimensions(9), IMGridDimensions(columns: 3, rows: 3))
+        XCTAssertNotEqual(imGridDimensions(9, aspect: 2.2), IMGridDimensions(columns: 3, rows: 3))
+        // 最后一页不满也按同样的方阵排，格子不放大（§4.1）。
+        XCTAssertEqual(imFixedGridDimensions(9).columns, 3)
+    }
 }

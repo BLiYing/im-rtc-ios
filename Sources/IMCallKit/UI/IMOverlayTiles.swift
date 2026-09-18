@@ -16,6 +16,8 @@ final class IMRemoteTiles {
     private var reportedLayers: [String: String] = [:]
     /// 上一轮每个人有没有画面。**只用来判「他的轨道刚到」**，见 `report(_:layer:hasVideo:)`。
     private var lastHasVideo: [String: Bool] = [:]
+    /// 每个人最后一次「还要用」是什么时候，供 ``retire(keeping:linger:grace:now:)`` 的宽限期用。
+    private var lastWantedAt: [String: TimeInterval] = [:]
 
     init(controller: IMCallController) {
         self.controller = controller
@@ -35,14 +37,31 @@ final class IMRemoteTiles {
         tiles.first(where: { $0.value === tile })?.key
     }
 
-    /// retire 收掉不再需要的格子。卸载要成对：不摘的话解码器还占着（CONVENTIONS §7）。
-    func retire(keeping wanted: Set<String>) {
+    /**
+     retire 收掉不再需要的格子。卸载要成对：不摘的话解码器还占着（CONVENTIONS §7）。
+
+     `linger` 里的人多留 `grace` 秒再摘——**会议翻页专用**。引擎那边翻走并不立刻退订，
+     而是等五秒（`IMRoomMachine.unsubscribeHysteresis`），为的就是「左滑看一眼再滑回来」
+     不必重协商。格子这边要是立刻摘掉，翻回来就得重建视图、重新 attach、重等一帧，
+     引擎省下的那次协商在画面上一点也看不出来——**黑一下照样黑**。
+
+     `linger` 只放「还在房里、只是不在这一页」的人（`Plan.offscreen`）：
+     真的离开的人两个集合都不在，照旧立刻摘。
+     */
+    func retire(keeping wanted: Set<String>,
+                linger: Set<String> = [],
+                grace: TimeInterval = 0,
+                now: TimeInterval = Date().timeIntervalSince1970) {
+        for uid in wanted { lastWantedAt[uid] = now }
         for (uid, tile) in tiles where !wanted.contains(uid) {
+            if grace > 0, linger.contains(uid),
+               let seen = lastWantedAt[uid], now - seen < grace { continue }
             controller.attachView(uid, to: nil)
             tile.removeFromSuperview()
             tiles[uid] = nil
             reportedLayers[uid] = nil
             lastHasVideo[uid] = nil
+            lastWantedAt[uid] = nil
         }
     }
 

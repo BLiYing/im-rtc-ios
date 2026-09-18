@@ -259,6 +259,14 @@ public final class IMCallOverlayViewController: UIViewController {
         gradient.isHidden = layout == .video && !isEnded
         controlsScrim.isHidden = layout != .video || isEnded
         audioStage.isHidden = layout != .audio || isEnded
+        /*
+         **先把走掉的钉住对象清掉，再读 `speakerPinned`。**
+
+         清理原本只发生在 `meeting.plan()` 里，而那是本方法**后半段**才调的：
+         被钉的人离开的那一帧，这两行仍然认为还钉着——画廊继续藏着、演讲者视图露着，
+         可主画面那一格刚被摘掉。界面上是整块黑屏，要等下一次渲染节拍（1 s）才回来。
+        */
+        if state.isMeeting { meeting.dropPinnedIfGone(state.participants) }
         gridView.isHidden = layout != .grid || isEnded || speakerPinned
         speakerStage.isHidden = layout != .grid || isEnded || !speakerPinned
         pip.isHidden = isEnded
@@ -299,7 +307,9 @@ public final class IMCallOverlayViewController: UIViewController {
                      showsMinimize: state.phase != .incoming && state.phase != .ended,
                      showsInvite: imCanShowInvite(for: state),
                      // 会议房右上角是「👥 N」（§4.6）；它与加人按钮共用那个位置，互斥。
-                     memberCount: state.isMeeting && !bare ? state.participants.count + 1 : 0)
+                     // **收场之后也不给**：会议已经散了，点开是一张名单在数还没走干净的人。
+                     memberCount: state.isMeeting && !bare && state.phase != .ended
+                         ? state.participants.count + 1 : 0)
     }
 
     /// 顶部橙条：正在重连 / 连接已断开 / 对方网络不佳（2s 后收成角标，**不一直霸占顶部**）。

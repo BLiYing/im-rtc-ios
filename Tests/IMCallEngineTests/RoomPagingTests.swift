@@ -182,4 +182,42 @@ final class RoomPagingTests: XCTestCase {
         XCTAssertEqual(joined.state.subscribe["t-a1"], .subscribing, "音频由服务端自动订上")
         XCTAssertNil(joined.state.subscribe["t-v1"], "视频要等界面报「看得见」才订")
     }
+
+    // MARK: - 评审补的三条边界
+
+    func testHysteresisHoldsWhileReconnecting() {
+        // 翻走排上迟滞，然后连接断了。
+        let paged = layer(subscribeAll(meetingContext(videoCount: 3), 2), "t-1", "none").state
+        XCTAssertEqual(paged.pendingUnsubscribe, ["t-1"])
+
+        let cut = IMRoomMachine.reduce(paged, .internalEvent(name: "disconnected", args: [:]))
+        XCTAssertEqual(cut.state.state, .reconnecting)
+
+        let fired = IMRoomMachine.reduce(cut.state, .internalEvent(
+            name: "unsubscribe_hysteresis_elapsed", args: ["track_id": .string("t-1")]))
+        // 一帧都不许发：退订帧没有回滚路径，扔进死连接会让这条 track 永远卡在 unsubscribing。
+        XCTAssertTrue(fired.send.isEmpty)
+        XCTAssertEqual(fired.state.subscribe["t-1"], .subscribed)
+        // 还在清单上，定时器会重新排一只，等回到 joined 再退。
+        XCTAssertEqual(fired.state.pendingUnsubscribe, ["t-1"])
+    }
+
+    func testSubscribeRejectAlsoDropsPending() {
+        // 订上 → 翻走排退订 → 这时订阅的 reject 才回来（两件事各走各的，顺序能排到）。
+        var ctx = layer(meetingContext(videoCount: 2), "t-1", "l").state
+        ctx.pendingUnsubscribe = ["t-1"]
+        let out = IMRoomMachine.reduce(ctx, .internalEvent(
+            name: "subscribe_failed", args: ["track_id": .string("t-1")]))
+        XCTAssertNil(out.state.subscribe["t-1"])
+        // 不摘的话五秒后那条 unsubscribe 会打在空处——人要是翻回来了，退掉的是刚订上的那一路。
+        XCTAssertTrue(out.state.pendingUnsubscribe.isEmpty)
+    }
+
+    func testPageOutSkipsTracksAlreadyUnsubscribing() {
+        var ctx = subscribeAll(meetingContext(videoCount: 2), 1)
+        ctx.subscribe["t-1"] = .unsubscribing
+        let out = layer(ctx, "t-1", "none")
+        XCTAssertTrue(out.send.isEmpty)
+        XCTAssertTrue(out.state.pendingUnsubscribe.isEmpty)
+    }
 }

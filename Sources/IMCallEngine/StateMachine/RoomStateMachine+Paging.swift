@@ -63,9 +63,13 @@ extension IMRoomMachine {
 
     private static func pageOut(_ ctx: IMRoomContext,
                                 trackID: String) -> IMMachineOutput<IMRoomContext> {
-        // 没订过的不用退；已经排着退订的也不用再报一次 none——它早就不出包了，
+        // 没订过的不用退；**正在退的也不用**——那条 `room.unsubscribe` 已经在路上，
+        // 再排一次迟滞，五秒后会往一条已经不存在的订阅上再打一发，
+        // 而它回来的 1301 会被 dropFailedSubscribe 当成「订阅失败」处理。
+        let state = ctx.subscribe[trackID]
+        guard state != nil, state != .unsubscribing else { return out(ctx) }
+        // 已经排着退订的也不用再报一次 none——它早就不出包了，
         // 再报一次只会把五秒的计时重新拉长。
-        guard ctx.subscribe[trackID] != nil else { return out(ctx) }
         guard !ctx.pendingUnsubscribe.contains(trackID) else { return out(ctx) }
 
         var next = ctx
@@ -121,10 +125,21 @@ extension IMRoomMachine {
      帧循环按 track 排定时器，所以线上走的是带 trackID 的那一路。
 
      **通话房什么都不做**：它的 `none` 只是暂停，退订会让那个人的画面再也回不来。
+
+     # 不在 joined 就按兵不动
+
+     断网重连期间这只定时器照样会到点。此时把 `room.unsubscribe` 发出去等于扔进一条死连接：
+     它没有 reject 可回（退订帧没有回滚路径），那条 track 会**永远卡在 `unsubscribing`**——
+     16 路的账从此少算一路，攒够几次翻页就再也订不上新的人；
+     更糟的是它仍占着 sub PC 的 m-line，offer 还在往 64 KiB 上顶。
+
+     留在 ``IMRoomContext/pendingUnsubscribe`` 里不动即可：帧循环每轮按清单对账，
+     这一条还在清单上，定时器会**重新排一只**，等房间回到 joined 再退。
      */
     static func flushHysteresis(_ ctx: IMRoomContext,
                                 trackID: String?) -> IMMachineOutput<IMRoomContext> {
         guard usesPagedVideo(ctx) else { return out(ctx) }
+        guard ctx.state == .joined else { return out(ctx) }
         let targets = trackID.map { id in ctx.pendingUnsubscribe.filter { $0 == id } }
             ?? ctx.pendingUnsubscribe
         guard !targets.isEmpty else { return out(ctx) }

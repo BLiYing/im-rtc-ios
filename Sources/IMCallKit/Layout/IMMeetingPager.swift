@@ -206,6 +206,10 @@ func imPromoteFirstPage(_ state: IMFirstPageState,
     next.order[victimIndex] = candidate
     next.order[candidateIndex] = victim
     next.enteredAt[candidate] = input.nowMS
+    // 被换下去的人要**清掉**进入时刻：留着的话，等他哪天因为有人离开而补位回第一页，
+    // 同步那一步看见这一条已存在就不补新的起点，10 s 驻留判据从那个陈旧的时刻起算
+    // 早就满了——他会被下一个说话的人**立刻**顶掉，位置一闪就没。
+    next.enteredAt.removeValue(forKey: victim)
     next.lastSwapAt = input.nowMS
     return next
 }

@@ -137,8 +137,9 @@ final class IMCallGridView: UIView {
         }
 
         let gap = IMKitTheme.current.tileGap
-        let dims = imGridDimensions(fixedTileCount ?? tiles.count,
-                                    aspect: bounds.width / bounds.height)
+        // 分页时**不跟着容器形状变**：格子位置固定，左滑才只是换人而不是整屏重排（§4.1）。
+        let dims = fixedTileCount.map(imFixedGridDimensions)
+            ?? imGridDimensions(tiles.count, aspect: bounds.width / bounds.height)
         if dims != arranged {
             arranged = dims
             rebuild(dims, gap: gap)
