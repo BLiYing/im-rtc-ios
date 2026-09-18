@@ -71,8 +71,9 @@
   `.binaryTarget` 指向 `webrtc-sdk/Specs` 的 `150.7871.01`——**不能用 `.package(url:)` 引它**，
   它的 `Package.swift` 近期 tag 全是坏的（声明 `tools-version:5.9` 却用了 6.2 才有的 `.visionOS(.v26)`）。
   模块名仍是 `WebRTC`，所以 `import` 一行没改。**升级要自己算 checksum**：`swift package compute-checksum`。
-  **SwiftPM 下载这个 URL 极慢**（21 分钟没下完，curl 同地址 20 秒），绕法是 curl 下来放进
-  `~/Library/Caches/org.swift.swiftpm/artifacts/<URL 里非字母数字全换成下划线>`。**这条会砸到宿主**，发版前要解决。
+  **SwiftPM 首次解析偶尔卡成龟速**（冷缓存三次：21 分钟 / 72 分钟 / 64 秒；同期 curl 稳定 2~3 MB/s，
+  SwiftPM 拉 stasel 18 秒，两个地址的重定向链和后端一模一样）。**原因没查出来，但是偶发的**，别当阻塞项。
+  碰上了就 curl 下来放进 `~/Library/Caches/org.swift.swiftpm/artifacts/<URL 里非字母数字全换成下划线>`。
   **下一步**：`IMPeerConnections.sharedFactory` 套 `RTCVideoEncoderFactorySimulcast`，
   同时把 `IMVideoProfile.simulcastLayers` 的 h,m,l 改成 l,m,h（Android / Web 都是低→高，libwebrtc 要求如此；
   **两件事必须同一刀**——单独改顺序 = 当场发 1/4 分辨率，因为现在只有第一条 encoding 生效）。
