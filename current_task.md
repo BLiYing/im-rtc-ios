@@ -9,6 +9,17 @@
 
 **2026-09-18：会议房 M2 真机验收进行中。M2 的 Engine 与 Kit 两段已在 09-18 凌晨做完（`2ee3527` / `289e3af`，见 server `docs/design/MEETING_ROOM_DESIGN.md` §7 第 2、5 步）。今天全是真机才暴露的修复，`test.sh` 10 步全绿。**
 
+- **⚠️ simulcast 是「说了没做」**（09-18 查出，**未修**）：`publishCamera(simulcast:)` 按
+  h/m/l 配了三个 `sendEncodings`、`room.publish` 也报了 `simulcast:true`，但上行统计里**只有 `h.`**
+  （房间 41642481：1080×1920、3.1–4.7 Mbps），服务端那条 track 全程只出现过 `to:"h"`。
+  根因是 `IMPeerConnections` 用裸 `RTCDefaultVideoEncoderFactory()`，没套 simulcast adapter，
+  libwebrtc 只编第一个 encoding。**修不了一行了事**：钉住的 `stasel/WebRTC 152.0.0` 里
+  没有 `RTCVideoEncoderFactorySimulcast`（94 个头文件全翻过），要换预编译包 = 动 `Package.swift`
+  + 影响已发布的 1.0.0 tag，单独一刀。后果见 server `bwe.go`：订阅侧报 `l` 也只能收这一层 1080p。
+- **补了判据日志**（未提交）：`IMAspectVideoView` 加
+  `画面缩放判据 owner= view= video= fraction= mode=`（与 Android `IMVideoFitter` 同名字段）。
+  09-18 真机上同一个「钉住主画面 + 16:9 源」Android 按判据留黑边、iOS 却铺满，
+  而两端日志都看不出各自量到了多大的容器——先把这行补上再定位。
 - **退订再重订之后画面定格**（`5324c62`）：M2 第一次让「退订→重订」成为常规动作，
   协议 `track_id` 不变但媒体层拿到的是**新的轨道对象**，而 `IMVideoRegistry.claim` 有一条
   `owners[trackID] != owner` 的闸（「已经认过就别再认」）——归属没变就直接 return，

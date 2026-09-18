@@ -417,6 +417,9 @@ final class IMAspectVideoView: RTCMTLVideoView, RTCVideoViewDelegate {
     private var sizeLogs = 0
     private static let maxSizeLogs = 6
 
+    /// 最近一次**打过日志**的「结论 + 容器尺寸」。见 ``logFit(_:)``。
+    private var loggedFit: String?
+
     override init(frame: CGRect) {
         super.init(frame: frame)
         delegate = self
@@ -466,10 +469,44 @@ final class IMAspectVideoView: RTCMTLVideoView, RTCVideoViewDelegate {
         let fill = imShouldFillVideo(
             videoWidth: Double(videoSize.width), videoHeight: Double(videoSize.height),
             viewWidth: Double(bounds.width), viewHeight: Double(bounds.height))
+        logFit(fill)
         let wanted: UIView.ContentMode = fill ? .scaleAspectFill : .scaleAspectFit
         // 判重：`videoContentMode` 的 setter 会触发重绘，而 layoutSubviews 调得很勤。
         guard videoContentMode != wanted else { return }
         videoContentMode = wanted
+    }
+
+    /**
+     logFit 打一行判据实况：**这块画布此刻量到的两个尺寸，以及算出来的结论**。
+
+     判据算错的症状是「画面糊」或「莫名黑边」，**一条错都不报**——2026-09-18 会议房
+     真机就卡在这儿：Android 给横屏源留了黑边（`VIDEO_RENDERING.md` 表格第 4 行，
+     当日已拍板「不改」），iOS 同一个槽位（钉住的主画面）却铺满了，
+     而两端日志里都看不出它们各自量到的是多大的容器、多大的源。
+
+     # 判重的键为什么不含 `videoSize`
+
+     远端每换一次层它就变一次（320×180 ↔ 1280×720），进键里就是刷屏；
+     而要查的是「**容器**多大、结论是什么」。尺寸照样打在行里，只是那一行是
+     **做判断那一刻**的快照。容器尺寸变化（挂上、钉住 / 取消钉住、翻页、转屏）
+     才是真正该留痕的事件，那些一通电话里只有个位数次。
+
+     与 Android `IMVideoFitter` 打的是同一行、同名字段，两端可以直接对着看。
+     */
+    private func logFit(_ fill: Bool) {
+        let key = "\(fill)|\(Int(bounds.width))x\(Int(bounds.height))"
+        guard loggedFit != key else { return }
+        loggedFit = key
+        let fraction = imVisibleFraction(
+            videoWidth: Double(videoSize.width), videoHeight: Double(videoSize.height),
+            viewWidth: Double(bounds.width), viewHeight: Double(bounds.height))
+        IMRTCLog.info("画面缩放判据", [
+            "owner": owner,
+            "view": "\(Int(bounds.width))x\(Int(bounds.height))",
+            "video": "\(Int(videoSize.width))x\(Int(videoSize.height))",
+            "fraction": String(format: "%.3f", fraction),
+            "mode": fill ? "FILL" : "FIT",
+        ])
     }
 }
 #endif
