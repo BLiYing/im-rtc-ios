@@ -70,7 +70,17 @@ extension IMCallController {
     }
 
     func publishFor(mediaType: String) async {
-        micCID = (try? await engine.publishMicrophone()) ?? ""
+        // **失败必须记一条**：原先这里是 `(try? …) ?? ""`，麦克风推流失败时 `micCID` 变成空串、
+        // 一个字都不留，而紧邻下面的摄像头那段是有 catch 有日志的——同一个方法里两套标准。
+        // 真机上的表现是「这通电话对方听不见你，界面一切正常，三个观测面全瞎」：
+        // 2026-09-18 查后台断线时，服务端只看到 frank 一条 video/H264、没有 audio/opus，
+        // 而客户端日志里没有任何线索说明为什么。
+        do {
+            micCID = try await engine.publishMicrophone()
+        } catch {
+            micCID = ""
+            IMRTCLog.warn("[Kit] 麦克风推流失败，本通对方听不见你", ["err": String(describing: error)])
+        }
         // **本端摄像头是关着的就不推**：关着接听 = 以语音接听，连开都不开。
         let wantsCamera = await MainActor.run { self.state.selfState.cameraOn }
         if mediaType == "video", wantsCamera {

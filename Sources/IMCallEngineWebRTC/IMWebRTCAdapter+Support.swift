@@ -39,6 +39,33 @@ extension IMWebRTCAdapter {
     ///
     /// 挑「最接近」而不是「必须等于」：设备支持的格式表是离散的，
     /// 要求精确匹配会在某些机型上一个格式都挑不出来，通话直接打不出去。
+    /**
+     makeCameraCapturer 建摄像头采集器，**自己给一个 `AVCaptureSession`**。
+
+     不能用 `RTCCameraVideoCapturer(delegate:)`：现在这个预编译包（webrtc-sdk，2026-09-18 换）
+     的 `createCaptureSession` 与上游不一样——**支持多摄的机型上它返回一个进程内静态共享的
+     `AVCaptureMultiCamSession`**，而上游是每个采集器一个普通 `AVCaptureSession`。
+
+     真机上的后果（iPhone 17 Pro Max 实测）：采集会话起不来，
+     `AVCaptureSessionRuntimeError -11873 "Cannot Record"`，`isRunning` 恒为 false，
+     于是本端预览恒 0x0、上行 0 帧，**而 `startCapture` 不报错**。
+     多摄会话要用应用自己的 `AVAudioSession`，上游那句 `usesApplicationAudioSession = NO`
+     对它不作数；摄像头又比音频会话配置早（响铃期开预览时音频会话还是默认类目，
+     故意不配，见 `IMWebRTCAdapter+AudioSession.swift` 头部），于是"不允许录制"。
+
+     **不能靠提前配音频会话绕过**——那会把回铃音掐断，正是 2026-09-16 修掉的毛病。
+     共享会话还有第二个毛病：每个新采集器都往同一个会话上加 output，
+     真机日志里第二通电话就看到 `outputs=2`。
+
+     所以走 fork 新增的 `initWithDelegate:captureSession:`（上游没有这个入口，
+     它加出来就是给应用自带会话用的），等于把上游那套「一采集器一会话」拿回来。
+     */
+    static func makeCameraCapturer(
+        delegate: RTCVideoCapturerDelegate
+    ) -> RTCCameraVideoCapturer {
+        RTCCameraVideoCapturer(delegate: delegate, captureSession: AVCaptureSession())
+    }
+
     static func captureChoice(front: Bool, profile: IMVideoProfile) throws -> IMCaptureChoice {
         let devices = RTCCameraVideoCapturer.captureDevices()
         let wantedPosition: AVCaptureDevice.Position = front ? .front : .back
