@@ -26,6 +26,18 @@ final class IMSpeakerStageView: UIView {
 
     private var mainTile: UIView?
     private var mainConstraints: [NSLayoutConstraint] = []
+    /// 底部条每一格的宽度约束。换一批格子时要先撤掉，否则约束会越积越多。
+    private var stripConstraints: [NSLayoutConstraint] = []
+
+    /**
+     底部条每格的边长。**正方形**，与 Android 的 `dp(84)` / Web 的 `gridAutoColumns: 84px` 同值。
+
+     必须显式给宽：`UIStackView` 的 `fillEqually` 只管「彼此一样宽」，
+     而这条 stack 自己没有宽度约束（左右是不等式 + 居中），格子又没有 intrinsic size——
+     没人定宽的结果是它们被压成又窄又高的竖条，画面左右两条黑边、名字牌直接被挤没
+     （2026-09-18 真机）。
+     */
+    private static let stripTileSide: CGFloat = 84
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -62,7 +74,7 @@ final class IMSpeakerStageView: UIView {
             strip.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor),
             strip.centerXAnchor.constraint(equalTo: centerXAnchor),
             strip.bottomAnchor.constraint(equalTo: bottomAnchor),
-            strip.heightAnchor.constraint(equalToConstant: 84),
+            strip.heightAnchor.constraint(equalToConstant: Self.stripTileSide),
             unpinButton.topAnchor.constraint(equalTo: topAnchor, constant: 8),
             unpinButton.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 8),
             unpinButton.heightAnchor.constraint(equalToConstant: 28),
@@ -90,6 +102,8 @@ final class IMSpeakerStageView: UIView {
     /// setStrip 换底部条。顺序变了才重建——每次都重建同样会让画面闪。
     func setStrip(_ tiles: [UIView]) {
         guard strip.arrangedSubviews != tiles else { return }
+        NSLayoutConstraint.deactivate(stripConstraints)
+        stripConstraints = []
         for view in strip.arrangedSubviews {
             strip.removeArrangedSubview(view)
             view.removeFromSuperview()
@@ -97,6 +111,10 @@ final class IMSpeakerStageView: UIView {
         for tile in tiles {
             tile.removeFromSuperview()
             strip.addArrangedSubview(tile)
+            // 见 stripTileSide：不给宽就会被压成竖条。
+            let width = tile.widthAnchor.constraint(equalToConstant: Self.stripTileSide)
+            width.isActive = true
+            stripConstraints.append(width)
         }
     }
 
