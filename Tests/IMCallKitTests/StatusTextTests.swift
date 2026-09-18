@@ -13,8 +13,12 @@ final class StatusTextTests: XCTestCase {
     func testTitleCountsSelfForGroupAndMeeting() {
         let two = [IMParticipant(uid: "bob", hasAccepted: true), IMParticipant(uid: "carol", hasAccepted: true)]
         XCTAssertEqual(imCallTitle(state { $0.isGroup = true; $0.participants = two }), "群通话 · 3 人")
-        XCTAssertEqual(imCallTitle(state { $0.isMeeting = true; $0.isGroup = true; $0.participants = two }), "会议 · 3 人",
-                       "会议优先于群通话")
+        // 会议写房号、**不写人数**：右上角「👥 N」已经是人数的唯一出处。
+        XCTAssertEqual(imCallTitle(state {
+            $0.isMeeting = true; $0.isGroup = true; $0.participants = two; $0.roomID = "14654666"
+        }), "会议 14654666", "会议优先于群通话，且标题写房号")
+        // 还没拿到房号的那一瞬（进房应答之前）不显示一个空房号。
+        XCTAssertEqual(imCallTitle(state { $0.isMeeting = true; $0.isGroup = true; $0.participants = two }), "会议")
         XCTAssertEqual(imCallTitle(state { $0.peerUID = "bob" }), "bob")
         XCTAssertEqual(imCallTitle(IMCallViewState()), "通话")
     }

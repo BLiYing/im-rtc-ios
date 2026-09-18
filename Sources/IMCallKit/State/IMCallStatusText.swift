@@ -5,9 +5,14 @@ import Foundation
  （macOS 上 `swift test` 也跑得到——VC 本身在 `#if canImport(UIKit)` 里）。
  */
 
-/// 标题：会议 / 群通话写人数（含自己），1v1 写对方 uid。
+/**
+ 标题：会议写**房号**，群通话写人数（含自己），1v1 写对方 uid。
+
+ 会议不写人数：右上角那颗「👥 N」已经是人数的出处，标题再写一遍是同一个数字的第二处真相。
+ 房号才是这一屏里**要念给别人听**的那个东西（口头报号 / 点一下复制）。
+ */
 public func imCallTitle(_ state: IMCallViewState) -> String {
-    if state.isMeeting { return "会议 · \(state.participants.count + 1) 人" }
+    if state.isMeeting { return state.roomID.isEmpty ? "会议" : "会议 \(state.roomID)" }
     if state.isGroup { return "群通话 · \(state.participants.count + 1) 人" }
     return state.peerUID.isEmpty ? "通话" : state.peerUID
 }

@@ -38,6 +38,19 @@ extension IMCallOverlayViewController {
         render(controller.state)
     }
 
+    /**
+     点标题复制房号（§4.6 的配套）：房号是这一屏里**要报给别人**的那个东西。
+
+     只有会议房的标题可点（`titleIsCopyable`）——1v1 与群通话的标题是人名，复制它没有意义。
+     反馈走 `hint`：状态行的一次性提示本来就是这个用途，且会自己到点撤掉。
+     */
+    @objc func onCopyRoomID() {
+        let roomID = controller.state.roomID
+        guard controller.state.isMeeting, !roomID.isEmpty else { return }
+        UIPasteboard.general.string = roomID
+        controller.apply(.hint("已复制房间号 \(roomID)"))
+    }
+
     @objc func onMembers() {
         let state = controller.state
         let list = IMMemberListViewController(members: state.participants,

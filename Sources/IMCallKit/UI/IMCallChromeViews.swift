@@ -23,6 +23,8 @@ public final class IMCallHeaderView: UIView {
      */
     public let membersButton = UIButton(type: .system)
     private let titleLabel = UILabel()
+    /// 点标题（会议房才可点）：复制房号。由 `IMCallOverlayViewController` 接上。
+    public var onTitleTap: (() -> Void)?
     private let subtitleLabel = UILabel()
     private let networkBars = IMNetworkBars(compact: true)
 
@@ -34,8 +36,12 @@ public final class IMCallHeaderView: UIView {
     @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("Kit 不用 storyboard") }
 
+    /// - Parameter titleIsCopyable: 标题点一下复制（会议房的房号）。其余场合标题不可点。
     public func apply(title: String, subtitle: String, networkLevel: Int,
-                      showsMinimize: Bool, showsInvite: Bool, memberCount: Int = 0) {
+                      showsMinimize: Bool, showsInvite: Bool, memberCount: Int = 0,
+                      titleIsCopyable: Bool = false) {
+        titleLabel.isUserInteractionEnabled = titleIsCopyable
+        titleLabel.accessibilityHint = titleIsCopyable ? "点两下复制房间号" : nil
         titleLabel.text = title
         subtitleLabel.text = subtitle
         networkBars.apply(level: networkLevel)
@@ -79,6 +85,8 @@ public final class IMCallHeaderView: UIView {
         titleLabel.font = .systemFont(ofSize: 16, weight: .semibold)
         titleLabel.textColor = theme.primaryText
         titleLabel.textAlignment = .center
+        titleLabel.isAccessibilityElement = true
+        titleLabel.addGestureRecognizer(UITapGestureRecognizer(target: self, action: #selector(onTitle)))
         subtitleLabel.font = .monospacedDigitSystemFont(ofSize: 13, weight: .regular)
         subtitleLabel.textColor = theme.secondaryText
         subtitleLabel.textAlignment = .center
@@ -103,6 +111,8 @@ public final class IMCallHeaderView: UIView {
             center.trailingAnchor.constraint(lessThanOrEqualTo: inviteButton.leadingAnchor, constant: -8),
         ])
     }
+
+    @objc private func onTitle() { onTitleTap?() }
 }
 
 /// 顶部橙条（规范 §08）：「正在重连…」「连接已断开」「对方网络不佳」。橙底深字，圆角胶囊。

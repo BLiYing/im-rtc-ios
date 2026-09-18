@@ -180,6 +180,7 @@ public final class IMCallOverlayViewController: UIViewController {
         header.minimizeButton.addTarget(self, action: #selector(onMinimize), for: .touchUpInside)
         header.inviteButton.addTarget(self, action: #selector(onInvite), for: .touchUpInside)
         header.membersButton.addTarget(self, action: #selector(onMembers), for: .touchUpInside)
+        header.onTitleTap = { [weak self] in self?.onCopyRoomID() }
         speakerStage.unpinButton.addTarget(self, action: #selector(onUnpin), for: .touchUpInside)
         installMeetingGestures()
         controls.micButton.addTarget(self, action: #selector(onMic), for: .touchUpInside)
@@ -309,7 +310,10 @@ public final class IMCallOverlayViewController: UIViewController {
                      // 会议房右上角是「👥 N」（§4.6）；它与加人按钮共用那个位置，互斥。
                      // **收场之后也不给**：会议已经散了，点开是一张名单在数还没走干净的人。
                      memberCount: state.isMeeting && !bare && state.phase != .ended
-                         ? state.participants.count + 1 : 0)
+                         ? state.participants.count + 1 : 0,
+                     // 标题是房号时才可点（复制）。收场之后不给：房间已经散了。
+                     titleIsCopyable: state.isMeeting && !bare && state.phase != .ended
+                         && !state.roomID.isEmpty)
     }
 
     /// 顶部橙条：正在重连 / 连接已断开 / 对方网络不佳（2s 后收成角标，**不一直霸占顶部**）。
