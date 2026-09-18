@@ -13,7 +13,8 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
 
 
     func application(_ application: UIApplication, didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?) -> Bool {
-        // Override point for customization after application launch.
+        // 诊断钩子：谁在写音频会话类目（2026-09-18 双向无声排查），见 AudioSessionTracer。
+        AudioSessionTracer.install()
         return true
     }
 

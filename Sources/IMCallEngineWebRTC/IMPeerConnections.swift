@@ -149,6 +149,8 @@ final class IMPeerConnections: NSObject {
      造工厂本身也不便宜（要起三条线程 + 编解码器枚举），一通电话造一次纯属浪费。
     */
     private static let sharedFactory: RTCPeerConnectionFactory = {
+        // 先把 libwebrtc 的音频日志接进来（见 IMWebRTCLogBridge），再碰任何 WebRTC 对象。
+        IMWebRTCLogBridge.start()
         RTCInitializeSSL()
         /*
          libwebrtc 的默认编解码工厂，**编码器先后顺序由它决定，我们没有排序**。
