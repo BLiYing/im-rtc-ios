@@ -129,12 +129,23 @@ final class IMVideoRegistry {
         }
     }
 
-    /// claim 认领一条之前不知道归属的轨道。认领不到（轨道还没来）就什么都不做——
-    /// 轨道到达时会走 addTrack 那条路。
+    /**
+     claim 认领一条之前不知道归属的轨道。认领不到（轨道还没来）就什么都不做——
+     轨道到达时会走 addTrack 那条路。
+
+     **判据只看 `orphans` 里有没有新轨道，不看归属变没变。**
+     原先还带一条 `owners[trackID] != owner`，意思是「已经认过就别再认」。
+     会议分页之后这条是错的：翻走五秒会**退订**，翻回来**重新订阅**——
+     track_id 还是同一个，可 `RTCVideoTrack` 是全新对象。归属没变，于是那一条直接 return，
+     新轨道永远躺在 orphans 里，渲染器还挂在已经死掉的旧轨道上，
+     **画面定格在最后一帧**（2026-09-18 真机：翻走再翻回来，那一格就冻住）。
+
+     去掉之后仍然幂等：没有新 orphan 就直接返回；orphan 恰好是同一个对象时，
+     `bind` 看见 `previous === track` 不会重挂，`attachRenderer` 也有 `rendered` 去重。
+     */
     func claim(_ trackID: String, owner: String) {
         onMain { [self] in
-            guard !owner.isEmpty, owners[trackID] != owner,
-                  let track = orphans[trackID] else { return }
+            guard !owner.isEmpty, let track = orphans[trackID] else { return }
             orphans[trackID] = nil
             owners[trackID] = owner
             bind(owner: owner, track: track)
