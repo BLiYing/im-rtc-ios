@@ -63,7 +63,35 @@ extension IMWebRTCAdapter {
     static func makeCameraCapturer(
         delegate: RTCVideoCapturerDelegate
     ) -> RTCCameraVideoCapturer {
-        RTCCameraVideoCapturer(delegate: delegate, captureSession: AVCaptureSession())
+        let session = AVCaptureSession()
+        /*
+         **这两行是给音频会话挡刀的（2026-09-18 加）。**
+
+         `AVCaptureSession` 新建出来两个属性都是系统默认的 `true`，而
+         `automaticallyConfiguresApplicationAudioSession == true` 的含义是
+         **AVFoundation 替你配置 App 的共享音频会话，并在采集会话停止时把它还原回去**——
+         还原的目标就是默认类目 `SoloAmbient`。我们自己在 `applyCallAudioCategory()` 里
+         把会话配成 `.playAndRecord / .voiceChat`，两边于是在抢同一个会话。
+
+         真机现象对得上：19:16 视频通话里会话在毫秒之间从
+         `PlayAndRecord/VoiceChat/inputs=1` 退回 `SoloAmbient/Default/inputs=0`，
+         采集 `totalSamplesDuration=0`，八秒后 `overrideOutputAudioPort` 回 `-50`，
+         **收发两个方向同时没声音**；而同一版代码的纯音频通话（不开摄像头）
+         30 秒里 `packetsSent` 一路涨到 1065，会话全程没被动过。
+         唯一的自变量就是这个采集会话在不在。
+
+         `usesApplicationAudioSession = true`：用 App 这一个会话，别自己另开一个
+         （上游那句 `= NO` 是给它自建的纯视频会话用的，而多摄机型上不允许，
+         正是本文件下面那段黑屏 bug 的来路）。
+         `automaticallyConfiguresApplicationAudioSession = false`：用可以，**但别改它**。
+
+         **仍是待证实**：这解释得通、也是有文档的行为，但还没有一通视频通话
+         证明改完就不犯了。下一次视频真机验收要盯 `通话中音频会话被打回非通话类目`
+         这条 WARN 还出不出现。
+        */
+        session.usesApplicationAudioSession = true
+        session.automaticallyConfiguresApplicationAudioSession = false
+        return RTCCameraVideoCapturer(delegate: delegate, captureSession: session)
     }
 
     static func captureChoice(front: Bool, profile: IMVideoProfile) throws -> IMCaptureChoice {
