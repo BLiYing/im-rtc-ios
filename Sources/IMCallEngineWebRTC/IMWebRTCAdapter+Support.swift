@@ -58,9 +58,13 @@ extension IMWebRTCAdapter {
             .map(\.maxFrameRate).max().map { Int(min($0, Double(profile.frameRate))) }
             ?? profile.frameRate
         let size = CMVideoFormatDescriptionGetDimensions(format.formatDescription)
-        IMRTCLog.info("摄像头已开", [
+        // **只是「挑好了格式」，不是「采集起来了」**。原先这行叫「摄像头已开」，
+        // 而它打在 `startCapture` 之前——2026-09-18 换包后采集一帧不出，日志上却写着「已开」，
+        // 查了半天才发现这行根本不证明任何事。真正的成败由 `startCapture` 那两行记。
+        IMRTCLog.info("摄像头格式已选", [
             "profile": profile.name, "width": String(size.width),
             "height": String(size.height), "fps": String(fps),
+            "device": device.localizedName, "position": front ? "front" : "back",
         ])
         return IMCaptureChoice(device: device, format: format, fps: fps)
     }

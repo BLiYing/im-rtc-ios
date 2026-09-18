@@ -470,13 +470,33 @@ public final class IMWebRTCAdapter: NSObject, IMMediaAdapter, @unchecked Sendabl
         lock.unlock()
     }
 
-    /// startCapture 按当前朝向起摄像头（格式怎么挑见 `captureChoice`）。
+    /**
+     startCapture 按当前朝向起摄像头（格式怎么挑见 `captureChoice`）。
+
+     **成败必须记一行**：`startCapture` 的回调形式在 Swift 里是 `async throws`，
+     失败时错误一路抛给调用方，而调用方（`openCamera`）只是把它继续往上抛——
+     真机上的表现就是「没画面、没报错」。2026-09-18 换 libwebrtc 包之后采集一帧不出，
+     日志里唯一相关的那行还叫「摄像头已开」（其实打在挑格式时），白查了一轮。
+     */
     private func startCapture(_ capturer: RTCCameraVideoCapturer) async throws {
         lock.lock()
         let front = usingFrontCamera
         lock.unlock()
         let choice = try Self.captureChoice(front: front, profile: profile)
-        try await capturer.startCapture(with: choice.device, format: choice.format, fps: choice.fps)
+        do {
+            try await capturer.startCapture(with: choice.device, format: choice.format, fps: choice.fps)
+        } catch {
+            IMRTCLog.warn("摄像头启动失败", ["err": String(describing: error)])
+            throw error
+        }
+        // `isRunning` 把「startCapture 没报错」和「AVCaptureSession 真的跑起来了」分开：
+        // 前者为真、后者为假，就是 AVFoundation 那一侧的事，别再去翻 libwebrtc。
+        IMRTCLog.info("摄像头采集已启动", [
+            "fps": String(choice.fps),
+            "session_running": String(capturer.captureSession.isRunning),
+            "inputs": String(capturer.captureSession.inputs.count),
+            "outputs": String(capturer.captureSession.outputs.count),
+        ])
     }
 }
 #endif
