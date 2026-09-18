@@ -48,17 +48,7 @@ let package = Package(
         .library(name: "IMCallKit", targets: ["IMCallKit"]),
         .library(name: "IMCallEngineWebRTC", targets: ["IMCallEngineWebRTC"])
     ],
-    dependencies: [
-        /*
-         **版本 exact 锁死，不用 from:**。libwebrtc 的预编译包跟着 Chromium
-         里程碑走，小版本之间也可能动 ObjC API；让它自动升级等于把一个
-         我们控制不了的变更引入到媒体面。升级是一次有意的动作，配一次真机回归。
-
-         Google 从 M80 起不再发布官方的移动端预编译产物，所以这类第三方打包
-         是目前唯一现实的选择（自己从源码编要 depot_tools + 几十 GB + 几小时）。
-         */
-        .package(url: "https://github.com/stasel/WebRTC.git", exact: "152.0.0")
-    ],
+    dependencies: [],
     targets: [
         .target(name: "IMCallEngine"),
         // Kit 依赖 Engine，**绝不反向**（CONVENTIONS §1）。
@@ -67,12 +57,44 @@ let package = Package(
         .target(name: "IMCallKit", dependencies: ["IMCallEngine"],
                 resources: [.process("Resources")]),
         /*
+         libwebrtc 预编译包。**版本 exact 锁死**：它跟着 Chromium 里程碑走，
+         小版本之间也可能动 ObjC API；自动升级等于把一个我们控制不了的变更
+         引入媒体面。升级是一次有意的动作，配一次真机回归。
+         Google 从 M80 起不再发布官方移动端预编译产物，所以第三方打包是唯一现实选择
+         （自己从源码编要 depot_tools + 几十 GB + 几小时）。
+
+         # 为什么是 webrtc-sdk 而不是 stasel（2026-09-18 换）
+
+         `RTCVideoEncoderFactorySimulcast` **不在上游 libwebrtc 里**，是 fork 打的补丁
+         （`webrtc-sdk/webrtc` 的 `sdk/BUILD.gn` 里那个 `rtc_library("simulcast")`；
+         同一个补丁在 `shiguredo-webrtc-build/webrtc-build` 叫 `patches/ios_simulcast.patch`）。
+         stasel 编的是 vanilla 上游，**升到任何版本都不会有**——不是版本问题，是分支问题。
+         没有它，`sendEncodings` 配了三层也只编第一层（`IMWebRTCAdapter.acquireCamera`）。
+
+         版本 `150.7871.01` **与 Android 的 `io.github.webrtc-sdk:android` 同号**
+         （`../im-rtc-android/gradle/libs.versions.toml`）：同一个 fork、同一条编号线。
+         在此之前 iOS 是唯一跑 vanilla 上游的端，两端编解码行为的差异没人盯。
+
+         # 为什么不 `.package(url:)` 引它，而是自己写 binaryTarget
+
+         `webrtc-sdk/Specs` 一仓两发（`WebRTC-SDK.podspec` 给 CocoaPods，`Package.swift` 给 SPM），
+         但它的 `Package.swift` **所有近期 tag 都编不过**：声明 `swift-tools-version:5.9`
+         却用了 6.2 才有的 `.visionOS(.v26)`，`swift package resolve` 当场
+         `error: 'v26' is unavailable`。他们的 SPM 那一半实际没人用。
+         所以这里直接指向同一个 release zip——**模块名仍是 `WebRTC`**，
+         `import WebRTC` 一行不用改。代价是升级时要自己算 checksum：
+         `swift package compute-checksum WebRTC.xcframework.zip`。
+         */
+        .binaryTarget(
+            name: "WebRTC",
+            url: "https://github.com/webrtc-sdk/Specs/releases/download/150.7871.01/WebRTC.xcframework.zip",
+            checksum: "03815cdf2f6a0ed328c94d74cce8fd1b8d2b6e95e2b37eab66795012fcecfdfa"),
+        /*
          媒体实现。**iOS-only**：libwebrtc 的 ObjC API 与渲染视图都只在 iOS 上有，
          整个 target 的源码包在 `#if canImport(UIKit) && canImport(WebRTC)` 里，
          所以 macOS 上 `swift build` 编出来是个空模块，不会挡住单测。
          */
-        .target(name: "IMCallEngineWebRTC",
-                dependencies: ["IMCallEngine", .product(name: "WebRTC", package: "WebRTC")]),
+        .target(name: "IMCallEngineWebRTC", dependencies: ["IMCallEngine", "WebRTC"]),
         .testTarget(name: "IMCallEngineTests", dependencies: ["IMCallEngine"]),
         .testTarget(name: "IMCallKitTests", dependencies: ["IMCallKit"])
     ]

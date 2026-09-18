@@ -8,7 +8,8 @@
 | **IMCallKit** | **整套通话 UI**：来电页与横幅、1v1 四态、群通话九宫格、悬浮窗 |
 | **Demo App** | 登录 / 拨号 / 通话记录 / 设置，两种集成方式各跑一遍 |
 
-媒体用 [libwebrtc 预编译包](https://github.com/stasel/WebRTC)（SPM），UI 用原生 UIKit。
+媒体用 [libwebrtc 预编译包](https://github.com/webrtc-sdk/Specs)（SPM binaryTarget，与 Android 同一个 fork
+同一个版本 `150.7871.01`），UI 用原生 UIKit。
 
 ## 两种集成方式
 

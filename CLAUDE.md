@@ -18,7 +18,7 @@
 
 ## 技术栈
 - 语言：**Swift 5**，最低 **iOS 15**
-- 媒体：**libwebrtc 预编译包**（`stasel/WebRTC`，SPM）。`RTCPeerConnection` / `RTCMTLVideoView` /
+- 媒体：**libwebrtc 预编译包**（`webrtc-sdk` M150，SPM binaryTarget）。`RTCPeerConnection` / `RTCMTLVideoView` /
   `AVAudioSession` 音频路由
 - 信令：`URLSessionWebSocketTask`，JSON
 - 分发：**Swift Package Manager**（libwebrtc 预编译包本身 SPM 优先；宿主可 pods + SPM 混用）

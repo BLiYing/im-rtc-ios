@@ -9,13 +9,14 @@
 
 **2026-09-18：会议房 M2 真机验收进行中。M2 的 Engine 与 Kit 两段已在 09-18 凌晨做完（`2ee3527` / `289e3af`，见 server `docs/design/MEETING_ROOM_DESIGN.md` §7 第 2、5 步）。今天全是真机才暴露的修复，`test.sh` 10 步全绿。**
 
-- **⚠️ simulcast 是「说了没做」**（09-18 查出，**未修**）：`publishCamera(simulcast:)` 按
+- **⚠️ simulcast 是「说了没做」**（09-18 查出，**换包已做、开三层没做**）：`publishCamera(simulcast:)` 按
   h/m/l 配了三个 `sendEncodings`、`room.publish` 也报了 `simulcast:true`，但上行统计里**只有 `h.`**
   （房间 41642481：1080×1920、3.1–4.7 Mbps），服务端那条 track 全程只出现过 `to:"h"`。
   根因是 `IMPeerConnections` 用裸 `RTCDefaultVideoEncoderFactory()`，没套 simulcast adapter，
-  libwebrtc 只编第一个 encoding。**修不了一行了事**：钉住的 `stasel/WebRTC 152.0.0` 里
-  没有 `RTCVideoEncoderFactorySimulcast`（94 个头文件全翻过），要换预编译包 = 动 `Package.swift`
-  + 影响已发布的 1.0.0 tag，单独一刀。后果见 server `bwe.go`：订阅侧报 `l` 也只能收这一层 1080p。
+  libwebrtc 只编第一个 encoding。**根因不是版本是分支**：`RTCVideoEncoderFactorySimulcast`
+  不在上游 libwebrtc 里，是 fork 打的补丁（`webrtc-sdk/webrtc` 的 `sdk/BUILD.gn`），
+  stasel 编 vanilla 上游，升到多少都不会有。**09-18 已换包**（见「已知坑」），
+  但工厂还没套、层序还没改，所以现状仍是单层。后果见 server `bwe.go`：订阅侧报 `l` 也只能收这一层 1080p。
 - **补了判据日志**（未提交）：`IMAspectVideoView` 加
   `画面缩放判据 owner= view= video= fraction= mode=`（与 Android `IMVideoFitter` 同名字段）。
   09-18 真机上同一个「钉住主画面 + 16:9 源」Android 按判据留黑边、iOS 却铺满，
@@ -66,8 +67,16 @@
 
 - **Demo 开 `.xcodeproj` 与开 `.xcworkspace` 是两个档**：脚本一律 `-workspace`，写成 `-project` 会联网、验的是 GitHub 上的旧代码。workspace 自己的 `Package.resolved` 不落地（Xcode.app 里开过也没有），别当配置错误去追。
 - **音频会话不在 `login()` 时配置**（09-16 改）：「该出声没出声」先查是不是漏了 `ensureAudioSessionConfigured()`（挂在 `acquireMicrophone()` / `setSpeakerOn(_:)`）。
-- **simulcast 没生效，换包暂缓**（09-09 拍板，**别重查**）：`stasel/WebRTC 152.0.0` 没有 `RTCVideoEncoderFactorySimulcast`，三层只跑 h。候选 `webrtc-sdk/Specs 150.7871.01`，核对全文在 archive「已知坑」第一条。
-  **`IMVideoProfile.simulcastLayers` 的 h,m,l 顺序只能随换包一起改**（单独改 = 当场发 1/4 分辨率）；换包时同步 `CLIENT_PARITY.md` §3。
+- **包已换成 webrtc-sdk M150（09-18），但 simulcast 还没开**：`Package.swift` 现在是自己写的
+  `.binaryTarget` 指向 `webrtc-sdk/Specs` 的 `150.7871.01`——**不能用 `.package(url:)` 引它**，
+  它的 `Package.swift` 近期 tag 全是坏的（声明 `tools-version:5.9` 却用了 6.2 才有的 `.visionOS(.v26)`）。
+  模块名仍是 `WebRTC`，所以 `import` 一行没改。**升级要自己算 checksum**：`swift package compute-checksum`。
+  **SwiftPM 下载这个 URL 极慢**（21 分钟没下完，curl 同地址 20 秒），绕法是 curl 下来放进
+  `~/Library/Caches/org.swift.swiftpm/artifacts/<URL 里非字母数字全换成下划线>`。**这条会砸到宿主**，发版前要解决。
+  **下一步**：`IMPeerConnections.sharedFactory` 套 `RTCVideoEncoderFactorySimulcast`，
+  同时把 `IMVideoProfile.simulcastLayers` 的 h,m,l 改成 l,m,h（Android / Web 都是低→高，libwebrtc 要求如此；
+  **两件事必须同一刀**——单独改顺序 = 当场发 1/4 分辨率，因为现在只有第一条 encoding 生效）。
+  开三层后验收看服务端是否出现三条 `to:"h"/"m"/"l"`，**并且每个 rid 的分辨率对得上**（只数三条会被顺序错骗过去）。
 - **2006 阈值「3」未校准、Kit 不接 2006**（`default: break`）：见 server「已知坑」。
 - **别单独 `rm -rf DerivedData`**：Xcode 开着时 SwiftPM 命中缓存 zip 跳过下载然后 `fatalError`（`There is no XCFramework found`）。平时 ⇧⌘K；真要清先退 Xcode：
   `osascript -e 'quit app "Xcode"'; sleep 3; rm -rf ~/Library/Developer/Xcode/DerivedData ~/Library/Caches/org.swift.swiftpm/artifacts`。

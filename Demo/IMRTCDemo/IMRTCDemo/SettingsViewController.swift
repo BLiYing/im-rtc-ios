@@ -38,7 +38,7 @@ final class SettingsViewController: UITableViewController {
     ]
 
     /**
-     「关于」。libwebrtc 那行要与 `Package.resolved` 锁的 stasel/WebRTC 版本一致，升级时一起改。
+     「关于」。libwebrtc 那行要与 `Package.swift` 里 binaryTarget 锁的版本一致，升级时一起改。
 
      「视频编码」是**只读说明，不是开关**：iOS 用的是 libwebrtc 默认编码器工厂，
      顺序依据见 `IMPeerConnections.sharedFactory` 的注释。
@@ -46,7 +46,7 @@ final class SettingsViewController: UITableViewController {
     private var about: [(name: String, value: String)] {
         [
             ("SDK", "im-rtc-ios \(IMCallKitVersion)"),
-            ("libwebrtc", "M152（stasel/WebRTC 152.0.0）"),
+            ("libwebrtc", "M150（webrtc-sdk 150.7871.01）"),
             ("视频编码", "H.264 硬编优先（libwebrtc 默认顺序），对端不支持时回落 VP8"),
             ("设备 ID", session.deviceID),
         ]
