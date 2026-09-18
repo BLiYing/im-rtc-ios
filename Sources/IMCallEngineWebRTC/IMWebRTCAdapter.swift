@@ -492,6 +492,9 @@ public final class IMWebRTCAdapter: NSObject, IMMediaAdapter, @unchecked Sendabl
         let front = usingFrontCamera
         lock.unlock()
         let choice = try Self.captureChoice(front: front, profile: profile)
+        // **起采集前再挡一次**：构造时挡过一次，但包里两个 setter 都在，别赌它不会再改。
+        // 这两个旗标是视频通话双向无声的根因，见 `shieldAudioSession(of:)`。
+        Self.shieldAudioSession(of: capturer.captureSession)
         // **先盯上再起**：中断通知可能在 startCapture 过程中就发出来，晚一步就听不到了。
         captureWatch.watch(capturer.captureSession)
         do {
@@ -502,10 +505,8 @@ public final class IMWebRTCAdapter: NSObject, IMMediaAdapter, @unchecked Sendabl
         }
         // `isRunning` 把「startCapture 没报错」和「AVCaptureSession 真的跑起来了」分开：
         // 前者为真、后者为假，就是 AVFoundation 那一侧的事，别再去翻 libwebrtc。
-        // **两个音频相关的旗标要回读**：它们是在 `makeCameraCapturer` 里设的，
-        // 而采集器初始化与 `startCapture` 都可能把它们改回去（包里两个 setter 都在）。
-        // `auto_configures_audio=true` 就意味着 AVFoundation 还在替我们改音频会话——
-        // 19:47 那三通「类目被反复打回 SoloAmbient」的头号嫌疑。
+        // **两个音频旗标要回读**：期望 `uses_app_audio=true auto_configures_audio=false`。
+        // 回读对不上就是包又在别处改了它们，那是双向无声会复发的信号。
         IMRTCLog.info("摄像头采集已启动", [
             "fps": String(choice.fps),
             "session_running": String(capturer.captureSession.isRunning),

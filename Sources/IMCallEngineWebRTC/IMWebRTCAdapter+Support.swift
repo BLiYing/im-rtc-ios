@@ -63,35 +63,61 @@ extension IMWebRTCAdapter {
     static func makeCameraCapturer(
         delegate: RTCVideoCapturerDelegate
     ) -> RTCCameraVideoCapturer {
-        let session = AVCaptureSession()
-        /*
-         **这两行是给音频会话挡刀的（2026-09-18 加）。**
+        let capturer = RTCCameraVideoCapturer(delegate: delegate, captureSession: AVCaptureSession())
+        // **必须在构造之后设**，理由见 `shieldAudioSession(of:)`：构造函数会把它改回去。
+        shieldAudioSession(of: capturer.captureSession)
+        return capturer
+    }
 
-         `AVCaptureSession` 新建出来两个属性都是系统默认的 `true`，而
-         `automaticallyConfiguresApplicationAudioSession == true` 的含义是
-         **AVFoundation 替你配置 App 的共享音频会话，并在采集会话停止时把它还原回去**——
-         还原的目标就是默认类目 `SoloAmbient`。我们自己在 `applyCallAudioCategory()` 里
-         把会话配成 `.playAndRecord / .voiceChat`，两边于是在抢同一个会话。
+    /**
+     shieldAudioSession 不许摄像头采集会话碰 App 的音频会话。**视频通话双向无声的根因（2026-09-18）。**
 
-         真机现象对得上：19:16 视频通话里会话在毫秒之间从
-         `PlayAndRecord/VoiceChat/inputs=1` 退回 `SoloAmbient/Default/inputs=0`，
-         采集 `totalSamplesDuration=0`，八秒后 `overrideOutputAudioPort` 回 `-50`，
-         **收发两个方向同时没声音**；而同一版代码的纯音频通话（不开摄像头）
-         30 秒里 `packetsSent` 一路涨到 1065，会话全程没被动过。
-         唯一的自变量就是这个采集会话在不在。
+     # 现象
 
-         `usesApplicationAudioSession = true`：用 App 这一个会话，别自己另开一个
-         （上游那句 `= NO` 是给它自建的纯视频会话用的，而多摄机型上不允许，
-         正是本文件下面那段黑屏 bug 的来路）。
-         `automaticallyConfiguresApplicationAudioSession = false`：用可以，**但别改它**。
+     视频通话里，接通那一刻我们把音频会话配成 `.playAndRecord/.voiceChat`，约 150 ms 后
+     它被打回系统默认的 `SoloAmbient`、输入口变 0；补回去，再被打回，一秒里拉锯六轮。
+     libwebrtc 的音频单元在第一下就被掀翻，之后 `packetsSent` / `totalSamplesDuration`
+     三十秒全是 0——**收发两个方向同时没声音**（19:47 首装后连打三通，通通如此）。
+     纯音频通话（不开摄像头）同一版代码 30 秒 `packetsSent` 涨到 1065，会话从没被动过。
 
-         **仍是待证实**：这解释得通、也是有文档的行为，但还没有一通视频通话
-         证明改完就不犯了。下一次视频真机验收要盯 `通话中音频会话被打回非通话类目`
-         这条 WARN 还出不出现。
-        */
+     # 谁干的
+
+     反汇编这个预编译包（webrtc-sdk 150.7871.01）排除了所有别的嫌疑：
+     - 包里唯一引用 `SoloAmbient` 的地方是 `audio_engine_device.mm` 里一串
+       `isEqualToString:` **比较**，不是设置；
+     - 包里所有改类目 / 激活状态的调用点全在 `RTCAudioSession(+Configuration)` 与
+       `audio_device_ios.mm`，设的都是 PlayAndRecord 那套 `webRTCConfiguration`；
+     - 我们自己的代码里只有 `applyCallAudioCategory()` 一处设类目，设的也是 PlayAndRecord。
+
+     剩下的只有 AVFoundation 自己。`RTCCameraVideoCapturer` 的 `setupCaptureSession:`
+     （`initWithDelegate:captureSession:` 一定会走它，**注入的 session 也不例外**）
+     把 `usesApplicationAudioSession` 设成 **NO**，而 `automaticallyConfiguresApplicationAudioSession`
+     只在它自建 session 的 `createCaptureSession` 里设成 NO，对注入的 session 从没碰过，
+     留在系统默认的 **YES**。于是我们的采集会话跑在这样的组合上：
+     **用一个私有音频会话 + AVFoundation 自动配置**。Apple 头文件对前者的原话是
+     「pre-iOS 7 behavior … can lead to unwanted interruptions when interacting with the
+     application's audio session」——两个写手各自"恢复"自己想要的配置，就是那一秒的拉锯。
+
+     # 为什么上一版（`4fa128a`）没用
+
+     它在**构造之前**把旗标设在了 session 上，构造函数里的 `setupCaptureSession:`
+     随手就把 `usesApplicationAudioSession` 翻回 NO。所以要在构造**之后**设，
+     并且起采集前再设一遍——包里两个 setter 都在，防它哪天在别处再改。
+
+     `usesApplicationAudioSession = true`：共用 App 这一个会话（Apple：allowing simultaneous
+     play back and recording without unwanted interruptions）。
+     `automaticallyConfiguresApplicationAudioSession = false`：用可以，**一个属性都不许改**。
+     这也正是这个 fork 给它自建的多摄 session 设的值。纯视频采集没有音频输入，
+     响铃期会话还是默认类目也照样跑得起来。
+
+     **没有真机直接看见 AVFoundation 写 SoloAmbient 那一笔**——它在框架内部，看不见。
+     以上是把每一个别的写手都排除之后剩下的那个，外加它的行为与 Apple 的文档、
+     与"只在视频通话里犯"的分布都对得上。验收判据：`通话中音频会话被打回非通话类目`
+     这条 WARN 在视频通话里不再出现，`上行音频采样` 的 `packetsSent` 在涨。
+     */
+    static func shieldAudioSession(of session: AVCaptureSession) {
         session.usesApplicationAudioSession = true
         session.automaticallyConfiguresApplicationAudioSession = false
-        return RTCCameraVideoCapturer(delegate: delegate, captureSession: session)
     }
 
     static func captureChoice(front: Bool, profile: IMVideoProfile) throws -> IMCaptureChoice {
@@ -194,8 +220,13 @@ extension IMWebRTCAdapter {
          于是「被打翻之后重新点火」这件事才有手柄可抓，见 `reassertCallAudioCategory`。
 
          **头文件还说明了这个属性当初为什么存在**：AVPlayer 正在放音时初始化 VoIP 音频单元，
-         会把那路音频掐断或压低。我们的回铃音就是一个 `AVAudioPlayer`，而三次复现
-         都发生在「接通那一刻回铃音停、音频单元起」这个交叠点上。
+         会把那路音频掐断或压低。我们的回铃音就是一个 `AVAudioPlayer`。
+
+         **这不是根因修复，是安全网。** 根因（摄像头采集会话跑在私有音频会话 + AVFoundation
+         自动配置上，与我们抢会话）在 `shieldAudioSession(of:)`；这里只保证万一还有谁把会话
+         掀翻，`reassertCallAudioCategory` 有手柄把音频单元重新点起来。另注：包里的
+         `audio_engine_device.mm`（AVAudioEngine 那种 ADM）不走 `RTCAudioSession` 的
+         begin/end，`useManualAudio` 对它是否生效没有证据，默认工厂用的是哪种 ADM 也没查出来。
         */
         session.useManualAudio = true
         session.isAudioEnabled = true

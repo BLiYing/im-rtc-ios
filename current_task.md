@@ -9,12 +9,19 @@
 
 **2026-09-18 傍晚：真机上两个还没收口的症状——「iOS 说话对方听不见」与「切后台一会儿通话就断」。已提交 `c05f4e7` + `bfbf7c9`（未推送），`test.sh` 10 步全绿 381 例。等用户装机跑下一通。**
 
-- **麦克风一个包都没出去，原因未知**（18:04 call-2e93acf915b029c9）：frank 推了 `video/H264`，
-  服务端**没有** `audio/opus`——Pion 的「上行 Track 已接入」是收到首个 RTP 才触发的，
-  所以不是没协商，是**一个音频包都没发**。本端零报错、没发过 `room.mute`。
-  **已加 `IMUplinkAudioStats`**（推麦克风后 +2s/+10s 各一行）分开三种情形：
-  `capture.totalSamplesDuration` 不涨 = ADM 没在录；`audioLevel>0` 而 `packetsSent=0` = 录了没发；
-  `packetsSent` 在涨 = 不在本端。**下一通真机日志出来就能定位。**
+- **视频通话双向无声——根因已定位、已修、未装机验**（`shieldAudioSession(of:)`，
+  `IMWebRTCAdapter+Support.swift`）：接通那一刻我们把音频会话配成 PlayAndRecord，150ms 后被打回
+  `SoloAmbient`，一秒拉锯六轮，libwebrtc 音频单元被掀翻后 `packetsSent`/`totalSamplesDuration`
+  三十秒全 0（19:47 首装后三通视频全中；19:32 纯音频通话 30 秒 `packetsSent=1065` 全程没事）。
+  反汇编包（webrtc-sdk 150.7871.01）排除了包内所有写手（唯一引用 SoloAmbient 的是
+  `audio_engine_device.mm` 的 `isEqualToString:` 比较）；剩下的是 AVFoundation：
+  `RTCCameraVideoCapturer.setupCaptureSession:` 对**注入的** session 也 `setUsesApplicationAudioSession:NO`，
+  而 `automaticallyConfigures…` 对注入 session 从没设过（默认 YES）→ 采集会话跑在
+  「私有音频会话 + 自动配置」上，Apple 头文件原话就是会"unwanted interruptions"。
+  **修法：构造之后（不是之前——`4fa128a` 就是设早了被翻回去）再设 `uses=true / auto=false`，起采集前再设一次。**
+  验收判据：视频通话里 `通话中音频会话被打回非通话类目` 不再出现、`上行音频采样 packetsSent` 在涨、
+  `摄像头采集已启动 uses_app_audio=true auto_configures_audio=false`。
+  `useManualAudio`/`isAudioEnabled`（`8dd9e29`）保留为安全网，不是根因；默认工厂用哪种 ADM 没查出来。
 - **后台掉线 = App 被系统挂起**（18:04:38 断 → 18:05:08 窗口到期 → `reason=network`）：
   `采集会话被中断 reason=后台不给用摄像头` 实锤切了后台；服务端**立刻**就察觉了断开（不是 45 秒后），
   窗口只有 30 秒，而 App 整整 4 分钟零日志。**客户端任何定时参数都救不了没在运行的进程**——
@@ -87,7 +94,7 @@
 
 ## 下一步
 
-1. **装机跑一通**：看 `上行音频采样` 两行，定位麦克风为什么不出声；顺带验发布超时不再收掉整通。
+1. **装机打视频通话（首装后连打几通）**：看 `摄像头采集已启动 uses_app_audio=true auto_configures_audio=false`、视频通话里不再出现 `通话中音频会话被打回非通话类目`、`上行音频采样 packetsSent` 在涨；顺带验发布超时不再收掉整通。
 2. iOS 补 `setAppForeground`（照搬 Android `IMSignalConnection.setForeground`），并给
    `ping_interval_sec` 补 `[5,60]` 钳制；Web 的 `heartbeat.ts` `>` 改 `>=`。三条都要进 `CLIENT_PARITY.md`。
 3. 2.0.0：真机验上面三项（断网再挂断顺带验结束帧表），用户通知后发版。
