@@ -48,6 +48,11 @@ public final class IMVideoTileView: UIView {
 
         nameLabel.font = .systemFont(ofSize: 12)
         nameLabel.textColor = theme.primaryText
+        // 格子小到放不下整个名字时**截断**，而不是把自己压成零宽。
+        // 说话图标是恒宽的硬约束，名字牌又是内容撑出来的：两边都不肯让，
+        // 名字就会被挤成一条缝（见 namePlate 的宽度上限）。
+        nameLabel.lineBreakMode = .byTruncatingTail
+        nameLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         namePlate.backgroundColor = theme.scrim
         namePlate.layer.cornerRadius = 6
         namePlate.clipsToBounds = true
@@ -92,7 +97,15 @@ public final class IMVideoTileView: UIView {
             namePlate.leadingAnchor.constraint(equalTo: leadingAnchor, constant: Self.plateInset),
             namePlate.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -Self.plateInset),
             namePlate.heightAnchor.constraint(equalToConstant: 20),
-            namePlate.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -40),
+            /*
+             宽度上限只留一个边距。
+
+             原先留的是 40：84pt 的格子（演讲者视图底部条）里名字牌只剩 32pt，
+             而牌子里恒定要吃掉 8 + 5 + 9（说话图标）+ 8 = 30pt——**留给名字的正好 2pt，
+             一个字都看不见**（2026-09-18 真机）。大格子上看不出来，只有小格子会中。
+            */
+            namePlate.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor,
+                                                constant: -Self.plateInset),
             nameLabel.centerYAnchor.constraint(equalTo: namePlate.centerYAnchor),
             nameLabel.leadingAnchor.constraint(equalTo: namePlate.leadingAnchor, constant: 8),
             // 图标**永远占位**（拍板：留位），名字不会随说话左右跳。
