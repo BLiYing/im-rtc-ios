@@ -9,7 +9,7 @@
 
 **2026-09-18 傍晚：真机上两个还没收口的症状——「iOS 说话对方听不见」与「切后台一会儿通话就断」。已提交 `c05f4e7` + `bfbf7c9`（未推送），`test.sh` 10 步全绿 381 例。等用户装机跑下一通。**
 
-- **视频通话双向无声——20:27 抓到现行，根因已修，未装机验**（`IMWebRTCAudioConfiguration`）：
+- **视频通话双向无声——已修、20:45 真机验收通过**（`IMWebRTCAudioConfiguration`）：
   写手是 libwebrtc 自己。ADM 开麦（`InitRecording` → `configureWebRTCSession:`）把会话配成
   `webRTCConfiguration`，而这个 fork 的 `-[RTCAudioSessionConfiguration init]`（`0x250bb0`）
   **读的是当下会话的 category/mode**——默认值是首次被碰那一刻的快照（上游是写死 PlayAndRecord）。
@@ -91,7 +91,7 @@
 
 ## 下一步
 
-1. **装机后第一通就打视频**（这是必现路径）：看上面三条验收；过了之后把 Demo 的 `AudioSessionTracer` 撤掉或关掉（swizzle 不该长留）。
+1. 后台存活：通话中切后台被系统挂起（见上）——现在麦克风真在录了，先复测一次看 `audio` 后台模式能否保住进程。
 2. iOS 补 `setAppForeground`（照搬 Android `IMSignalConnection.setForeground`），并给
    `ping_interval_sec` 补 `[5,60]` 钳制；Web 的 `heartbeat.ts` `>` 改 `>=`。三条都要进 `CLIENT_PARITY.md`。
 3. 2.0.0：真机验上面三项（断网再挂断顺带验结束帧表），用户通知后发版。
