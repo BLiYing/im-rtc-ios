@@ -23,14 +23,21 @@ public final class IMSignalConnection {
     var options: IMConnectionOptions
     var events: IMConnectionEvents
 
-    private var socket: IMWebSocket?
-    private var state: IMConnectionState = .idle
+    var socket: IMWebSocket?
+    var state: IMConnectionState = .idle
     var sessionID = ""
     private var seq = 0
-    private var reconnectAttempt = 0
+    var reconnectAttempt = 0
     /// 还没有结果的那个 `connect()`。见 `takeConnectContinuation()`。
     private var connectContinuation: CheckedContinuation<IMHelloOK, Error>?
-    private var reconnectTimer: DispatchSourceTimer?
+    /// 正等着的那次重连。**到点就置 nil**：「在等」与「正在连」要分得开（见 `SignalConnection+Nudge.swift`）。
+    var reconnectTimer: DispatchSourceTimer?
+    /// 回前台 / 网络变化那一刻正在连、或探测判死要断：这一次失败**不走退避**，立刻再连。
+    var networkChangePending = false
+    /// 上一次因回前台 / 网络变化而立刻重连的时刻（开机以来纳秒），防重连风暴用。
+    var lastNudgeReconnectNS: UInt64 = 0
+    /// 回前台 / 网络变化时，连着的那条先探死活。
+    private(set) lazy var networkProbe = NetworkProbe(queue: queue)
     /// 服务端最近一次告知的心跳周期。`giveUpDelayMS` 要用它推算服务端何时判死。
     var pingIntervalSec = 15
     /// 「服务端已经彻底放弃这条会话」的定时器。见 `giveUpDelayMS`。
@@ -125,6 +132,8 @@ public final class IMSignalConnection {
         queue.async {
             self.state = .closed
             self.heartbeat.stop()
+            self.networkProbe.stop()
+            self.networkChangePending = false
             self.tokenExpiry.disarm()
             self.reconnectTimer?.cancel()
             self.reconnectTimer = nil
@@ -253,6 +262,7 @@ public final class IMSignalConnection {
                 self.sessionID = ok.sessionID
                 self.state = .connected
                 self.reconnectAttempt = 0
+                self.networkChangePending = false
                 self.authFailures = 0
                 self.pingIntervalSec = ok.pingIntervalSec
                 // 连上了就别再倒计时了——不管 resumed 是真是假，服务端都已经给出裁决。
@@ -318,6 +328,7 @@ public final class IMSignalConnection {
     private func handleMessage(_ text: String) {
         // 收到**任何**帧都算对端活着，不只是 pong（§1.3）。
         heartbeat.noteFrameReceived()
+        networkProbe.noteFrameReceived()
 
         let envelope: IMEnvelope
         do {
@@ -368,6 +379,7 @@ public final class IMSignalConnection {
 
     private func handleClose(code: Int, reason: String) {
         heartbeat.stop()
+        networkProbe.stop()
         socket = nil
         // 断线时把所有在途请求一次性失败掉——不做的话它们会一直挂到超时，
         // 用户看到的是「点了没反应」，而真实原因明明早就知道了。
@@ -418,12 +430,17 @@ public final class IMSignalConnection {
     }
 
     private func scheduleReconnect() {
+        if networkChangePending {
+            reconnectRightAway(rule: "网络变化或回前台时正在连，失败后立即再连")
+            return
+        }
         let delay = IMBackoff.delayMS(attempt: reconnectAttempt, random: options.random)
         reconnectAttempt += 1
         IMRTCLog.info("计划重连", ["attempt": String(reconnectAttempt), "delay_ms": String(delay)])
 
         let timer = imAfter(.milliseconds(delay), on: queue) { [weak self] in
             guard let self, self.state == .reconnecting else { return }
+            self.reconnectTimer = nil
             Task { [weak self] in
                 guard let self else { return }
                 // 重连失败会走 onClose，再排下一次——**不在这里递归重试**，
@@ -435,7 +452,7 @@ public final class IMSignalConnection {
         reconnectTimer = timer
     }
 
-    private func sendPing() {
+    func sendPing() {
         guard let socket = self.socket, socket.isOpen else { return }
         seq += 1
         guard let text = encode(IMFrameType.ping, reqID: "i-\(seq)", data: [:]) else { return }

@@ -119,6 +119,9 @@ extension IMCallController {
      iOS 在后台**不允许继续采集摄像头**，对端看到的就是一片黑——比看到头像糟糕得多。
      所以进后台就把摄像头轨道 mute 掉（对端收到「摄像头已关闭」，看到头像）；
      回前台**恢复到用户原来的选择**：他进后台前本来就关着摄像头，回前台不要替他打开。
+
+     **不管在不在通话都要喂给 Engine**（`setAppForeground`）：回前台时信令正等着重连就立刻连、
+     连着的先探死活——后台挂起过，「连着」往往是假的。网络变化另由 `networkWatcher` 喂。
      */
     func observeAppLifecycle() {
         #if canImport(UIKit)
@@ -131,12 +134,14 @@ extension IMCallController {
     }
 
     @objc private func appDidEnterBackground() {
+        engine.setAppForeground(false)
         guard !cameraCID.isEmpty, state.selfState.cameraOn else { return }
         cameraPausedByBackground = true
         Task { await setMutedLogged(cameraCID, muted: true) }
     }
 
     @objc private func appWillEnterForeground() {
+        engine.setAppForeground(true)
         guard cameraPausedByBackground else { return }
         cameraPausedByBackground = false
         guard !cameraCID.isEmpty, state.selfState.cameraOn else { return }

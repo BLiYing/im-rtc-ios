@@ -98,6 +98,8 @@ final class DestroyContractTests: XCTestCase {
         engine.setSpeakerOn(true)
         engine.updateToken("t2")
         engine.updateToken("t2", expiresAtMS: 1)
+        engine.setAppForeground(true)
+        engine.notifyNetworkChanged()
         await engine.logout()
         await engine.destroy()
         engine.forceEnd()

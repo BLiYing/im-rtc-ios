@@ -7,6 +7,12 @@
 
 ## 当前焦点
 
+**2026-09-18 晚：回前台 / 网络变化立即重连（与 Android 对齐，未上真机）。** `IMCallController` 喂
+`setAppForeground` 与 `notifyNetworkChanged`（`NWPathMonitor`）；Engine `SignalConnection+Nudge.swift`：
+等着重连的立刻连、退避归零；连着的探 3 s，判死立刻重连（iOS 回前台也探——挂起过「连着」多半是假的）；两次至少隔 2 s。
+真机验法：通话中切后台 1 分钟再回来 / 关 Wi-Fi 再开，Xcode 控制台看 `App 切到前台` / `系统网络变了` → `计划重连 rule=…立即重连`。
+**救不了「后台被挂起超过 30 秒」**——那条仍是下面「后台掉线」的事。状态见 CLIENT_PARITY `[^netchange]`。
+
 **2026-09-18 傍晚：真机上两个还没收口的症状——「iOS 说话对方听不见」与「切后台一会儿通话就断」。已提交 `c05f4e7` + `bfbf7c9`（未推送），`test.sh` 10 步全绿 381 例。等用户装机跑下一通。**
 
 - **视频通话双向无声——已修、20:45 真机验收通过**（`IMWebRTCAudioConfiguration`）：

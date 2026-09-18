@@ -15,7 +15,7 @@ import Foundation
    `inviteMore` / `joinRoom` / `leaveRoom` / `publishMicrophone` / `publishCamera` / `openMicrophone` /
    `openCamera` / `setMuted` / `probeMicrophone` / `startLocalPreview` / `switchCamera`）一律 **throw
    `2005 invalid_state`**——与平时失败同一个出口（`guardNotDestroyed()`）。
- - **提示类与清理类**（`setRemoteLayer` / `setSpeakerOn` / `updateToken` / `logout` / `destroy` / `forceEnd` /
+ - **提示类与清理类**（`setRemoteLayer` / `setSpeakerOn` / `updateToken` / `setAppForeground` / `notifyNetworkChanged` / `logout` / `destroy` / `forceEnd` /
    `closeMicrophone` / `closeCamera` / `stopLocalPreview` / `attachView` / `attachLocalView` /
    `addEventObserver` / `removeEventObserver`）**不 throw、不做事**：`attachView` / `attachLocalView`
    不再新建渲染视图，`delegate` 的赋值与 `addEventObserver` 被拦掉（事件本来也不会再有了）。

@@ -32,6 +32,10 @@
     // 换接入票：协议 §1.5 说 4401 的处置是「换新 token 后重连」，而换票是宿主的事。
     [_engine updateToken:@"new-token"];
 
+    // 前后台与网络变化：接了 IMCallKit 不用管；自画 UI 的宿主自己喂，断线后就不再按退避白等。
+    [_engine setAppForeground:YES];
+    [_engine notifyNetworkChanged];
+
     // block 接法（delegate 之外的第二种形式，CONVENTIONS §4 要求两种都提供）。
     NSUUID *token = [_engine addEventObserver:^(IMCallEvent * _Nonnull event) {
         if (event.name == IMCallEventNameCallBegin) {

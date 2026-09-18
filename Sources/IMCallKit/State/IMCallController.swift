@@ -96,6 +96,8 @@ public protocol IMCallControllerObserver: AnyObject {
     var settleTimers: [String: DispatchSourceTimer] = [:]
     /// 切后台时被自动暂停的摄像头；回前台恢复。**不改用户的开关**。
     var cameraPausedByBackground = false
+    /// 系统网络换了就叫 Engine 立即重连，见 `IMNetworkWatcher`。
+    private var networkWatcher: IMNetworkWatcher?
     /// 最后一批邀请出去的 uid。加人被拒时用它把占位格收回来。
     private var lastInvited: [String] = []
     #if canImport(UIKit)
@@ -114,6 +116,7 @@ public protocol IMCallControllerObserver: AnyObject {
         super.init()
         engine.delegate = self
         observeAppLifecycle()
+        networkWatcher = IMNetworkWatcher { [weak engine] in engine?.notifyNetworkChanged() }
     }
 
     deinit {
