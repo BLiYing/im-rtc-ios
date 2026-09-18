@@ -502,11 +502,18 @@ public final class IMWebRTCAdapter: NSObject, IMMediaAdapter, @unchecked Sendabl
         }
         // `isRunning` 把「startCapture 没报错」和「AVCaptureSession 真的跑起来了」分开：
         // 前者为真、后者为假，就是 AVFoundation 那一侧的事，别再去翻 libwebrtc。
+        // **两个音频相关的旗标要回读**：它们是在 `makeCameraCapturer` 里设的，
+        // 而采集器初始化与 `startCapture` 都可能把它们改回去（包里两个 setter 都在）。
+        // `auto_configures_audio=true` 就意味着 AVFoundation 还在替我们改音频会话——
+        // 19:47 那三通「类目被反复打回 SoloAmbient」的头号嫌疑。
         IMRTCLog.info("摄像头采集已启动", [
             "fps": String(choice.fps),
             "session_running": String(capturer.captureSession.isRunning),
             "inputs": String(capturer.captureSession.inputs.count),
             "outputs": String(capturer.captureSession.outputs.count),
+            "uses_app_audio": String(capturer.captureSession.usesApplicationAudioSession),
+            "auto_configures_audio":
+                String(capturer.captureSession.automaticallyConfiguresApplicationAudioSession),
         ])
     }
 }

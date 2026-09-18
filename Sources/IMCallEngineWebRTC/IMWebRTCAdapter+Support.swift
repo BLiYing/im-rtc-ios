@@ -179,6 +179,26 @@ extension IMWebRTCAdapter {
             // 配不上不该让通话直接失败：多数情况下仍能出声，只是路由不理想。
             failure = String(describing: error)
         }
+        /*
+         **接管音频单元的开关（2026-09-18）。**
+
+         `useManualAudio = NO`（默认）时，音频单元什么时候起、什么时候拆全由 libwebrtc
+         自己判断，我们只能眼看着。真机 19:47 三通群视频复现出来的就是这个：
+         我们把类目设成 `.playAndRecord`，约 150 ms 后会话被打回 `SoloAmbient`，
+         兜底再设回来——**类目补回来了，`packetsSent` 却始终是 0**，
+         三十秒 `totalSamplesDuration=0`。音频单元在那一下已经被拆掉，
+         而它不会因为类目恢复就自己重建。擦桌子救不了灶。
+
+         `useManualAudio = YES` 之后 `isAudioEnabled` 才生效，它正是拆/建音频单元的开关
+         （头文件原话：设 NO 会 stop and uninitialize，设 YES 会在需要时 initialize and start）。
+         于是「被打翻之后重新点火」这件事才有手柄可抓，见 `reassertCallAudioCategory`。
+
+         **头文件还说明了这个属性当初为什么存在**：AVPlayer 正在放音时初始化 VoIP 音频单元，
+         会把那路音频掐断或压低。我们的回铃音就是一个 `AVAudioPlayer`，而三次复现
+         都发生在「接通那一刻回铃音停、音频单元起」这个交叠点上。
+        */
+        session.useManualAudio = true
+        session.isAudioEnabled = true
         let elapsedMS = (DispatchTime.now().uptimeNanoseconds - startedNS) / 1_000_000
         let av = AVAudioSession.sharedInstance()
         let landed = av.category == .playAndRecord
@@ -189,6 +209,7 @@ extension IMWebRTCAdapter {
             "mode": av.mode.rawValue,
             "inputs": String(av.currentRoute.inputs.count),
         ]
+        fields["audio_unit_enabled"] = String(session.isAudioEnabled)
         if let failure { fields["err"] = failure }
         // **回读对不上比抛错更值得喊**：抛错至少还有个错误码，回读对不上是纯静默。
         if failure != nil || !landed {
@@ -212,6 +233,9 @@ extension IMWebRTCAdapter {
         let session = RTCAudioSession.sharedInstance()
         session.lockForConfiguration()
         defer { session.unlockForConfiguration() }
+        // 与 `applyCallAudioCategory` 里的 `useManualAudio = true` 成对：先让 libwebrtc
+        // 把音频单元拆干净，再放会话。顺序反了的话拆的时候会话已经不是通话态了。
+        session.isAudioEnabled = false
         do {
             try session.session.setActive(false, options: [.notifyOthersOnDeactivation])
         } catch {
