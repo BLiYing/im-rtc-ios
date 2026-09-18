@@ -7,6 +7,33 @@
 
 ## 当前焦点
 
+**2026-09-18 傍晚：真机上两个还没收口的症状——「iOS 说话对方听不见」与「切后台一会儿通话就断」。已提交 `c05f4e7` + `bfbf7c9`（未推送），`test.sh` 10 步全绿 381 例。等用户装机跑下一通。**
+
+- **麦克风一个包都没出去，原因未知**（18:04 call-2e93acf915b029c9）：frank 推了 `video/H264`，
+  服务端**没有** `audio/opus`——Pion 的「上行 Track 已接入」是收到首个 RTP 才触发的，
+  所以不是没协商，是**一个音频包都没发**。本端零报错、没发过 `room.mute`。
+  **已加 `IMUplinkAudioStats`**（推麦克风后 +2s/+10s 各一行）分开三种情形：
+  `capture.totalSamplesDuration` 不涨 = ADM 没在录；`audioLevel>0` 而 `packetsSent=0` = 录了没发；
+  `packetsSent` 在涨 = 不在本端。**下一通真机日志出来就能定位。**
+- **后台掉线 = App 被系统挂起**（18:04:38 断 → 18:05:08 窗口到期 → `reason=network`）：
+  `采集会话被中断 reason=后台不给用摄像头` 实锤切了后台；服务端**立刻**就察觉了断开（不是 45 秒后），
+  窗口只有 30 秒，而 App 整整 4 分钟零日志。**客户端任何定时参数都救不了没在运行的进程**——
+  出路是让 App 在通话中别被挂起（`UIBackgroundModes` 只有 `audio`，要靠活跃音频 I/O 才保得住，
+  与上一条可能同源，未证实）。18:01 那次 App 在后台还活着，1 秒就重连回来了。
+- **发布超时不再收掉整通**（`bfbf7c9`）：`room.publish` 拿 2003/2004 走 `publish_deferred`
+  挂回 `buffered` 等重连重放；服务端真回拒绝（1xxx）仍 forceEnd。没送到的结束帧记进
+  `undeliveredExit`，重连握手后补发一次——原先挂断帧发不出去就没了，服务端把人留在
+  恢复窗口里，一重连又「取消离房」，房里挂着一个界面上早已挂断的人。
+- **18:18 那通前台也断了，原因未定**：接通 19 秒后信令双向哑掉，服务端一个字节没收到，
+  而客户端 `URLSessionWebSocketTask.send` 每帧都被收下（**全段零条 `发帧失败`**），
+  36 秒后才以 TCP `Operation timed out` 放弃。同一 WiFi 上的 Android 全程没事。**别再当网络问题结案，也别当已解决。**
+
+**五端并表（09-18）**：判死时长 server/iOS/Android/Desktop 都是 45s，**Web 是 60s**
+（`heartbeat.ts:39` 用了 `>` 不是 `>=`，而 iOS/Desktop 的 `Heartbeat` 注释早就写明这个坑）。
+前后台钩子**只有 Android 有**（`setAppForeground` → 退避归零 + 立刻重连）。
+`ping_interval_sec` 只有 Android 钳到 [5,60]。
+**注意**：45s 判死**不**必然错过 30s 恢复窗口——服务端的 30s 是从它自己 45s 读超时之后才起算的。
+
 **2026-09-18：会议房 M2 真机验收进行中。M2 的 Engine 与 Kit 两段已在 09-18 凌晨做完（`2ee3527` / `289e3af`，见 server `docs/design/MEETING_ROOM_DESIGN.md` §7 第 2、5 步）。今天全是真机才暴露的修复，`test.sh` 10 步全绿。**
 
 - **⚠️ simulcast 是「说了没做」**（09-18 查出，**换包已做、开三层没做**）：`publishCamera(simulcast:)` 按
@@ -60,8 +87,11 @@
 
 ## 下一步
 
-1. 2.0.0：真机验上面三项（断网再挂断顺带验结束帧表），用户通知后发版。
-2. 按需 / 后续期：自定义铃声没有 Demo UI、没真机验过；`IMInviteMemberProvider` / `presentInvitePicker` 没真实宿主跑过；IMProgram / 容信真实接入（M3~M7）。
+1. **装机跑一通**：看 `上行音频采样` 两行，定位麦克风为什么不出声；顺带验发布超时不再收掉整通。
+2. iOS 补 `setAppForeground`（照搬 Android `IMSignalConnection.setForeground`），并给
+   `ping_interval_sec` 补 `[5,60]` 钳制；Web 的 `heartbeat.ts` `>` 改 `>=`。三条都要进 `CLIENT_PARITY.md`。
+3. 2.0.0：真机验上面三项（断网再挂断顺带验结束帧表），用户通知后发版。
+4. 按需 / 后续期：自定义铃声没有 Demo UI、没真机验过；`IMInviteMemberProvider` / `presentInvitePicker` 没真实宿主跑过；IMProgram / 容信真实接入（M3~M7）。
 
 ## 已知坑 / 限制
 
