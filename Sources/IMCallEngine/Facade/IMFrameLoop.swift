@@ -18,7 +18,8 @@ actor IMFrameLoop {
     private let dispatcher: IMEventDispatcher
     private let media: IMMediaAdapter?
     /// 取成闭包：连接会随重连换对象。
-    private let connection: @Sendable () -> IMSignalConnection?
+    /// 取成闭包：连接会随重连换对象。`IMFrameLoop+Rollback` 也要读，所以不是 private。
+    let connection: @Sendable () -> IMSignalConnection?
 
     init(sender: IMFrameSender, dispatcher: IMEventDispatcher, media: IMMediaAdapter?,
          connection: @escaping @Sendable () -> IMSignalConnection?) {
@@ -42,11 +43,33 @@ actor IMFrameLoop {
                                                   args: ["track_id": .string(trackID)])) }
     }
 
+    /// 发不出去的结束帧，等重连上来补发一次（见 `rollback` 与 `resendUndeliveredExit`）。
+    /// 只留最后一条：同一通电话的结束帧发几次都是同一个意思，而跨通电话的旧帧本来也不该补。
+    var undeliveredExit: IMOutgoingFrame?
+
     /// reset 把状态机归零（logout 用）。
     func reset() {
         ctx = IMEngineContext()
         mirror.set(ctx)
         unsubscribeTimers.clear()
+        undeliveredExit = nil
+    }
+
+    /**
+     resendUndeliveredExit 重连上来之后补发那条没送到的结束帧。
+
+     由帧泵在 `sys.hello.ok` 落地之后调（见 `IMCallEngine+FramePump`）。
+     **不管 resumed 是真是假都补**：`resumed=false` 时服务端开了新会话，旧会话还在
+     恢复窗口里挂着我们的成员关系，同样要一条挂断帧把它了结；真过期了服务端回
+     1401/1402，那正是我们要的答复，收到就不再补。
+
+     发失败（又断了）不重排：`rollback` 会再记一次，下次重连再来。
+     */
+    func resendUndeliveredExit() async {
+        guard let frame = undeliveredExit else { return }
+        undeliveredExit = nil
+        IMRTCLog.info("补发上次没送到的结束帧", ["type": frame.type])
+        await sendFrame(frame, settlement: nil)
     }
 
     /// ping 什么都不做：卡顿探针拿它量「帧循环 actor 此刻排不排得上号」（见 `IMStallProbe`）。
@@ -183,7 +206,7 @@ actor IMFrameLoop {
     /// apply 把一次推进的结果落地：记状态、同步媒体层、抛事件、发帧。
     ///
     /// `settlement` 不为 nil 时本步是宿主调用，产出的帧的结果记进去交给调用方（见 `request`）。
-    private func apply(_ result: IMMachineOutput<IMEngineContext>, settlement: IMSettlement?) async {
+    func apply(_ result: IMMachineOutput<IMEngineContext>, settlement: IMSettlement?) async {
         land(result)
         for frame in result.send {
             await sendFrame(frame, settlement: settlement)
@@ -264,8 +287,9 @@ actor IMFrameLoop {
          Web 的 `frameLoop.sendFrame` 同日补上。）
          */
         guard let connection = connection() else {
-            settleFailure(IMRTCError(.notLoggedIn, "\(frame.type)：信令未连接", forType: frame.type), settlement)
-            await rollback(frame)
+            let notLoggedIn = IMRTCError(.notLoggedIn, "\(frame.type)：信令未连接", forType: frame.type)
+            settleFailure(notLoggedIn, settlement)
+            await rollback(frame, notLoggedIn)
             return
         }
         let isPubOffer = frame.type == IMFrameType.roomOffer
@@ -285,7 +309,7 @@ actor IMFrameLoop {
             // 请求失败不该中断整个事件流：交给调用方，找不到调用方就转成 error 事件。
             let rtc = error as? IMRTCError ?? IMRTCError(.internalError, String(describing: error))
             settleFailure(rtc.withForType(frame.type), settlement)
-            await rollback(frame)
+            await rollback(frame, rtc)
             return
         }
         Self.noteSlowRequest(frame.type, sinceNS: startedNS, failed: false)
@@ -348,122 +372,6 @@ actor IMFrameLoop {
         IMRTCLog.warn("请求往返慢", ["type": type, "elapsed_ms": String(elapsedMS), "failed": String(failed)])
     }
 
-    /// rollback 把「这一帧没送到」翻译成状态机能收场的内部事件。
-    ///
-    /// **一张表管住所有中间态**：留在中间态的代价永远是同一种——界面停在一个转圈的屏上，
-    /// 而之后每一个动作都被不变量本地拒成 2005，宿主只看到一串没头没尾的 2005，
-    /// 真正的原因早淹在上一条 error 里了。四端同一张表
-    /// （Android 的 `IMCallEngine.onRequestFailed`、Web 的 `frameLoop.rollback`）。
-    private func rollback(_ frame: IMOutgoingFrame) async {
-        let type = frame.type
-        /*
-         **进房失败要把房间状态退回 idle**。
-
-         不退的话状态机永远停在 `joining`，之后每一次 publish 都会被不变量 R1
-         本地拒成 2005，而宿主只看到两条没头没尾的 2005——真正的原因
-         （那条 room.join 被服务端拒了）已经淹在上一条 error 里了。
-         退回 idle 至少让「重进一次」成为可能。
-         */
-        if type == IMFrameType.roomJoin {
-            await dispatch(.internalEvent(name: "join_failed"))
-        }
-        /*
-         **离房被拒也要退回 idle**，这是 join_failed 的镜像，漏掉它的代价更大。
-
-         `room.leave` 会被拒是真事：服务端在「会话已不在房间里」时回 1203
-         （两人同时离房、或房间刚被「已空，已关闭」销毁掉，都撞得上）。
-         而被拒的语义恰恰是**我们已经不在房里了**，本地却还停在 leaving：
-         `leaveCallbacks` 一个都不会抛，于是 `media.close()` 永远不调用
-         （摄像头、麦克风一直开着），再点离房被 R1 拒成 2005，
-         再 join 也因为「不在 idle」被拒——除非 logout，这台 Engine 永远进不了房。
-         （Android 的 `IMCallEngine.onRequestFailed` 一直接着这一条。）
-        */
-        if type == IMFrameType.roomLeave {
-            await dispatch(.internalEvent(name: "leave_failed"))
-            /*
-             等应答期间断线的话，房间机先收到 `disconnected` 从 `leaving` 进了 `reconnecting`，
-             `leave_failed` 就不认了——恢复之后人又回到房里，而宿主早就按了离开。
-             这一帧只可能是宿主要离房才发的，没有通话时照样本地收场（ACTION_RESULT_DESIGN D2）。
-             */
-            if ctx.call.state == .idle { await endLocally() }
-            return
-        }
-        /*
-         **退出类被拒也要本地收场**（ACTION_RESULT_DESIGN D2）：用户按的是「结束」，服务端拒了
-         （最常见的是通话已经结束 1402 / 1401）或根本没发出去，都不该让界面停在通话里。
-         结束帧已经试过了，这里只落本地——与 `forceEnd` 同一份收场计算，只是不再发帧。
-         */
-        if IMCallExit.allFrameTypes.contains(type) {
-            await endLocally()
-            return
-        }
-        /*
-         同理，**通话类请求被拒也要退回 idle**。不退的话界面停在「正在呼叫…」，
-         而服务端根本没有这通电话，之后每次挂断都换回 1401 call_not_found，
-         用户永远退不出那一屏。
-
-         **三帧都要接，不只是 invite。** `call.accept` 被拒（主叫刚取消，
-         服务端回 1401/1405）时通话机永久停在 `accepting`：onCallEnd 不抛、
-         来电页收不起来，而那时红按钮算出来的是 reject，
-         `reduceAct("reject")` 又要求 `ringing`——只换回又一个 2005，
-         用户除了杀进程出不去。`call.join` 同理。
-         （Android 的 onRequestFailed 一直是 INVITE / ACCEPT / JOIN 三个一起接的。）
-        */
-        if Self.callFailFrames.contains(type) {
-            await dispatch(.internalEvent(name: "call_failed"))
-        }
-        /*
-         **发布被拒：通话里直接收掉整通（reason=error），没有通话才只回滚那一条**（静默失败审计 §A）。
-
-         原先这张表不认 `room.publish`，那条轨道永远停在 `publishing`：`publish.ok` 不来 →
-         pub offer 永远不产出 → 上行从未协商。界面显示已接通、计时器在走、按钮显示没静音，
-         **对方全程听不见看不见，零提示**。留在通话里只报错也不够——Kit 并不展示这类错误，
-         而服务端会拒的几种情形（房间已不在、同一路重复发布、请求超时）重试都救不回来。
-         收场走 forceEnd：挂断帧不排队、onCallEnd 只抛一次，Kit 本来就认它（Web 端同一份推理：`frameLoop.ts`）。
-         */
-        if type == IMFrameType.roomPublish {
-            if ctx.call.state != .idle {
-                IMRTCLog.warn("发布被拒，结束本端通话", ["call_id": ctx.call.callID])
-                await forceEndForPublishFailure()
-                return
-            }
-            await dispatch(.internalEvent(name: "publish_failed", args: ["cid": frame.data["cid"] ?? .string("")]))
-            return
-        }
-        // 订阅被拒只摘记账，不收场：最常见的 1301 是订阅与对方停推赛跑输了，通话本身没事。
-        if type == IMFrameType.roomSubscribe {
-            await dispatch(.internalEvent(name: "subscribe_failed",
-                                          args: ["track_id": frame.data["track_id"] ?? .string("")]))
-        }
-    }
-
-    /**
-     forceEndForPublishFailure 是 `room.publish` 在通话里被拒时的收场路径。
-
-     与门面的 `IMCallEngine.forceEnd()` 同一个形状（结束帧直发、本地立刻收场），但**不经过
-     mirror 也不需要 call_id/room_id 比对**——这里已经在 actor 内部，`ctx` 就是此刻的真实状态，
-     没有跨 actor 的那一拍延迟。`reason` 写死 `.error`：这不是用户按的红键，写成 hangup 是撒谎。
-     */
-    private func forceEndForPublishFailure() async {
-        let ended = IMEngineMachine.forceEnd(ctx, reason: .error)
-        guard !ended.emit.isEmpty else { return }
-        if let connection = connection() {
-            for frame in ended.send {
-                connection.fire(frame.type, data: IMFrameSender.wireData(frame) ?? frame.data)
-            }
-        } else if !ended.send.isEmpty {
-            IMRTCLog.warn("发布被拒收场：没有信令连接，结束帧发不出去，只做本地收场", [:])
-        }
-        await apply(IMMachineOutput(ended.state, send: [], emit: ended.emit), settlement: nil)
-    }
-
-    /// endLocally 按此刻状态本地收场（通话或会议），不发帧。已经收干净时什么都不做。
-    private func endLocally() async {
-        let ended = IMEngineMachine.forceEnd(ctx)
-        guard !ended.emit.isEmpty else { return }
-        IMRTCLog.warn("结束帧失败，本地收场", ["call_id": ctx.call.callID, "room_id": ctx.room.roomID])
-        await apply(IMMachineOutput(ended.state, send: [], emit: ended.emit), settlement: nil)
-    }
 
     /// sendCandidate 把本端候选发上去。候选是尽力而为的，失败只报不中断。
     func sendCandidate(_ pc: IMPCRole, _ candidate: IMICECandidate) async {
@@ -526,13 +434,6 @@ actor IMFrameLoop {
         ])
     }
 
-    /// callFailFrames 是「这一帧被拒 = 这通电话没建立起来」的那几帧。
-    ///
-    /// 少接一帧的后果都一样：通话机停在中间态，界面收不起来，
-    /// 而红按钮在那个状态下算出的动作又会被本地拒成 2005。
-    private static let callFailFrames: Set<String> = [
-        IMFrameType.callInvite, IMFrameType.callAccept, IMFrameType.callJoin,
-    ]
 
     /// leaveCallbacks 是「这一轮媒体到此为止」的信号。
     ///

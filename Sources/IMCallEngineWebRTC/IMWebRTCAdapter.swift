@@ -25,12 +25,16 @@ public final class IMWebRTCAdapter: NSObject, IMMediaAdapter, @unchecked Sendabl
     let registry = IMVideoRegistry()
     /// 开关摄像头前后的上行视频采样（排查对端「画面出来又刷新一下」）。见 `IMUplinkVideoStats`。
     private let uplinkVideoStats = IMUplinkVideoStats()
+    /// 推麦克风之后的上行音频采样（排查「对方听不见我」）。见 `IMUplinkAudioStats`。
+    private let uplinkAudioStats = IMUplinkAudioStats()
     var events = IMMediaAdapterEvents()
 
     /// 本端轨道，按 cid 索引。
     var localTracks: [String: RTCMediaStreamTrack] = [:]
     /// 摄像头采集器。**必须持有**：不留引用的话它会被释放，画面直接停掉。
     private var capturer: RTCCameraVideoCapturer?
+    /// 采集会话看门狗：`AVCaptureSession` 起不来时**不抛错只发通知**，见 `IMCaptureWatch`。
+    private let captureWatch = IMCaptureWatch()
     /// 当前用的是不是前置。翻转靠它决定下一次挑哪一个。
     private var usingFrontCamera = true
     private var videoSource: RTCVideoSource?
@@ -150,6 +154,9 @@ public final class IMWebRTCAdapter: NSObject, IMMediaAdapter, @unchecked Sendabl
         transceiverInit.streamIds = ["im-rtc"]
         peers.pub.addTransceiver(with: track, init: transceiverInit)
         remember(cid: cid, track: track)
+        // **挂上就开始盯**：轨道挂上之后，「对方听不见我」的原因只可能在这条路上，
+        // 而此前这条路一个观测面都没有（见 `IMUplinkAudioStats` 头部）。
+        uplinkAudioStats.burst(peers.pub)
         return IMLocalTrackInfo(cid: cid, kind: "audio", source: "microphone")
     }
 
@@ -229,7 +236,7 @@ public final class IMWebRTCAdapter: NSObject, IMMediaAdapter, @unchecked Sendabl
                 "height": String(profile.height), "label": syntheticLabel,
             ])
         } else {
-            let real = RTCCameraVideoCapturer(delegate: source)
+            let real = Self.makeCameraCapturer(delegate: source)
             try await startCapture(real)
             camera = real
         }
@@ -448,6 +455,7 @@ public final class IMWebRTCAdapter: NSObject, IMMediaAdapter, @unchecked Sendabl
         Self.halt(camera, synthetic)
         registry.removeAll()
         uplinkVideoStats.cancel()
+        uplinkAudioStats.cancel()
         oldPeers?.close()
         if wasAudioSessionActive { Self.releaseAudioSession() }
     }
@@ -483,6 +491,8 @@ public final class IMWebRTCAdapter: NSObject, IMMediaAdapter, @unchecked Sendabl
         let front = usingFrontCamera
         lock.unlock()
         let choice = try Self.captureChoice(front: front, profile: profile)
+        // **先盯上再起**：中断通知可能在 startCapture 过程中就发出来，晚一步就听不到了。
+        captureWatch.watch(capturer.captureSession)
         do {
             try await capturer.startCapture(with: choice.device, format: choice.format, fps: choice.fps)
         } catch {

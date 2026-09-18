@@ -211,6 +211,64 @@ final class RequestFailureRecoveryTests: XCTestCase {
 
     // MARK: - 辅助
 
+    // MARK: - publish_deferred：没等到应答的发布挂起等重连（2026-09-18）
+
+    /*
+     `publish_failed`（服务端真回了拒绝）与 `publish_deferred`（压根没等到应答）
+     必须分开。原先只有前者，于是请求超时也被当成「被拒」，通话里直接收成
+     `reason=error`——真机 18:18:39 就这么丢了一通本来能接着打的电话，
+     而 9 秒后连接就回来、会话也在恢复窗口内 resume 成功了。
+    */
+
+    /// 超时的发布：摘掉 `publishing`，但**意图要留着**，等回到 joined 再走一遍。
+    func testPublishDeferredKeepsIntentForReplay() {
+        var ctx = joinedRoom()
+        ctx.publish["mic-1"] = .publishing
+
+        let result = IMRoomMachine.reduce(ctx, .internalEvent(name: "publish_deferred", args: [
+            "cid": .string("mic-1"), "kind": .string("audio"),
+            "source": .string("microphone"), "simulcast": .bool(false),
+        ]))
+
+        XCTAssertNil(result.state.publish["mic-1"], "不能永远停在 publishing")
+        XCTAssertEqual(result.state.buffered.count, 1, "意图要留着，否则这一路永远补不回来")
+        XCTAssertEqual(result.state.buffered.first?.op, "publish")
+        XCTAssertTrue(result.send.isEmpty, "此刻连接本来就不通，不该再发帧")
+    }
+
+    /// 挂起的发布要在**会话恢复之后**自己走回线路上——这才是与 `publish_failed` 的真正分别。
+    func testDeferredPublishIsReplayedAfterResume() {
+        var ctx = joinedRoom()
+        ctx.publish["mic-1"] = .publishing
+        ctx = IMRoomMachine.reduce(ctx, .internalEvent(name: "publish_deferred", args: [
+            "cid": .string("mic-1"), "kind": .string("audio"),
+            "source": .string("microphone"), "simulcast": .bool(false),
+        ])).state
+        ctx = IMRoomMachine.reduce(ctx, .internalEvent(name: "disconnected")).state
+        XCTAssertEqual(ctx.state, .reconnecting)
+
+        let resumed = IMRoomMachine.resume(ctx, resumed: true)
+
+        XCTAssertEqual(resumed.state.state, .joined)
+        XCTAssertEqual(resumed.send.map(\.type), [IMFrameType.roomPublish],
+                       "恢复之后这一路要自己补发出去，不能等用户再点一次")
+        XCTAssertEqual(resumed.send.first?.data["cid"]?.stringValue, "mic-1")
+        XCTAssertEqual(resumed.state.publish["mic-1"], .publishing, "补发之后重新回到 publishing")
+        XCTAssertTrue(resumed.state.buffered.isEmpty, "重放过就要清掉，否则下次恢复会再发一遍")
+    }
+
+    /// **只认 `publishing`**：迟到的超时不能把一条已经成功的发布摘掉、还排进重放队列。
+    func testPublishDeferredIsIgnoredWhenNotPublishing() {
+        var ctx = joinedRoom()
+        ctx.publish["mic-1"] = .published
+
+        let result = IMRoomMachine.reduce(ctx, .internalEvent(name: "publish_deferred",
+                                                              args: ["cid": .string("mic-1")]))
+
+        XCTAssertEqual(result.state.publish["mic-1"], .published)
+        XCTAssertTrue(result.state.buffered.isEmpty)
+    }
+
     private func joinedRoom() -> IMRoomContext {
         var ctx = IMRoomContext()
         ctx.state = .joined

@@ -56,6 +56,14 @@ extension IMCallEngine {
                 "resumed": .bool(resumed),
             ]))
             /*
+             **先把上一轮没送出去的结束帧补上**（2026-09-18 加，见 `resendUndeliveredExit`）。
+
+             放在这里、放在 `guard resumed` 之前：`resumed=false` 时旧会话照样在服务端的
+             恢复窗口里挂着我们的成员关系，同样需要这一帧去了结，否则房里留着一个
+             界面上早已挂断的人（真机 18:18:47 → 18:18:48 就是这一幕）。
+            */
+            await loop.resendUndeliveredExit()
+            /*
              协议 §1.4：恢复之后媒体面要重新协商。服务端那侧主动下发
              `room.offer{pc:"sub"}`，而 `pub` 这条的 offerer 是本端，只能自己重发。
 

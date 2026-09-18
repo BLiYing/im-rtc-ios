@@ -160,6 +160,8 @@ public enum IMRoomMachine {
                        emit: [IMEmittedEvent("onRoomLeft", ["room_id": .string(ctx.roomID)])])
         case "publish_failed":
             return dropFailedPublish(ctx, Wire.string(args, "cid"))
+        case "publish_deferred":
+            return deferPublish(ctx, args)
         case "subscribe_failed":
             return dropFailedSubscribe(ctx, Wire.string(args, "track_id"))
         case "unsubscribe_hysteresis_elapsed":
@@ -184,6 +186,34 @@ public enum IMRoomMachine {
         guard ctx.publish[cid] == .publishing else { return out(ctx) }
         var next = ctx
         next.publish.removeValue(forKey: cid)
+        return out(next)
+    }
+
+    /**
+     deferPublish：`room.publish` **没等到应答**（2003/2004）时把这一路挂起来等重连，而不是丢掉。
+
+     与 `dropFailedPublish` 的分别只有一条，但这条是根本的：**服务端拒了**是个答复，
+     重试救不回来（房间没了、重复发布），该收场；**超时/断线**根本不是答复，
+     它只说明「这一问没能送到」，而连接回来之后同一问多半就成了。
+
+     2026-09-18 真机撞的正是后者：18:18:39 `room.publish` 超时 → 整通电话被本端
+     收成 `reason=error`，而 **9 秒后连接就回来了、会话也在恢复窗口内 resume 成功**
+     （服务端 18:18:48「在恢复窗口内重连，取消离房」）。本来能接着打的一通，
+     被我们自己判了死刑；更糟的是那时挂断帧也发不出去（`不等应答的请求失败了 code=2003`），
+     服务端与对端完全不知道，Android 那头对着一个幽灵坐了 3 分钟。
+
+     摘掉 `publishing` 之后把同一个意图塞回 `buffered`：`resume(_:resumed:)` 回到
+     `joined` 时 `replayBuffered` 会原路重走一遍（**走 reduceAct，不是补发旧帧**，
+     所以状态与帧永远一致）。重连一直不成功的话，`SignalConnection+ResumeGiveUp`
+     那条 80 秒倒计时照样会把通话收场——这里只是不再抢在它前面下手。
+     */
+    private static func deferPublish(_ ctx: IMRoomContext,
+                                     _ args: [String: IMJSON]) -> IMMachineOutput<IMRoomContext> {
+        let cid = Wire.string(args, "cid")
+        guard ctx.publish[cid] == .publishing else { return out(ctx) }
+        var next = ctx
+        next.publish.removeValue(forKey: cid)
+        next.buffered.append(IMBufferedIntent(op: "publish", args: args))
         return out(next)
     }
 
