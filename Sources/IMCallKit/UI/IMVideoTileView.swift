@@ -22,6 +22,23 @@ public final class IMVideoTileView: UIView {
 
     /// 角标离格子边缘的距离。**12 而不是 8**：格子有 10 的圆角，贴到 8 名字会被切掉一截。
     private static let plateInset: CGFloat = 12
+
+    /**
+     小于这个边长的格子换一档更紧的名字牌（演讲者视图底部条是 84）。
+
+     常规档的固定件要吃掉 12 × 2 + 8 + 5 + 9（说话图标）+ 8 = **54pt**，
+     84 的格子里留给名字的只剩 30pt——连 `carol` 都放不下，每一格都是「ca…」
+     （2026-09-18 真机，三端同病）。紧凑档把固定件压到 28pt。
+     三端同值（Android `IMGrid.COMPACT_TILE_DP`、Web `VideoTileProps.compact`）。
+     */
+    private static let compactSide: CGFloat = 110
+
+    /// 紧凑档的留白。圆角在小格子上也小，4 不会被切。
+    private static let compactInset: CGFloat = 4
+
+    /// 随档位变的那几条约束与当前档位（`nil` = 还没定过，第一次必设）。
+    private var densityConstraints: [NSLayoutConstraint] = []
+    private var isCompact: Bool?
     private let ringingLabel = UILabel()
     private var avatarSizeConstraints: [NSLayoutConstraint] = []
 
@@ -81,22 +98,30 @@ public final class IMVideoTileView: UIView {
             avatarDisc.widthAnchor.constraint(equalToConstant: 44),
             avatarDisc.heightAnchor.constraint(equalToConstant: 44),
         ]
+        // 这几条随「格子多大」换档（见 applyDensity），所以要留着引用。
+        let netTop = netPlate.topAnchor.constraint(equalTo: topAnchor, constant: Self.plateInset)
+        let netTrailing = netPlate.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -Self.plateInset)
+        let plateLeading = namePlate.leadingAnchor.constraint(equalTo: leadingAnchor, constant: Self.plateInset)
+        let plateBottom = namePlate.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -Self.plateInset)
+        let plateHeight = namePlate.heightAnchor.constraint(equalToConstant: 20)
+        let labelLeading = nameLabel.leadingAnchor.constraint(equalTo: namePlate.leadingAnchor, constant: 8)
+        let iconLeading = speechIcon.leadingAnchor.constraint(equalTo: nameLabel.trailingAnchor, constant: 5)
+        let iconTrailing = speechIcon.trailingAnchor.constraint(equalTo: namePlate.trailingAnchor, constant: -8)
+        densityConstraints = [netTop, netTrailing, plateLeading, plateBottom, plateHeight,
+                              labelLeading, iconLeading, iconTrailing]
         renderView.imPinEdges(to: self)
         NSLayoutConstraint.activate(avatarSizeConstraints + [
             avatarDisc.centerXAnchor.constraint(equalTo: centerXAnchor),
             avatarDisc.centerYAnchor.constraint(equalTo: centerYAnchor),
 
-            netPlate.topAnchor.constraint(equalTo: topAnchor, constant: Self.plateInset),
-            netPlate.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -Self.plateInset),
+            netTop, netTrailing,
             netPlate.widthAnchor.constraint(equalToConstant: 24),
             netPlate.heightAnchor.constraint(equalToConstant: 24),
             netBadge.centerXAnchor.constraint(equalTo: netPlate.centerXAnchor),
             netBadge.centerYAnchor.constraint(equalTo: netPlate.centerYAnchor),
 
             // 离左边与下边都留 12（比原来的 8 大）：格子有圆角，贴到 8 的话名字会被切掉一截。
-            namePlate.leadingAnchor.constraint(equalTo: leadingAnchor, constant: Self.plateInset),
-            namePlate.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -Self.plateInset),
-            namePlate.heightAnchor.constraint(equalToConstant: 20),
+            plateLeading, plateBottom, plateHeight,
             /*
              宽度上限只留一个边距。
 
@@ -107,10 +132,9 @@ public final class IMVideoTileView: UIView {
             namePlate.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor,
                                                 constant: -Self.plateInset),
             nameLabel.centerYAnchor.constraint(equalTo: namePlate.centerYAnchor),
-            nameLabel.leadingAnchor.constraint(equalTo: namePlate.leadingAnchor, constant: 8),
+            labelLeading,
             // 图标**永远占位**（拍板：留位），名字不会随说话左右跳。
-            speechIcon.leadingAnchor.constraint(equalTo: nameLabel.trailingAnchor, constant: 5),
-            speechIcon.trailingAnchor.constraint(equalTo: namePlate.trailingAnchor, constant: -8),
+            iconLeading, iconTrailing,
             speechIcon.centerYAnchor.constraint(equalTo: namePlate.centerYAnchor),
             speechIcon.widthAnchor.constraint(equalToConstant: IMSpeechIconView.iconSize.width),
             speechIcon.heightAnchor.constraint(equalToConstant: IMSpeechIconView.iconSize.height),
@@ -119,6 +143,28 @@ public final class IMVideoTileView: UIView {
             ringingLabel.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 4),
             ringingLabel.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -4),
         ])
+    }
+
+    /**
+     小格子换一档更紧的名字牌。**按自己的边长判**，不用调用方告诉：
+     格子是按 uid 复用的，同一个对象一会儿在画廊（大）一会儿在底部条（小）。
+
+     **只动留白与字号，不动结构**：说话图标照旧永远占位。
+     */
+    public override func layoutSubviews() {
+        super.layoutSubviews()
+        let wantCompact = bounds.width > 0 && bounds.width < Self.compactSide
+        guard isCompact != wantCompact else { return }
+        isCompact = wantCompact
+        let inset = wantCompact ? Self.compactInset : Self.plateInset
+        let pad: CGFloat = wantCompact ? 4 : 8
+        let gap: CGFloat = wantCompact ? 3 : 5
+        // 顺序与 densityConstraints 的组装一致。
+        let constants: [CGFloat] = [inset, -inset, inset, -inset,
+                                    wantCompact ? 16 : 20, pad, gap, -pad]
+        for (constraint, value) in zip(densityConstraints, constants) { constraint.constant = value }
+        nameLabel.font = .systemFont(ofSize: wantCompact ? 10 : 12)
+        namePlate.layer.cornerRadius = wantCompact ? 5 : 6
     }
 
     /// apply 按成员状态刷新格子。
