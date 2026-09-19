@@ -288,6 +288,7 @@ public final class IMWebRTCAdapter: NSObject, IMMediaAdapter, @unchecked Sendabl
         lock.unlock()
 
         Self.halt(camera, synthetic)
+        captureWatch.stop()
         if let cid { registry.remove(owner: imLocalViewKey(cid)) }
     }
 
@@ -454,6 +455,7 @@ public final class IMWebRTCAdapter: NSObject, IMMediaAdapter, @unchecked Sendabl
         // 真正的关闭动作放在锁外面：不把 libwebrtc 的调用圈进自己的锁里。
         stopObservingRouteChanges()
         Self.halt(camera, synthetic)
+        captureWatch.stop()
         registry.removeAll()
         uplinkVideoStats.cancel()
         uplinkAudioStats.cancel()

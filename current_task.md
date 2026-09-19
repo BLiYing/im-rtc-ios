@@ -129,6 +129,10 @@
 - **通话中关摄像头停的是采集、不是轨道**：重开失败只记日志；`stopCapture()` 在 async 上下文解析到 async 重载，同步停走 `IMWebRTCAdapter.halt`；本端画布靠 `IMVideoRegistry.firstFrameArrived` 揭示。
 - 切后台 controller 自动 mute 摄像头；回前台不替用户打开本来关着的摄像头。
 - `RTCPeerConnectionFactory` 全进程一份、永不销毁；挂载登记表只在主线程动；远端轨道要 `claimRemoteTracks` 认领。
+- **会议房离场的人，轨道 / 视图要到整通结束才释放**（09-18 评审记下、**有意暂不修**）：`IMVideoRegistry` 四张表
+  只有 `removeAll()`（挂断 / 登出）清远端，`remove(owner:)` 只用于本端预览。代价是 25 人长会议里进出越多内存越涨
+  （只是引用，下行已停、不占带宽和解码）。留着是为了断线重连时画面不闪；**要修得分清「真离场」（`room.participant_left`）
+  与「掉线待恢复」**，只在前者按 owner 清。等真机看到内存问题再动。
 - 下行 call 帧必须按 call_id 过滤（第三方呼叫的 `call.ended{busy}` 带新来那通的 id）；还在响铃的来电结束不进 ended。
 - `IMPipView.setContent` 只摘还挂在自己身上的内容；格子恒为正方形（`imGridDimensions(_:aspect:)`，五端同算法）。
 - **Kit 的颜色 / 弹簧 / 尺寸字面量一律进 `IMKitTheme`**，贴边 / 吸角算术放 `Layout/` 纯函数配单测（macOS 能编）。状态机的 `out` / `invalidStateOutput` 是 `MachineTypes.swift` 里的模块级函数：别在状态机类型里再加同名 `static func out`，会把它遮住。

@@ -29,6 +29,9 @@ import WebRTC
  */
 final class IMCaptureWatch {
 
+    /// lock 管 tokens / recheck：`watch` 在起采集的异步路径上调，`stop` 在 `close()` /
+    /// `stopLocalPreview()` 调，两边不在同一个线程。
+    private let lock = NSLock()
     private var tokens: [NSObjectProtocol] = []
     private var recheck: DispatchWorkItem?
 
@@ -36,7 +39,7 @@ final class IMCaptureWatch {
     func watch(_ session: AVCaptureSession) {
         stop()
         let center = NotificationCenter.default
-        tokens = [
+        let added: [NSObjectProtocol] = [
             center.addObserver(
                 forName: .AVCaptureSessionWasInterrupted, object: session, queue: nil
             ) { note in
@@ -69,17 +72,27 @@ final class IMCaptureWatch {
                 "interrupted": String(session.isInterrupted),
             ])
         }
+        lock.lock()
+        tokens = added
         recheck = item
+        lock.unlock()
         DispatchQueue.main.asyncAfter(deadline: .now() + 2, execute: item)
     }
 
     /// stop 摘掉观察者。**不停会话**——会话的生死归采集器管。
+    ///
+    /// 摄像头关掉时（`close()` / `stopLocalPreview()`）就要调，不能等下一次 `watch` 或 deinit：
+    /// adapter 跨通话复用，纯语音的几通里这组观察者会一直挂着。
     func stop() {
-        recheck?.cancel()
+        lock.lock()
+        let item = recheck
+        let old = tokens
         recheck = nil
-        let center = NotificationCenter.default
-        for token in tokens { center.removeObserver(token) }
         tokens = []
+        lock.unlock()
+        item?.cancel()
+        let center = NotificationCenter.default
+        for token in old { center.removeObserver(token) }
     }
 
     deinit { stop() }
