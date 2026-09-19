@@ -18,6 +18,19 @@
 
 **Kit 不是特权组件**——它只消费公开回调表，没有私有通道。
 
+## 没有后台时联调
+
+后台还没接好、拿不到 `POST /v1/tokens` 时，可以用控制台发的**调试密钥**（`key_id` 以 `dbg-` 开头）在本机签票：
+
+```swift
+let token = try IMDebugTokenGenerator.generate(appId: "10000001", keyId: "dbg-1", secret: "<调试密钥>", uid: "alice")
+```
+
+- **仅联调**：整个类型包在 `#if DEBUG` 里，Release 构建里不存在；每次调用都会打一条 warn。
+- 入参不合法（uid 空 / 含空白 / 超 64 字节、appId 或 secret 为空、keyId 不以 `dbg-` 开头）抛 `IMRTCError(.badParams)`。
+- **上线必须换成后端签票**（宿主后台 `POST /v1/tokens`），别把密钥打进正式包。
+- 规则见 server `docs/design/DEBUG_KEY_DESIGN.md` §4；一致性向量 `docs/conformance/debug_token.json`。
+
 ## 边界
 
 **不做宿主业务界面**（消息气泡、会话列表、群横幅）。Demo 的通话记录页是**示范**，不是要求。
