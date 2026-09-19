@@ -76,12 +76,12 @@ public final class IMSignalConnection {
         queue.sync { state }
     }
 
-    /// currentSessionID 返回会话 id；重连时会带上它请求恢复。
     /// 当前在用的接入票（含 `updateToken` 换过的）。给同一个身份下的 REST 调用用，不进公开 API。
     var currentToken: String {
         queue.sync { options.token }
     }
 
+    /// currentSessionID 返回会话 id；重连时会带上它请求恢复。
     public var currentSessionID: String {
         queue.sync { sessionID }
     }
