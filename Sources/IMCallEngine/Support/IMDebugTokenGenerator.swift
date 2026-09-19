@@ -77,4 +77,20 @@ public enum IMDebugTokenGenerator {
         }
     }
 }
+
+/// ObjC 宿主用的调试签票入口（IMProgram 是纯 ObjC 工程，看不见上面的 Swift enum）。**仅联调**，同样只在 DEBUG 构建里存在。
+///
+/// ObjC 侧：`[IMDebugToken tokenWithAppID:keyID:secret:uid:deviceID:ttlSec:error:]`，失败返回 nil 并填 `error`。
+@objc public final class IMDebugToken: NSObject {
+    /// - Parameters:
+    ///   - deviceID: 空串 = 不绑设备。
+    ///   - ttlSec: 0 = 缺省 12h，其余钳到 [60, 30 天]。
+    @objc(tokenWithAppID:keyID:secret:uid:deviceID:ttlSec:error:)
+    public static func token(appID: String, keyID: String, secret: String, uid: String,
+                             deviceID: String, ttlSec: Int) throws -> String {
+        try IMDebugTokenGenerator.generate(appId: appID, keyId: keyID, secret: secret, uid: uid,
+                                           deviceId: deviceID.isEmpty ? nil : deviceID,
+                                           ttlSec: ttlSec == 0 ? nil : ttlSec)
+    }
+}
 #endif

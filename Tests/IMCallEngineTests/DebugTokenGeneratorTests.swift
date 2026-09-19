@@ -15,6 +15,20 @@ final class DebugTokenGeneratorTests: XCTestCase {
         }
     }
 
+    /// ObjC 桥与 Swift 入口出同一张票；非法入参走 throws（ObjC 侧即 NSError）。
+    func testObjCBridgeMatchesGenerator() throws {
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        let direct = try IMDebugTokenGenerator.generate(appId: "10000002", keyId: "dbg-1", secret: "s3cret", uid: "u1",
+                                                        deviceId: "d1", ttlSec: nil, now: now)
+        let bridged = try IMDebugToken.token(appID: "10000002", keyID: "dbg-1", secret: "s3cret", uid: "u1",
+                                             deviceID: "d1", ttlSec: 0)
+        // iat 取当前时间，两张票只在 iat / exp / 签名上可能不同：头部一定相同。
+        XCTAssertEqual(direct.split(separator: ".")[0], bridged.split(separator: ".")[0])
+        XCTAssertEqual(bridged.split(separator: ".").count, 3)
+        XCTAssertThrowsError(try IMDebugToken.token(appID: "10000002", keyID: "prod-1", secret: "s", uid: "u1", deviceID: "", ttlSec: 0))
+        XCTAssertThrowsError(try IMDebugToken.token(appID: "10000002", keyID: "dbg-1", secret: "s", uid: "", deviceID: "", ttlSec: 0))
+    }
+
     func testSignCases() throws {
         for c in try Vectors.array(try vector(), "sign_cases") {
             let name = c["name"] as? String ?? "?"
