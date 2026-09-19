@@ -101,6 +101,11 @@ extension IMWebRTCAdapter {
      和带回调的那个（Swift 会把后者导成 async），在 async 函数里直接写 `stopCapture()`
      编译器挑的是 async 那个，于是要求 await。放进同步函数里就不会挑错。
      */
+    /// 采集会话上**实际接着**的那颗摄像头朝向。会话上没有输入（或输入不是摄像头）时为 nil。
+    static func inputPosition(of camera: RTCCameraVideoCapturer) -> AVCaptureDevice.Position? {
+        camera.captureSession.inputs.compactMap { ($0 as? AVCaptureDeviceInput)?.device.position }.first
+    }
+
     static func halt(_ camera: RTCCameraVideoCapturer?, _ synthetic: IMSyntheticVideoCapturer?) {
         camera?.stopCapture()
         synthetic?.stopCapture()

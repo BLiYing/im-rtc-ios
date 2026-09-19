@@ -404,9 +404,24 @@ public final class IMWebRTCAdapter: NSObject, IMMediaAdapter, @unchecked Sendabl
         }
         lock.lock(); usingFrontCamera.toggle(); lock.unlock()
         do {
+            /*
+             **先停再起，不在跑着的会话上直接换 device。** 2026-09-20 真机（iPhone，webrtc-sdk M150）：
+             直接 `startCapture(换了 device)`，日志一切正常（选了后置、采集已启动、session_running=true），
+             画面却仍是前置——只有 Kit 按 `isUsingFrontCamera` 画的镜像在左右切换。
+             停与起排在 libwebrtc 的同一条采集队列上，按调用顺序执行。
+             */
+            Self.halt(capturer, nil)
             try await startCapture(capturer)
             // 翻到一半通话结束了：把刚起来的采集停掉，别让摄像头留在那儿亮着。
             try assertLive(generation) { Self.halt(capturer, nil) }
+            // 以**实际接在会话上的设备**为准，不信「我们请求了哪个」：对不上就翻回标志，别让镜像与真实朝向脱节。
+            let actual = Self.inputPosition(of: capturer)
+            if let actual, actual != wanted {
+                IMRTCLog.warn("翻转后实际设备与请求不符", [
+                    "wanted": wanted == .front ? "front" : "back",
+                    "actual": actual == .front ? "front" : "back"])
+                lock.lock(); usingFrontCamera = actual != .back; lock.unlock()
+            }
         } catch {
             // 翻转失败就翻回去：宁可保持原来那个摄像头，也不要一片黑。
             lock.lock(); usingFrontCamera.toggle(); lock.unlock()
@@ -511,6 +526,7 @@ public final class IMWebRTCAdapter: NSObject, IMMediaAdapter, @unchecked Sendabl
             "session_running": String(capturer.captureSession.isRunning),
             "inputs": String(capturer.captureSession.inputs.count),
             "outputs": String(capturer.captureSession.outputs.count),
+            "input_position": Self.inputPosition(of: capturer).map { $0 == .front ? "front" : "back" } ?? "none",
             "uses_app_audio": String(capturer.captureSession.usesApplicationAudioSession),
             "auto_configures_audio":
                 String(capturer.captureSession.automaticallyConfiguresApplicationAudioSession),
