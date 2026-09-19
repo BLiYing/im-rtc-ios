@@ -144,7 +144,6 @@ final class DialerViewController: UIViewController {
     private func place(mediaType: String) {
         let callee = calleeField.text?.trimmingCharacters(in: .whitespaces) ?? ""
         guard !callee.isEmpty, let kit = session.kit else { return }
-        session.pendingPeer = callee
         kit.controller.placeCall([callee], mediaType: mediaType)
     }
 
@@ -163,7 +162,6 @@ final class DialerViewController: UIViewController {
 
     @objc private func onGroupCall() {
         guard !groupPick.isEmpty, let kit = session.kit else { return }
-        session.pendingPeer = "群通话 · \(groupPick.count + 1) 人"
         kit.controller.placeCall(groupPick, mediaType: "video", isGroup: true,
                                  chatGroupID: Self.demoChatGroupID)
     }

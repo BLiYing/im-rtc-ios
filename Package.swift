@@ -96,6 +96,8 @@ let package = Package(
          */
         .target(name: "IMCallEngineWebRTC", dependencies: ["IMCallEngine", "WebRTC"]),
         .testTarget(name: "IMCallEngineTests", dependencies: ["IMCallEngine"]),
-        .testTarget(name: "IMCallKitTests", dependencies: ["IMCallKit"])
+        .testTarget(name: "IMCallKitTests", dependencies: ["IMCallKit"]),
+        // Demo 没有单测 target：Demo 里的纯逻辑（通话记录时间文案）用符号链接编进这里测，不复制代码。
+        .testTarget(name: "DemoLogicTests", path: "Tests/DemoLogicTests")
     ]
 )

@@ -34,19 +34,6 @@ final class DemoSession {
         "judy", "mallory", "niaj", "olivia", "peggy", "rupert", "sybil",
     ]
 
-    /// 一条通话记录。UserDefaults 存 JSON——**别引 Keychain**（未签名装机不可用）。
-    struct Record: Codable, Identifiable {
-        var id: String { callID + String(endedAtMS) }
-        let callID: String
-        let peer: String
-        let mediaType: String
-        let isGroup: Bool
-        let role: String
-        let reason: String
-        let durationSec: Int
-        let endedAtMS: Int64
-    }
-
     private(set) var engine: IMCallEngine?
     private(set) var kit: IMCallKit?
     private(set) var server = ""
@@ -57,7 +44,6 @@ final class DemoSession {
 
     private var logSink: RemoteLogSink?
     private var observerToken: NSUUID?
-    private(set) var records: [Record] = []
     private(set) var connectionText = "未登录"
 
     /**
@@ -88,11 +74,7 @@ final class DemoSession {
         for handler in changeObservers.values { handler() }
     }
 
-    /// 当前这通电话的元数据，等 callEnd 时拼成记录。
-    private var current: (peer: String, mediaType: String, isGroup: Bool, role: String)?
-
     private init() {
-        records = Self.loadRecords()
         restoreSwitches()
     }
 
@@ -436,62 +418,16 @@ final class DemoSession {
                 UserDefaults.standard.set(false, forKey: Self.autoKey)
                 Task { await self.logout() }
             }
-        case .callReceived:
-            current = (peer: event.payload["caller"] as? String ?? "",
-                       mediaType: event.payload["media_type"] as? String ?? "audio",
-                       isGroup: (event.payload["is_group"] as? NSNumber)?.boolValue ?? false,
-                       role: "callee")
-        case .callBegin:
-            // 主叫这边 callReceived 不会来，靠 callBegin 补上 role/mediaType。
-            if current == nil {
-                current = (peer: "", mediaType: event.payload["media_type"] as? String ?? "audio",
-                           isGroup: (event.payload["is_group"] as? NSNumber)?.boolValue ?? false,
-                           role: event.payload["role"] as? String ?? "caller")
-            }
         case .callEnd:
-            let meta = current ?? (peer: "", mediaType: "audio", isGroup: false, role: "caller")
-            records.insert(Record(
-                callID: event.callID,
-                peer: meta.peer.isEmpty ? pendingPeer : meta.peer,
-                mediaType: meta.mediaType, isGroup: meta.isGroup, role: meta.role,
-                reason: event.payload["reason"] as? String ?? "",
-                durationSec: (event.payload["duration_sec"] as? NSNumber)?.intValue ?? 0,
-                endedAtMS: Int64(Date().timeIntervalSince1970 * 1000)), at: 0)
-            Self.saveRecords(records)
-            current = nil
-            pendingPeer = ""
+            // 通话记录页现在从服务端拉（`fetchCallHistory`），这里只通知它刷新。
+            break
         default:
             return
         }
         notify()
     }
 
-    /// 主叫拨号时记下对方是谁——callBegin 的载荷里没有 callee。
-    var pendingPeer = ""
-
-    func clearRecords() {
-        records = []
-        Self.saveRecords(records)
-        notify()
-    }
-
     private func notify() {
         DispatchQueue.main.async { self.notifyChange() }
-    }
-
-    // MARK: - 持久化
-
-    private static let recordsKey = "im-rtc-demo.records"
-
-    private static func loadRecords() -> [Record] {
-        guard let data = UserDefaults.standard.data(forKey: recordsKey) else { return [] }
-        return (try? JSONDecoder().decode([Record].self, from: data)) ?? []
-    }
-
-    private static func saveRecords(_ records: [Record]) {
-        // 只留最近 100 条，Demo 不做翻页。
-        if let data = try? JSONEncoder().encode(Array(records.prefix(100))) {
-            UserDefaults.standard.set(data, forKey: recordsKey)
-        }
     }
 }

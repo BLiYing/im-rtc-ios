@@ -7,6 +7,8 @@
 
 ## 当前焦点
 
+- **09-19 新增 `IMCallEngine.fetchCallHistory(limit:cursor:)`**（`IMCallEngine+CallHistory.swift`，`GET /v1/calls`，游标翻页，只返回本人）：单测 `CallHistoryTests` 过、全量 406 项过；Demo 通话记录页改成调它（下拉刷新 + 倒数第 3 行加载下一页），本地拼记录那套（`Record` / `records` / 垃圾桶）已删。**未真机验**；依赖服务端 `requireBearer` 不再核对设备号（同日已修）。 09-19 晚记录页布局对齐 Android（左图标 / 中间两行 / 右时间，insetGrouped 卡片），时间按「今天 `HH:mm` / 昨天 / `M月d日` / 往年带年份」四档（`HistoryTime.swift`，`Tests/DemoLogicTests` 8 条用例，符号链接编进测试 target）。**未上真机**。
+
 **2026-09-19：三处修完，真机已验（iPhone 14 Pro 当发布方 × Chrome，`delay` 8 s + `silence` 80 s），已推送。**
 - **握手超时不再干等服务端**（`8496a8f`，对齐 Android `closeAndReconnect` / Web `retireStaleSocket`）：`SignalConnection.handshake()` 失败码为 `signalingTimeout` 时本端以 1001 `hello timeout` 关 socket（原先不关、不重连，要干等 45 s 读超时）；
   `startConnect` 先 `retireStaleSocket()` 关旧的，socket 回调按 `ObjectIdentifier` 只认当前那条。`HandshakeTimeoutTests`（撤修复会失败）。真机三次 `hello timeout` 都由本端关 → 退避重连 → resumed → 补发 publish。
