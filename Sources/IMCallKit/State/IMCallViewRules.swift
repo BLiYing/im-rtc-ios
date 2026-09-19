@@ -101,8 +101,22 @@ public func imInviteSlotsLeft(for state: IMCallViewState) -> Int {
  放行的话，正在进行的那通电话的界面被盖掉、再也收不回来（2026-09-15 代码审查，三端同一个坑）。
  */
 public func imJoinCallAllowed(from phase: IMCallPhase) -> Bool {
+    imNewCallAllowed(from: phase)
+}
+
+/**
+ imNewCallAllowed 报告此刻能不能开始**新的一场**（拨出 / 主动加入 / 进会议房）：只有界面空闲、或停在上一通的结束画面时才行。
+
+ **三个入口共用这一条判据**（2026-09-19 真机）：1v1 通话中收成小窗、回宿主去发起群通话，`placeCall` 一进来就把界面状态换成
+ 「拨出中」（小窗消失、出现群通话呼叫页），Engine 随后把这次调用拒成 2005，Kit 对 2005 一声不吭——通话还连着、界面却是另一通，
+ 没有任何提示。`joinCall` 早有这道守门，`placeCall` 与 `joinMeeting` 漏了。
+ */
+public func imNewCallAllowed(from phase: IMCallPhase) -> Bool {
     phase == .idle || phase == .ended
 }
+
+/// 已在一场里又想开始新的一场时的提示。用 toast 而不是通话界面里的 hint：通话收成小窗、人在宿主界面上时 hint 根本看不见。
+public let imBusyNoticeText = "你正在通话中，请先结束当前通话"
 
 /// 通话主界面的三种版式（规范 §03 / §04）。
 public enum IMCallLayout: String, Sendable {

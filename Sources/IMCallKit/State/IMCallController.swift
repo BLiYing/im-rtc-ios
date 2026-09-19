@@ -64,6 +64,8 @@ public protocol IMCallControllerObserver: AnyObject {
     }
 
     let engine: IMCallEngine
+    /// 弹一句提示的出口，由 UI 层（`IMCallWindow`）挂上，见 `IMCallController+Busy.swift`。nil（没有 UI）时退回通话界面里的 hint。
+    var noticeHandler: ((String) -> Void)?
     private let observers = NSHashTable<AnyObject>.weakObjects()
     /// ObjC 可用的状态观察者（`IMCallControllerStateObserver`，见 `IMCallController+ObjC.swift`）。
     /// 与 `observers` 分开一张表：`IMCallControllerObserver` 是非 `@objc` 的 Swift 协议，
@@ -145,6 +147,7 @@ public protocol IMCallControllerObserver: AnyObject {
      */
     @objc public func placeCall(_ calleeIDs: [String], mediaType: String, isGroup: Bool = false,
                           chatGroupID: String = "", userData: String = "", timeoutSec: Int = 0) {
+        guard !blockIfBusy() else { return }
         apply(.callPlaced(calleeIDs: calleeIDs, mediaType: mediaType, isGroup: isGroup))
         Task {
             let outcome = await permissionGate.ensure(
@@ -161,11 +164,15 @@ public protocol IMCallControllerObserver: AnyObject {
             } catch {
                 /*
                  被拒时 Engine **先**抛 `callDidEnd(.error)`（界面已经进了结束画面）、**再** throw 到这里。
-                 只有宿主邀请鉴权回调拒绝（1409）有专属文案，其余码的收场由 `callDidEnd` 那条路负责。
+                 宿主邀请鉴权回调拒绝（1409）与已在别处通话（1408，同账号在别的设备上通话，入口守门拦不到）有专属提示，
+                 其余码的收场由 `callDidEnd` 那条路负责。
                  */
                 imLogRejected("拨号", error)
-                if imRTCErrorCode(error) == IMErrorCode.inviteDenied.rawValue {
+                let code = imRTCErrorCode(error)
+                if code == IMErrorCode.inviteDenied.rawValue {
                     await MainActor.run { self.apply(.hint("对方暂时无法被邀请")) }
+                } else if code == IMErrorCode.alreadyInCall.rawValue {
+                    await MainActor.run { self.showNotice(imBusyNoticeText) }
                 }
             }
         }
@@ -173,6 +180,7 @@ public protocol IMCallControllerObserver: AnyObject {
 
     @objc(joinMeetingWithRoomID:roomToken:)
     public func joinMeeting(roomID: String, roomToken: String) {
+        guard !blockIfBusy() else { return }
         Task {
             let outcome = await permissionGate.ensure(
                 imPermissionDevices(mediaType: "video", withCamera: true))

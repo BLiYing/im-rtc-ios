@@ -48,6 +48,8 @@ public final class IMCallWindow {
         self.controller = controller
         self.config = config
         controller.addObserver(self)
+        // 「已在通话中」之类的提示浮在宿主界面上（通话收成悬浮球时通话界面里的 hint 看不见）。
+        controller.noticeHandler = { IMKitToast.show($0) }
     }
 
     deinit {

@@ -34,11 +34,7 @@ extension IMCallController {
      Engine 先抛 `callDidEnd(.error)` 把界面收起，再把码 throw 回来——一律显示「无法加入该通话」，见 `handleJoinCallFailure(_:callID:)`。
      */
     @objc public func joinCall(_ callID: String) {
-        guard imJoinCallAllowed(from: state.phase) else {
-            IMRTCLog.warn("[Kit] 正在通话中，忽略 joinCall", ["call_id": callID, "phase": state.phase.rawValue])
-            apply(.hint("正在通话中，无法加入"))
-            return
-        }
+        guard !blockIfBusy("正在通话中，无法加入") else { return }
         apply(.joinRequested(callID: callID, now: Date().timeIntervalSince1970))
         Task {
             // 与接听同一道权限门，但只要麦克风：加入之前不知道这通是不是视频，摄像头等用户在通话里再开。
