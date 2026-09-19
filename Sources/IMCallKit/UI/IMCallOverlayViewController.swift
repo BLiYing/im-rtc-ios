@@ -303,7 +303,7 @@ public final class IMCallOverlayViewController: UIViewController {
          接通之后才有真正只属于顶栏的信息（对方名字 + 计时器 + 网络条）。
         */
         let bare = state.phase == .incoming || state.phase == .outgoing
-        header.apply(title: bare ? "" : imCallTitle(state), subtitle: bare ? "" : imCallStatusLine(state),
+        header.apply(title: bare ? "" : imCallTitle(state, resolver: controller.profileResolver), subtitle: bare ? "" : imCallStatusLine(state),
                      networkLevel: state.phase == .active ? peerLevel : 0,
                      showsMinimize: state.phase != .incoming && state.phase != .ended,
                      showsInvite: imCanShowInvite(for: state),
@@ -339,11 +339,14 @@ public final class IMCallOverlayViewController: UIViewController {
 
     private func renderAudio(_ state: IMCallViewState) {
         let peer = state.participants.first
-        audioStage.apply(uid: state.peerUID, name: imResolvedName(controller.profileResolver, uid: state.peerUID, fallback: state.peerUID.isEmpty ? (peer?.uid ?? "通话中") : state.peerUID),
+        // 来电页显示「把你拉进来的人」（与横幅同一个 uid）；其余时候是对端。
+        let who = state.phase == .incoming && !state.inviterUID.isEmpty ? state.inviterUID : state.peerUID
+        audioStage.apply(uid: who, name: imResolvedName(controller.profileResolver, uid: who, fallback: who.isEmpty ? (peer?.uid ?? "通话中") : who),
                          status: imCallStatusLine(state), isRinging: state.phase == .outgoing,
                          networkLevel: peer?.networkLevel ?? 0,
                          // 接通之后名字与时长归标题栏，中间只留头像——两处各走各的计时是重复也是打架。
-                         showsCaption: state.phase != .active)
+                         showsCaption: state.phase != .active,
+                         avatarImage: imResolvedAvatar(controller.profileResolver, uid: who))
         gridView.layout([])
         fullStage.unpin()
         // 拨出视频时右上角叠本端预览（草图 §03-E：拨出时看得见自己）。

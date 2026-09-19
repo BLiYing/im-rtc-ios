@@ -82,11 +82,11 @@ extension IMMemberListViewController: UITableViewDataSource {
         let cell = tableView.dequeueReusableCell(withIdentifier: IMMemberCell.reuseID,
                                                  for: indexPath) as! IMMemberCell
         if indexPath.row == 0 {
-            cell.apply(name: "我", avatar: nil, micOn: selfMicOn, cameraOn: selfCameraOn)
+            cell.apply(uid: "", name: "我", avatar: nil, micOn: selfMicOn, cameraOn: selfCameraOn)
             return cell
         }
         let member = members[indexPath.row - 1]
-        cell.apply(name: imResolvedName(resolver, uid: member.uid, fallback: member.uid),
+        cell.apply(uid: member.uid, name: imResolvedName(resolver, uid: member.uid, fallback: member.uid),
                    avatar: imResolvedAvatar(resolver, uid: member.uid),
                    micOn: member.hasAudio, cameraOn: member.hasVideo)
         return cell
@@ -134,9 +134,9 @@ private final class IMMemberCell: UITableViewCell {
     @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("Kit 不用 storyboard") }
 
-    func apply(name: String, avatar image: UIImage?, micOn: Bool, cameraOn: Bool) {
+    func apply(uid: String, name: String, avatar image: UIImage?, micOn: Bool, cameraOn: Bool) {
         nameLabel.text = name
-        avatar.apply(key: name, name: name, size: 28, image: image)
+        avatar.apply(key: uid, name: name, size: 28, image: image)
         micIcon.image = (micOn ? IMKitIcon.mic : IMKitIcon.micSlash).image(pointSize: 13)
         cameraIcon.image = (cameraOn ? IMKitIcon.video : IMKitIcon.videoSlash).image(pointSize: 13)
         micIcon.alpha = micOn ? 1 : 0.35

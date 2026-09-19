@@ -22,6 +22,20 @@ final class ProfileResolverTests: XCTestCase {
         #endif
     }
 
+    /// 接通后的标题栏（联调里 Android / Web 都在这里露出过 uid）：1v1 走解析器，群通话与会议与宿主无关。
+    func testTitleResolvesPeerOnlyFor1v1() {
+        let r = FakeResolver()
+        r.names["bob"] = "明子"
+        var one = IMCallViewState(); one.peerUID = "bob"
+        XCTAssertEqual(imCallTitle(one, resolver: r), "明子")
+        XCTAssertEqual(imCallTitle(one, resolver: nil), "bob", "没有解析器退回 uid")
+        r.names["bob"] = "  "
+        XCTAssertEqual(imCallTitle(one, resolver: r), "bob", "空白算没有")
+        var group = IMCallViewState(); group.isGroup = true; group.peerUID = "bob"
+        r.names["bob"] = "明子"
+        XCTAssertEqual(imCallTitle(group, resolver: r), "群通话 · 1 人")
+    }
+
     func testNoResolverFallsBackToUID() {
         XCTAssertEqual(imResolvedName(nil, uid: "4820571639", fallback: "4820571639"), "4820571639")
     }

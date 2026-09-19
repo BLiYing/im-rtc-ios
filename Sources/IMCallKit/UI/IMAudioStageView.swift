@@ -31,8 +31,8 @@ public final class IMAudioStageView: UIView {
        名字与状态只在那两屏出现。
     */
     public func apply(uid: String, name: String, status: String, isRinging: Bool,
-                      networkLevel: Int, showsCaption: Bool = true) {
-        avatar.apply(key: uid, name: name, size: IMKitTheme.current.avatarLarge)
+                      networkLevel: Int, showsCaption: Bool = true, avatarImage: UIImage? = nil) {
+        avatar.apply(key: uid, name: name, size: IMKitTheme.current.avatarLarge, image: avatarImage)
         nameLabel.text = name
         statusLabel.text = status
         nameLabel.isHidden = !showsCaption
