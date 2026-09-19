@@ -149,8 +149,12 @@ public enum IMEngineMachine {
     /// 迟滞到点（`RoomStateMachine+Paging`）。**不显式路由的话它们会落到通话机去，被静默丢掉**——
     /// 症状分别是「房间永远停在 joining」和「翻走的人五秒后没退订，订阅位一直占着」。
     /// 不显式路由的话它们会落到通话机去，被静默丢掉（Web 端 `engineMachine.ts` 同一份注释）。
+    ///
+    /// `publish_deferred`（发布没等到应答、挂起等重连）同样只归房间机。**2026-09-18 漏过一次**：
+    /// 帧循环发出了它、房间机也认它，唯独这张表没登记，于是整条「挂起 → 恢复后补发」
+    /// 在通话和会议里都从没生效过——那一路永远停在 `publishing`。房间机的单测直接调 reduce，测不出来。
     private static let roomInternals: Set<String> = [
-        "join_failed", "leave_failed", "publish_failed", "subscribe_failed",
+        "join_failed", "leave_failed", "publish_failed", "publish_deferred", "subscribe_failed",
         "unsubscribe_hysteresis_elapsed",
     ]
 

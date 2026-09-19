@@ -16,7 +16,8 @@ enum FSMVector {
             return .recv(type: recv["type"] as? String ?? "", data: data)
         }
         if let name = step["internal"] as? String {
-            return .internalEvent(name: name)
+            // args 可选（`publish_failed` 的 cid、`publish_deferred` 的整条 publish data）。
+            return .internalEvent(name: name, args: jsonObject(step["args"]) ?? [:])
         }
         XCTFail("\(label): 一步里必须有 act / recv / internal 之一")
         return nil

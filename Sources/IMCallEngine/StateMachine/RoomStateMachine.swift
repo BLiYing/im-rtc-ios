@@ -175,7 +175,8 @@ public enum IMRoomMachine {
     }
 
     /**
-     dropFailedPublish：`room.publish` 被拒（或没送到）时把那条 `publishing` 摘掉（静默失败审计 §A）。
+     dropFailedPublish：`room.publish` 被服务端拒绝时把那条 `publishing` 摘掉（静默失败审计 §A）。
+     没送到（超时 / 断线）不走这里，走 `deferPublish`。
 
      不摘的话它永远停在 `publishing`：`publish.ok` 不会来，pub offer 永远不产出。
      **通话里走不到这里**——帧循环直接把整通强制收场（reason=error），因为推不上去的那一端

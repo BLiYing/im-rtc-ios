@@ -111,9 +111,13 @@ extension IMFrameLoop {
          超时不是答复，只说明这一问没送到；挂起来等重连即可（见 `deferPublish`）。
          真连不回来的话 `SignalConnection+ResumeGiveUp` 那条 80 秒倒计时照样收场，
          不需要这里抢着下手。
+
+         **会议房同理**（没有通话、只在房里）：原先这一支只对通话开放，会议房的超时落到
+         `publish_failed`，这一路被悄悄摘掉、不重试、不通知宿主——信令抖一下用户就静音或黑屏。
+         恢复窗口的倒计时是连接层的，不分通话与会议；真恢复不了时 `dropLostSession` 照样补 onRoomLeft。
          */
         if type == IMFrameType.roomPublish {
-            if Self.unansweredCodes.contains(error.code), ctx.call.state != .idle {
+            if Self.unansweredCodes.contains(error.code) {
                 IMRTCLog.warn("发布没等到应答，挂起等重连", [
                     "call_id": ctx.call.callID, "code": String(error.code.rawValue),
                 ])

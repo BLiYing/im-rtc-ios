@@ -57,6 +57,8 @@ final class ActionResultTests: XCTestCase {
         let engine: IMCallEngine
         let ws: FakeWebSocket
         let events: Events
+        /// box 拿的是**最近一条** socket：断线重连之后从这里取新的那条。
+        let box: SocketBox
     }
 
     private func setup() async throws -> Harness {
@@ -81,7 +83,7 @@ final class ActionResultTests: XCTestCase {
         ws.receive(helloOKFrame(reqID: hello.reqID))
         try await done
         try await settle()
-        return Harness(engine: engine, ws: ws, events: events)
+        return Harness(engine: engine, ws: ws, events: events, box: box)
     }
 
     private func settle(_ rounds: Int = 6) async throws {
@@ -244,6 +246,43 @@ final class ActionResultTests: XCTestCase {
             XCTAssertTrue(h.events.errors().filter { $0.1 == m.frame }.isEmpty, "\(m.name)：不再发 onError")
             await h.engine.logout()
         }
+    }
+
+    /// 会议房（没有通话）里发布**没等到应答**，也要挂起等重连，而不是悄悄丢掉。
+    ///
+    /// 原先「挂起」那条只对通话开放（`ctx.call.state != .idle`），会议房落到 `publish_failed`：
+    /// 这一路从记账里摘掉、不重试、不通知宿主——信令抖一下，用户就静音或黑屏，界面上什么也看不出。
+    func testMeetingPublishInterruptedByDisconnectIsReplayedAfterResume() async throws {
+        try await assertPublishReplayedAfterResume { try await self.inMeeting($0) }
+    }
+
+    /// 通话里同一件事。`bfbf7c9` 本意就是修它，但 `publish_deferred` 没登记进 `roomInternals`，
+    /// 被路由到通话机静默丢掉——这一路永远停在 `publishing`，恢复之后也不补发。
+    func testCallPublishInterruptedByDisconnectIsReplayedAfterResume() async throws {
+        try await assertPublishReplayedAfterResume { try await self.inCall($0) }
+    }
+
+    private func assertPublishReplayedAfterResume(_ ready: (Harness) async throws -> Void) async throws {
+        let h = try await setup()
+        try await ready(h)
+        let engine = h.engine
+        let task = Task { try await engine.publishMicrophone() }
+        _ = try await frame(h.ws, IMFrameType.roomPublish)
+        h.ws.closeFromServer(IMCloseCode.goingAway)
+        await assertThrowsCode(.networkUnreachable, forType: IMFrameType.roomPublish) { _ = try await task.value }
+
+        var next: FakeWebSocket?
+        for _ in 0..<600 where next == nil {
+            if let s = h.box.get(), s !== h.ws { next = s } else { try await Task.sleep(nanoseconds: 10_000_000) }
+        }
+        guard let ws = next else { return XCTFail("没有重连") }
+        ws.open()
+        let hello = try await frame(ws, IMFrameType.hello)
+        ws.receive(helloOKFrame(reqID: hello.reqID, resumed: true))
+
+        let replayed = try await frame(ws, IMFrameType.roomPublish)
+        XCTAssertEqual(replayed.data["cid"]?.stringValue, "mic-1", "恢复之后这一路要自己补发，不能被丢掉")
+        await h.engine.logout()
     }
 
     // MARK: - 退出类失败：本地照样收场（D2）
