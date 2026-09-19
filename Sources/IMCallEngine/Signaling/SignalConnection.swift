@@ -210,21 +210,42 @@ public final class IMSignalConnection {
         connectContinuation = continuation
         state = sessionID.isEmpty ? .connecting : .reconnecting
 
+        retireStaleSocket()
         let socket = options.webSocketFactory(options.url)
         self.socket = socket
+        // **只认当前这条 socket 的事件**：旧的迟到了就丢掉，否则会把新连接当成断了（见 retireStaleSocket）。
+        let id = ObjectIdentifier(socket)
         socket.resume(handlers: IMWebSocketHandlers(
             onOpen: { [weak self] in
                 guard let self else { return }
-                self.queue.async { self.handshake() }
+                self.queue.async { if self.isCurrent(id) { self.handshake() } }
             },
             onMessage: { [weak self] text in
                 guard let self else { return }
-                self.queue.async { self.handleMessage(text) }
+                self.queue.async { if self.isCurrent(id) { self.handleMessage(text) } }
             },
             onClose: { [weak self] code, reason in
                 guard let self else { return }
-                self.queue.async { self.handleClose(code: code, reason: reason) }
+                self.queue.async { if self.isCurrent(id) { self.handleClose(code: code, reason: reason) } }
             }))
+    }
+
+    private func isCurrent(_ id: ObjectIdentifier) -> Bool {
+        socket.map(ObjectIdentifier.init) == id
+    }
+
+    /**
+     retireStaleSocket 在换新 socket 之前，把上一条还挂着的关掉。
+
+     握手还在飞时宿主又调了 `login`（或别的路又开了一次连接），旧 socket 就还开着。
+     不关它就一直泄漏；它迟到的关闭事件还会把新连接当成断了——Web 端 2026-09-19 真机踩过：
+     新 socket 上在飞的 hello 被拒、又排一轮重连，如此循环。先把 `socket` 换成 nil
+     再关，它的关闭回调就过不了 `isCurrent`。
+     */
+    private func retireStaleSocket() {
+        guard let stale = socket else { return }
+        socket = nil
+        stale.close(code: IMCloseCode.goingAway, reason: "superseded")
     }
 
     /// handshake 发 `sys.hello`。
@@ -252,6 +273,16 @@ public final class IMSignalConnection {
             case let .failure(error):
                 self.abortIfHandshakeRejected(error)
                 self.takeConnectContinuation()?.resume(throwing: error)
+                /*
+                 **本地等应答超时要自己关连接。** 服务端拒了握手会在 100ms 内关（§1.2），
+                 关闭码交给 handleClose 按规则决定重不重连（4401 计数靠它，所以被拒时不抢着关）。
+                 但超时说明下行半死（服务端收到了 hello、回的帧没到），服务端那头没有理由断——
+                 重连又只挂在 onClose 上，不关就要干等服务端 45 秒读超时，恢复窗口白白耗掉。
+                 Android 握手失败一律 closeAndReconnect，这里只补超时这一种。
+                */
+                if error.code == .signalingTimeout {
+                    self.socket?.close(code: IMCloseCode.goingAway, reason: "hello timeout")
+                }
             case let .success(reply):
                 guard reply.envelope.type == IMEnvelope.okType(IMFrameType.hello) else {
                     self.takeConnectContinuation()?.resume(throwing:

@@ -69,6 +69,13 @@ final class FakeWebSocket: IMWebSocket, @unchecked Sendable {
         h?.onClose(code, reason)
     }
 
+    /// deliverLateClose 模拟一条**已经被本端关掉**的 socket 迟到的关闭事件（真 URLSession 的
+    /// `didCloseWith` 与 `receive` 失败是两条独立的路，本端关了之后仍可能再回一次）。
+    func deliverLateClose(_ code: Int, reason: String = "") {
+        lock.lock(); let h = handlers; lock.unlock()
+        h?.onClose(code, reason)
+    }
+
     /// frames 返回已发出的帧（已解析）。
     func frames() -> [IMEnvelope] {
         sent.compactMap { try? IMEnvelope.decode($0) }

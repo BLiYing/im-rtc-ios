@@ -7,6 +7,13 @@
 
 ## 当前焦点
 
+**2026-09-19：握手超时收尾与旧 socket 串台（对齐 Android `closeAndReconnect` / Web `retireStaleSocket`），真机已验。**
+`SignalConnection.handshake()` 失败码为 `signalingTimeout` 时本端以 1001 `hello timeout` 关 socket（原先不关、不重连，要干等服务端 45 s 读超时）；
+`startConnect` 先 `retireStaleSocket()` 关掉旧的，socket 回调按 `ObjectIdentifier` 只认当前那条。测试 `HandshakeTimeoutTests`（撤修复会失败）。
+真机：iPhoneWork 上 frank 接 bob（Chrome）视频，`delay` 8 s + `silence` 80 s → 三次 `hello timeout` 都由本端关、退避重连 → resumed → 补发 publish 音视频接入。
+状态见 CLIENT_PARITY `[^pubdefer]` v1.50。装机：`xcodebuild -workspace Demo/IMRTCDemo/IMRTCDemo.xcworkspace -scheme IMRTCDemo -destination 'id=00008120-000131121E50C01E' -derivedDataPath .build/device-dd -allowProvisioningUpdates build` + `xcrun devicectl device install app --device E551B989-ADE1-528B-B043-9445498E8560 …/IMRTCDemo.app`。
+
+
 **2026-09-18 晚：回前台 / 网络变化立即重连（与 Android 对齐，未上真机）。** `IMCallController` 喂
 `setAppForeground` 与 `notifyNetworkChanged`（`NWPathMonitor`）；Engine `SignalConnection+Nudge.swift`：
 等着重连的立刻连、退避归零；连着的探 3 s，判死立刻重连（iOS 回前台也探——挂起过「连着」多半是假的）；两次至少隔 2 s。
