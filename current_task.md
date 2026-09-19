@@ -1,119 +1,43 @@
 # Current Task — im-rtc-ios（Swift Engine + Kit + Demo）
 
-> **活快照**：就地覆盖、不追加。历史见 `git log` 与 [current_task.archive.md](current_task.archive.md)（末节「2026-09-17 傍晚（/simplify 清理收口时移出活快照）」；再往前是「SDK 1.0.0 公网发布后精简：精简前全文」）。
+> **活快照**：就地覆盖、不追加。历史见 `git log` 与 [current_task.archive.md](current_task.archive.md)（末节「2026-09-19（快照整理时移出活快照）」是 09-18 的焦点原文；其上「2026-09-17 傍晚（/simplify 清理收口时移出活快照）」；再往前是「SDK 1.0.0 公网发布后精简：精简前全文」）。
 > 规范 [CONVENTIONS.md](CONVENTIONS.md) · 分期 server `docs/design/RTC_CALL_DESIGN.md` §10 · 发版 server `docs/ops/RELEASE.md` ·
 > 界面以设计稿 **v3.1** 为准：`../im-rtc-server/docs/design/sketches/RTC_CALL_UI_SPEC.html` / `RTC_CALL_UX_FLOWS.html`。
 > ✅ 状态只写在 `../im-rtc-server/docs/CLIENT_PARITY.md`。
 
 ## 当前焦点
 
-**2026-09-19：握手超时收尾与旧 socket 串台（对齐 Android `closeAndReconnect` / Web `retireStaleSocket`），真机已验。**
-`SignalConnection.handshake()` 失败码为 `signalingTimeout` 时本端以 1001 `hello timeout` 关 socket（原先不关、不重连，要干等服务端 45 s 读超时）；
-`startConnect` 先 `retireStaleSocket()` 关掉旧的，socket 回调按 `ObjectIdentifier` 只认当前那条。测试 `HandshakeTimeoutTests`（撤修复会失败）。
-真机：iPhoneWork 上 frank 接 bob（Chrome）视频，`delay` 8 s + `silence` 80 s → 三次 `hello timeout` 都由本端关、退避重连 → resumed → 补发 publish 音视频接入。
-状态见 CLIENT_PARITY `[^pubdefer]` v1.50。装机：`xcodebuild -workspace Demo/IMRTCDemo/IMRTCDemo.xcworkspace -scheme IMRTCDemo -destination 'id=00008120-000131121E50C01E' -derivedDataPath .build/device-dd -allowProvisioningUpdates build` + `xcrun devicectl device install app --device E551B989-ADE1-528B-B043-9445498E8560 …/IMRTCDemo.app`。
+**2026-09-19：三处修完，真机已验（iPhone 14 Pro 当发布方 × Chrome，`delay` 8 s + `silence` 80 s），已推送。**
+- **握手超时不再干等服务端**（`8496a8f`，对齐 Android `closeAndReconnect` / Web `retireStaleSocket`）：`SignalConnection.handshake()` 失败码为 `signalingTimeout` 时本端以 1001 `hello timeout` 关 socket（原先不关、不重连，要干等 45 s 读超时）；
+  `startConnect` 先 `retireStaleSocket()` 关旧的，socket 回调按 `ObjectIdentifier` 只认当前那条。`HandshakeTimeoutTests`（撤修复会失败）。真机三次 `hello timeout` 都由本端关 → 退避重连 → resumed → 补发 publish。
+- **发布没等到应答的挂起重放从没生效过**（`1c540d5`）：`publish_deferred` 没登记进 `roomInternals`，事件落到通话机被静默丢掉，那一路永远停在 publishing；会议房还被 `ctx.call.state != .idle` 排除在挂起之外。两处补上，引擎级测试会议房 / 通话各一条。09-18 傍晚的 `bfbf7c9` 当时以为做完了，其实这条路是死的。
+- **采集会话看门狗**（`0017680`）：`IMCaptureWatch` 的观察者关摄像头时立即摘掉（adapter 跨通话复用，纯语音几通里一直挂着）。
+- **`ping_interval_sec` 钳到 [5,60]**（缺省 / 非正数按 15，与 Android 同值，`Heartbeat.clampedIntervalSec`，`HeartbeatTests`）；同批 Web `heartbeat.ts` 判死由 `>` 改 `>=`（原先 60 s 才判死，与其余端 45 s 不齐）。未上真机，CLIENT_PARITY 还没记这两条；**间隔钳制 Web / 桌面还没做**（已记在两仓「下一步」）。
+- **回前台 / 网络变化立即重连**（09-18 晚，`f8bd7fa`，`SignalConnection+Nudge.swift`，与 Android 对齐）：iOS 回前台也探「连着」的（挂起过多半是假的）；两次至少隔 2 s。**救不了「后台被挂起超过 30 秒」**。状态见 CLIENT_PARITY `[^netchange]` `[^pubdefer]`。
+- 装机：`xcodebuild -workspace Demo/IMRTCDemo/IMRTCDemo.xcworkspace -scheme IMRTCDemo -destination 'id=00008120-000131121E50C01E' -derivedDataPath .build/device-dd -allowProvisioningUpdates build` + `xcrun devicectl device install app --device E551B989-ADE1-528B-B043-9445498E8560 …/IMRTCDemo.app`。
 
+**仍悬着（09-18 傍晚记下，没结案）**：
+- **后台掉线 = App 被系统挂起**：18:04 切后台 → 18:05 恢复窗口（30 s）到期 → `reason=network`；App 整整 4 分钟零日志，客户端任何定时参数都救不了没在运行的进程。出路是让 App 在通话中别被挂起（`UIBackgroundModes` 只有 `audio`，靠活跃音频 I/O 保活，未证实）。
+- **18:18 那通前台也断了，原因未定**：接通 19 s 后信令双向哑掉，服务端一个字节没收到，而客户端 `URLSessionWebSocketTask.send` 每帧都被收下（全段零条 `发帧失败`），36 s 后才以 TCP `Operation timed out` 放弃；同一 WiFi 上的 Android 没事。**别当网络问题结案，也别当已解决。**
+- **simulcast 三层没开**：见「已知坑」里「包已换成 webrtc-sdk M150」那条。
 
-**2026-09-18 晚：回前台 / 网络变化立即重连（与 Android 对齐，未上真机）。** `IMCallController` 喂
-`setAppForeground` 与 `notifyNetworkChanged`（`NWPathMonitor`）；Engine `SignalConnection+Nudge.swift`：
-等着重连的立刻连、退避归零；连着的探 3 s，判死立刻重连（iOS 回前台也探——挂起过「连着」多半是假的）；两次至少隔 2 s。
-真机验法：通话中切后台 1 分钟再回来 / 关 Wi-Fi 再开，Xcode 控制台看 `App 切到前台` / `系统网络变了` → `计划重连 rule=…立即重连`。
-**救不了「后台被挂起超过 30 秒」**——那条仍是下面「后台掉线」的事。状态见 CLIENT_PARITY `[^netchange]`。
-
-**2026-09-18 傍晚：真机上两个还没收口的症状——「iOS 说话对方听不见」与「切后台一会儿通话就断」。已提交 `c05f4e7` + `bfbf7c9`（未推送），`test.sh` 10 步全绿 381 例。等用户装机跑下一通。**
-
-- **视频通话双向无声——已修、20:45 真机验收通过**（`IMWebRTCAudioConfiguration`）：
-  写手是 libwebrtc 自己。ADM 开麦（`InitRecording` → `configureWebRTCSession:`）把会话配成
-  `webRTCConfiguration`，而这个 fork 的 `-[RTCAudioSessionConfiguration init]`（`0x250bb0`）
-  **读的是当下会话的 category/mode**——默认值是首次被碰那一刻的快照（上游是写死 PlayAndRecord）。
-  视频通话响铃期预览先建工厂 → 快照 = SoloAmbient → 开麦时 `-50` → `InitPlayOrRecord failed`。
-  纯音频没预览、先配会话后建工厂 → 快照对 → **同进程之后的视频也好**（19:32→19:36 那次"好了"就是这个）。
-  修法：`sharedFactory` 建之前 + 每次 `applyCallAudioCategory` 时 `setWebRTC(_:)` 钉死 PlayAndRecord/VoiceChat。
-  同时撤回按错误理论加的 `useManualAudio`（`8dd9e29`）与采集会话旗标（`4fa128a`/`7cbbc8f`），回到 19:36 那时的写法。
-  验收：首装后**直接**打视频，`音频会话已配成通话态 webrtc_config=…PlayAndRecord/…VoiceChat`、
-  不出现 `[Demo] 有人把音频会话写成非通话类目`、`上行音频采样 packetsSent` 在涨。
-- **后台掉线 = App 被系统挂起**（18:04:38 断 → 18:05:08 窗口到期 → `reason=network`）：
-  `采集会话被中断 reason=后台不给用摄像头` 实锤切了后台；服务端**立刻**就察觉了断开（不是 45 秒后），
-  窗口只有 30 秒，而 App 整整 4 分钟零日志。**客户端任何定时参数都救不了没在运行的进程**——
-  出路是让 App 在通话中别被挂起（`UIBackgroundModes` 只有 `audio`，要靠活跃音频 I/O 才保得住，
-  与上一条可能同源，未证实）。18:01 那次 App 在后台还活着，1 秒就重连回来了。
-- **发布超时不再收掉整通**（`bfbf7c9`）：`room.publish` 拿 2003/2004 走 `publish_deferred`
-  挂回 `buffered` 等重连重放；服务端真回拒绝（1xxx）仍 forceEnd。没送到的结束帧记进
-  `undeliveredExit`，重连握手后补发一次——原先挂断帧发不出去就没了，服务端把人留在
-  恢复窗口里，一重连又「取消离房」，房里挂着一个界面上早已挂断的人。
-- **18:18 那通前台也断了，原因未定**：接通 19 秒后信令双向哑掉，服务端一个字节没收到，
-  而客户端 `URLSessionWebSocketTask.send` 每帧都被收下（**全段零条 `发帧失败`**），
-  36 秒后才以 TCP `Operation timed out` 放弃。同一 WiFi 上的 Android 全程没事。**别再当网络问题结案，也别当已解决。**
-
-**五端并表（09-18）**：判死时长 server/iOS/Android/Desktop 都是 45s，**Web 是 60s**
-（`heartbeat.ts:39` 用了 `>` 不是 `>=`，而 iOS/Desktop 的 `Heartbeat` 注释早就写明这个坑）。
-前后台钩子**只有 Android 有**（`setAppForeground` → 退避归零 + 立刻重连）。
-`ping_interval_sec` 只有 Android 钳到 [5,60]。
-**注意**：45s 判死**不**必然错过 30s 恢复窗口——服务端的 30s 是从它自己 45s 读超时之后才起算的。
-
-**2026-09-18：会议房 M2 真机验收进行中。M2 的 Engine 与 Kit 两段已在 09-18 凌晨做完（`2ee3527` / `289e3af`，见 server `docs/design/MEETING_ROOM_DESIGN.md` §7 第 2、5 步）。今天全是真机才暴露的修复，`test.sh` 10 步全绿。**
-
-- **⚠️ simulcast 是「说了没做」**（09-18 查出，**换包已做、开三层没做**）：`publishCamera(simulcast:)` 按
-  h/m/l 配了三个 `sendEncodings`、`room.publish` 也报了 `simulcast:true`，但上行统计里**只有 `h.`**
-  （房间 41642481：1080×1920、3.1–4.7 Mbps），服务端那条 track 全程只出现过 `to:"h"`。
-  根因是 `IMPeerConnections` 用裸 `RTCDefaultVideoEncoderFactory()`，没套 simulcast adapter，
-  libwebrtc 只编第一个 encoding。**根因不是版本是分支**：`RTCVideoEncoderFactorySimulcast`
-  不在上游 libwebrtc 里，是 fork 打的补丁（`webrtc-sdk/webrtc` 的 `sdk/BUILD.gn`），
-  stasel 编 vanilla 上游，升到多少都不会有。**09-18 已换包**（见「已知坑」），
-  但工厂还没套、层序还没改，所以现状仍是单层。后果见 server `bwe.go`：订阅侧报 `l` 也只能收这一层 1080p。
-- **补了判据日志**（未提交）：`IMAspectVideoView` 加
-  `画面缩放判据 owner= view= video= fraction= mode=`（与 Android `IMVideoFitter` 同名字段）。
-  09-18 真机上同一个「钉住主画面 + 16:9 源」Android 按判据留黑边、iOS 却铺满，
-  而两端日志都看不出各自量到了多大的容器——先把这行补上再定位。
-- **退订再重订之后画面定格**（`5324c62`）：M2 第一次让「退订→重订」成为常规动作，
-  协议 `track_id` 不变但媒体层拿到的是**新的轨道对象**，而 `IMVideoRegistry.claim` 有一条
-  `owners[trackID] != owner` 的闸（「已经认过就别再认」）——归属没变就直接 return，
-  新轨道永远躺在 `orphans` 里，渲染器还挂在死掉的旧轨道上。三端同病。
-- **演讲者底部条的格子被压成竖条**（`493340a`）：`UIStackView` 的 `fillEqually` 只管「彼此一样宽」，
-  这条 stack 自己没有宽度约束、格子又没有 intrinsic size，结果被压成又窄又高的条。
-  加 `stripTileSide = 84` 的显式宽约束。
-- **小格子里名字一个字都看不见**（`dcdcb71` + `1345685`）：名字牌宽度上限是 `trailing - 40`，
-  84pt 的格子里只剩 32pt，而牌子里固定要吃掉 `8 + 5 + 9 + 8 = 30pt`——**留给名字的正好 2pt**。
-  先把上限改成只留一个边距并让名字截断；再加一档**紧凑排版**（边长 < 110 自动换档，
-  留白 12→4、字号 12→10，固定件压到 28pt），三端同值。
-- **标题栏改成写房号、点一下复制**（`dbff38c`）：人数只留右上角「👥 N」，标题不再重复同一个数字。
-  `IMCallHeaderView.apply` 多一个默认参数 `titleIsCopyable`（源码兼容）。
-
-**真机没验**：以上四条**都还没装到手机上过**（用户最后一次重装在 `1345685` 之前）。
-下一轮装机要重点看：翻走 >10 秒再翻回画面恢复、底部条名字、新标题栏与点击复制。
-
-**服务端侧与本端相关的两条**（都已修，见 server `current_task.md`）：编解码裁剪不幂等导致
-「iOS 收不到 Web 的 VP8 / Android 收不到 iOS 的 H.264」；重协商之后要补关键帧。
-
-**2026-09-17 夜：可取消定时器抽成 `Support/IMTimer.swift`（队列 5 的定时器样板）**：`imAfter` / `imEvery` 是 `package` 级别（三个 target 共用、宿主看不见），
-`makeTimerSource` 15 处全换掉（Engine 5 / WebRTC 1 / Kit 9），`IMTimerTests` 3 例。`DispatchWorkItem + asyncAfter` 那几处语义不同，没动。行为不变。
-
-**2026-09-17 夜：结束帧映射表合并（队列 3）**：四份「这个状态怎么结束」合成 `StateMachine/CallStateMachine+Exit.swift` 的 `IMCallExit`
-（`reduceAct` 退出方法 / `endFrames` / 迟到帧补发与挂着的 cancel / 帧循环失败收场集合都查它），`CallExitTableTests` 逐条对 `call_fsm.json`。行为不变。
-
-**2026-09-17 夜：「调用结果回给调用方」2.0.0 改造（server `docs/design/ACTION_RESULT_DESIGN.md`）已提交 `d2d2ae9`（未推送），code-review 已过。**
-发起类方法改 `async throws`（`call` 返回 callID）、本地拒绝走 `IMMachineOutput.reject`、`IMFrameLoop.request` 结算直接帧、
-`IMRTCError.forType`、destroy 契约（`DestroyContractTests`）、Kit 从 throw 取码（删 `joiningCallID` / `pendingJoinDenial`）；Kit 主动加入任何失败都是「无法加入该通话」（对齐 Web / Android）。`test.sh` 10 步全绿 + Demo 编译。
-真机未验（joinCall 1202/1402/1409 文案、拨号拿 callID、通话中断网再挂断）。
-
-**2026-09-17 傍晚：四仓 /simplify 清理做完并推送（本仓 `dc76a99`…`7c3f457`，`test.sh` 10 步全绿 322 例 + Demo 编译；用户已复看，正常）。**
-- 行为不变：`IMEmittedEvent.error(_:)` 工厂、`IMSysErrorFrame.decode` 推送 / 应答共用、状态机 `out` / `invalidStateOutput` 合并、周期事件先 `IMRTCLog.isEnabled` 再拼字段、`sys.pong` 不进帧泵、`stampCallStart` 单字段比较；
-  WebRTC 适配器 `ensurePeers` 取一次、`close()` 取消开摄像头 Task；Kit 色值 / 弹簧 / 小头像 44 收进 `IMKitTheme`，`imPinEdges` / `imConfigureCircleIconButton`，悬浮球贴边下沉 `Layout/IMFloatingBubbleLayout.swift`（有单测）。
-- **行为变化只在 Demo**：通话记录改用 `imEndReasonText`（hangup 显示「通话结束 · 时长」，offline / answered_elsewhere 等不再显示英文）；`DemoSession.onChange` 改 `add/removeChangeObserver`。
-- 09-17 下午（体量五刀、block 状态观察者、来电振动、用户真机验收旧 1、2）已移进 archive。
+**已收口（细节在 archive「2026-09-19」节）**：会议房 M2 四处 UI 修复（退订再重订画面定格、底部条格子、小格子紧凑名字牌、标题栏点击复制）用户确认已修好；视频通话双向无声（09-18 20:45 真机验过，根因留在「已知坑」）；结束帧表合并 `IMCallExit`、定时器 `imAfter` / `imEvery`、「调用结果回给调用方」`d2d2ae9`（真机未验 `joinCall` 1202/1402/1409 文案、拨号拿 callID、断网再挂断）、四仓 /simplify——均已推送。
 
 ## 下一步
 
 1. 后台存活：通话中切后台被系统挂起（见上）——现在麦克风真在录了，先复测一次看 `audio` 后台模式能否保住进程。
-2. iOS 补 `setAppForeground`（照搬 Android `IMSignalConnection.setForeground`），并给
-   `ping_interval_sec` 补 `[5,60]` 钳制；Web 的 `heartbeat.ts` `>` 改 `>=`。三条都要进 `CLIENT_PARITY.md`。
-3. 2.0.0：真机验上面三项（断网再挂断顺带验结束帧表），用户通知后发版。
-4. 按需 / 后续期：自定义铃声没有 Demo UI、没真机验过；`IMInviteMemberProvider` / `presentInvitePicker` 没真实宿主跑过；IMProgram / 容信真实接入（M3~M7）。
+2. iOS simulcast 三层：套 `RTCVideoEncoderFactorySimulcast` + 层序改 l,m,h 同一刀（见「已知坑」）。
+3. 2.0.0：真机验 `joinCall` 文案 / 拨号 callID / 断网再挂断，用户通知后发版。
+4. 会议房离场不释放远端视图（暂不修，等真机看到内存问题，见「已知坑」）。
+5. 按需 / 后续期：自定义铃声没有 Demo UI、没真机验过；`IMInviteMemberProvider` / `presentInvitePicker` 没真实宿主跑过；IMProgram / 容信真实接入（M3~M7）。
 
 ## 已知坑 / 限制
 
 - **Demo 开 `.xcodeproj` 与开 `.xcworkspace` 是两个档**：脚本一律 `-workspace`，写成 `-project` 会联网、验的是 GitHub 上的旧代码。workspace 自己的 `Package.resolved` 不落地（Xcode.app 里开过也没有），别当配置错误去追。
 - **音频会话不在 `login()` 时配置**（09-16 改）：「该出声没出声」先查是不是漏了 `ensureAudioSessionConfigured()`（挂在 `acquireMicrophone()` / `setSpeakerOn(_:)`）。
+- **libwebrtc 的 `webRTCConfiguration` 是会话快照**（09-18 视频通话双向无声真根因，`IMWebRTCAudioConfiguration`）：这个 fork 的 `-[RTCAudioSessionConfiguration init]` 读的是**当下会话的 category/mode**，默认值是首次被碰那一刻的快照（上游写死 PlayAndRecord）。
+  视频通话响铃期预览先建工厂 → 快照 = SoloAmbient → 开麦 `-50` → `InitPlayOrRecord failed`；纯音频先配会话后建工厂 → 快照对，同进程之后的视频也好（所以症状「偶然好了」）。
+  修法：`sharedFactory` 建之前 + 每次 `applyCallAudioCategory` 时 `setWebRTC(_:)` 钉死 PlayAndRecord/VoiceChat。验收看 `音频会话已配成通话态 webrtc_config=…PlayAndRecord/…VoiceChat`、无 `有人把音频会话写成非通话类目`、`上行音频采样 packetsSent` 在涨。
 - **包已换成 webrtc-sdk M150（09-18），但 simulcast 还没开**：`Package.swift` 现在是自己写的
   `.binaryTarget` 指向 `webrtc-sdk/Specs` 的 `150.7871.01`——**不能用 `.package(url:)` 引它**，
   它的 `Package.swift` 近期 tag 全是坏的（声明 `tools-version:5.9` 却用了 6.2 才有的 `.visionOS(.v26)`）。
