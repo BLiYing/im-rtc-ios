@@ -295,11 +295,11 @@ public final class IMSignalConnection {
                 self.reconnectAttempt = 0
                 self.networkChangePending = false
                 self.authFailures = 0
-                self.pingIntervalSec = ok.pingIntervalSec
+                self.pingIntervalSec = Heartbeat.clampedIntervalSec(ok.pingIntervalSec)
                 // 连上了就别再倒计时了——不管 resumed 是真是假，服务端都已经给出裁决。
                 self.unrecoverableTimer?.cancel()
                 self.unrecoverableTimer = nil
-                self.heartbeat.start(intervalSec: ok.pingIntervalSec)
+                self.heartbeat.start(intervalSec: self.pingIntervalSec)
                 self.tokenExpiry.arm(expiresAtMS: ok.tokenExpiresAtMS)
                 IMRTCLog.info("信令已连接", ["uid": ok.uid, "resumed": String(ok.resumed)])
                 // 先抛事件再 resume：`connect()` 返回时，门面那边的状态机应该已经吃过

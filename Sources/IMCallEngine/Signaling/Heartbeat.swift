@@ -13,6 +13,18 @@ final class Heartbeat {
     /// 判死前允许连续静默的周期数（§1.3：3 个周期 = 45 秒）。
     static let missLimit = 3
 
+    /// 服务端下发的 `ping_interval_sec` 的可信范围与缺省（与 Android 同值）。
+    static let minIntervalSec = 5
+    static let maxIntervalSec = 60
+    static let defaultIntervalSec = 15
+
+    /// clampedIntervalSec 把服务端下发的间隔收进 [5, 60]。
+    /// 缺省 / 非正数（`Wire.int` 缺字段时给 0）按默认 15 s：字段缺了不该被当成 5 s 的心跳风暴。
+    static func clampedIntervalSec(_ raw: Int) -> Int {
+        guard raw > 0 else { return defaultIntervalSec }
+        return min(max(raw, minIntervalSec), maxIntervalSec)
+    }
+
     private let queue: DispatchQueue
     private let sendPing: () -> Void
     private let onDead: () -> Void

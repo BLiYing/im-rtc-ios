@@ -31,6 +31,17 @@ final class HeartbeatTests: XCTestCase {
         XCTAssertLessThan(elapsed, 3.6, "第 4 个周期才判死 = 差一")
     }
 
+    /// 服务端下发的心跳间隔要收进 [5, 60]（与 Android 一致）；缺省按 15。
+    func testServerPingIntervalIsClamped() {
+        XCTAssertEqual(Heartbeat.clampedIntervalSec(0), 15, "缺字段 = 默认，不是 5 s 风暴")
+        XCTAssertEqual(Heartbeat.clampedIntervalSec(-3), 15)
+        XCTAssertEqual(Heartbeat.clampedIntervalSec(1), 5)
+        XCTAssertEqual(Heartbeat.clampedIntervalSec(5), 5)
+        XCTAssertEqual(Heartbeat.clampedIntervalSec(15), 15)
+        XCTAssertEqual(Heartbeat.clampedIntervalSec(60), 60)
+        XCTAssertEqual(Heartbeat.clampedIntervalSec(3600), 60)
+    }
+
     /// 收到任何帧都算对端活着，计数要归零（§1.3）。
     func testAnyFrameResetsTheMissCounter() {
         let queue = DispatchQueue(label: "test.heartbeat.reset")
