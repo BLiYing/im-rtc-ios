@@ -21,8 +21,13 @@ actor IMFrameLoop {
     /// 取成闭包：连接会随重连换对象。`IMFrameLoop+Rollback` 也要读，所以不是 private。
     let connection: @Sendable () -> IMSignalConnection?
 
+    /// 自己的 uid，只给 `onCallSummary.caller` 用：主叫在接通前结束时状态机还不知道发起人是谁。
+    private let selfUID: @Sendable () -> String
+
     init(sender: IMFrameSender, dispatcher: IMEventDispatcher, media: IMMediaAdapter?,
-         connection: @escaping @Sendable () -> IMSignalConnection?) {
+         connection: @escaping @Sendable () -> IMSignalConnection?,
+         selfUID: @escaping @Sendable () -> String = { "" }) {
+        self.selfUID = selfUID
         self.sender = sender
         self.dispatcher = dispatcher
         self.media = media
@@ -215,6 +220,8 @@ actor IMFrameLoop {
 
     /// land 是 `apply` 里**不等待**的那一半：记状态、同步媒体层、抛事件。帧另发。
     private func land(_ result: IMMachineOutput<IMEngineContext>) {
+        // 结束前那一刻的通话上下文：`onCallSummary` 要的对端 / 群号 / 角色在落地后就清零了。
+        let endingCall = ctx.call
         ctx = result.state
         mirror.set(ctx)
 
@@ -264,7 +271,35 @@ actor IMFrameLoop {
             */
             if event.callback == IMEmittedCallbackName.onKickedOut { continue }
             dispatcher.emit(event)
+            // 紧跟 onCallEnd、每通有上下文的电话恰好一次（通话记录设计 §4）。
+            if event.callback == "onCallEnd", let summary = Self.callSummary(of: endingCall, end: event, selfUID: selfUID()) {
+                dispatcher.emit(summary)
+            }
         }
+    }
+
+    /// callSummary 用结束前的通话上下文 + onCallEnd 的载荷拼 `onCallSummary`。
+    /// 结束前没有通话，或这通电话还没拿到 call_id（本地就地拒掉 / 发不出去的 `call()`）返回 nil。
+    static func callSummary(of call: IMCallContext, end: IMEmittedEvent,
+                            selfUID: String) -> IMEmittedEvent? {
+        guard call.state != .idle else { return nil }
+        func endString(_ key: String) -> String { Wire.string(end.args, key) }
+        let callID = endString("call_id").isEmpty ? call.callID : endString("call_id")
+        // invite.ok 之前就收场的（发不出去、被本地拒）服务端没有这通电话，宿主也没有 cid 可写进记录。
+        guard !callID.isEmpty else { return nil }
+        return IMEmittedEvent("onCallSummary", [
+            "call_id": .string(callID),
+            "reason": .string(endString("reason")),
+            "duration_sec": .int(Wire.int(end.args, "duration_sec")),
+            "ended_by": .string(endString("ended_by")),
+            "media_type": .string(call.mediaType),
+            "is_group": .bool(call.isGroup),
+            "chat_group_id": .string(call.chatGroupID),
+            "caller": .string(call.callerUID.isEmpty && call.role == .caller ? selfUID : call.callerUID),
+            "role": .string(call.role.rawValue),
+            "peer": .string(call.peerUID),
+            "user_data": .string(call.userData),
+        ])
     }
 
     /**

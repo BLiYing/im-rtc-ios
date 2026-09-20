@@ -308,6 +308,49 @@ final class ActionResultTests: XCTestCase {
         XCTAssertEqual(h.events.named(.callEnd).count, 1, "服务端随后的 call.ended 不再抛第二次")
     }
 
+    // MARK: - callSummary（通话记录设计 §4）
+
+    /// 主叫、1v1、没接通就结束：callSummary 恰好一次，字段取自结束前的通话上下文。
+    func testCallSummaryForCallerNoAnswer() async throws {
+        let h = try await setup()
+        try await inviting(h)
+        event(h.ws, "call.ended", #"{"call_id":"c-1","room_id":"r-1","reason":"no_answer","duration_sec":0,"ended_by":""}"#)
+        try await settle(3)
+        XCTAssertEqual(h.events.named(.callEnd).count, 1)
+        let sums = h.events.named(.callSummary)
+        XCTAssertEqual(sums.count, 1)
+        let p = sums.first?.payload ?? [:]
+        XCTAssertEqual(p["call_id"] as? String, "c-1")
+        XCTAssertEqual(p["reason"] as? String, "no_answer")
+        XCTAssertEqual(p["role"] as? String, "caller")
+        XCTAssertEqual(p["peer"] as? String, "bob")
+        XCTAssertEqual(p["is_group"] as? Bool, false)
+        XCTAssertEqual(p["media_type"] as? String, "audio")
+        XCTAssertFalse((p["caller"] as? String ?? "").isEmpty, "主叫未接通就结束，caller 回落自己的 uid")
+        // 服务端随后再来一条 call.ended（idle 被丢）不能再出第二条。
+        event(h.ws, "call.ended", #"{"call_id":"c-1","room_id":"r-1","reason":"no_answer","duration_sec":0,"ended_by":""}"#)
+        try await settle(3)
+        XCTAssertEqual(h.events.named(.callSummary).count, 1)
+        await h.engine.logout()
+    }
+
+    /// 被叫、群通话、接通后结束：role=callee、peer 为空、时长取服务端值。
+    func testCallSummaryForCalleeGroup() async throws {
+        let h = try await setup()
+        try await inCall(h)
+        event(h.ws, "call.ended", #"{"call_id":"c-1","room_id":"r-1","reason":"hangup","duration_sec":42,"ended_by":"bob"}"#)
+        try await settle(3)
+        let p = h.events.named(.callSummary).first?.payload ?? [:]
+        XCTAssertEqual(h.events.named(.callSummary).count, 1)
+        XCTAssertEqual(p["role"] as? String, "callee")
+        XCTAssertEqual(p["caller"] as? String, "bob")
+        XCTAssertEqual(p["peer"] as? String, "")
+        XCTAssertEqual(p["is_group"] as? Bool, true)
+        XCTAssertEqual((p["duration_sec"] as? NSNumber)?.intValue, 42)
+        XCTAssertEqual(p["ended_by"] as? String, "bob")
+        await h.engine.logout()
+    }
+
     func testLeaveRoomDisconnectStillLeavesLocally() async throws {
         let h = try await setup()
         try await inMeeting(h)

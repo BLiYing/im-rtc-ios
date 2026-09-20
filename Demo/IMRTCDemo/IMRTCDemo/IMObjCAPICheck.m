@@ -181,6 +181,12 @@
     NSLog(@"[objc] callEnd %@ reason=%ld %ld秒", callID, (long)reason, (long)durationSec);
 }
 
+// 2026-09-20 增：通话记录用。紧跟 callDidEnd，每通有 call_id 的电话恰好一次；宿主只在 role==caller 时发记录消息。
+- (void)callEngine:(IMCallEngine *)engine callSummary:(IMCallSummary *)summary {
+    NSLog(@"[objc] callSummary %@ reason=%ld %ld秒 role=%@ peer=%@ group=%d", summary.callID,
+          (long)summary.reason, (long)summary.durationSec, summary.role, summary.peer, summary.isGroup);
+}
+
 // 2026-09-17 增：call.ringing 发给通话里的所有人。
 - (void)callEngine:(IMCallEngine *)engine userIsRinging:(NSString *)uid {
     NSLog(@"[objc] %@ 在响铃 %d", uid, IMCallEventNameUserRinging == IMCallEventNameUserRinging);

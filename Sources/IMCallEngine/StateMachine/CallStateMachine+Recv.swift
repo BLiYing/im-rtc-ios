@@ -136,6 +136,7 @@ extension IMCallMachine {
         next.callerUID = Wire.string(data, "caller")
         next.chatGroupID = Wire.string(data, "chat_group_id")
         next.userData = Wire.string(data, "user_data")
+        next.peerUID = next.isGroup ? "" : next.callerUID
 
         /*
          inviter 是**这次邀请是谁发的**：首次邀请就是主叫，`call.invite_more` 加进来的人

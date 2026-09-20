@@ -128,6 +128,13 @@ import Foundation
     @objc optional func callEngine(_ engine: IMCallEngine, callDidEnd callID: String,
                                    reason: IMCallEndReason, durationSec: Int, endedBy: String)
 
+    /**
+     这通电话的事实一次给齐（通话记录设计 §4）。**紧跟 `callDidEnd` 之后、每通有上下文的电话恰好一次**；
+     未接通、被拒、`*_elsewhere` 也来（看 `summary.reason`）。宿主要发通话记录消息的话，
+     只在 `summary.role == "caller"` 时发，不用自己比对 uid。本地就地拒掉的 `call()`（没有通话）不触发。
+     */
+    @objc optional func callEngine(_ engine: IMCallEngine, callSummary summary: IMCallSummary)
+
     /// 主叫取消了呼叫。**便利事件，只在 1v1 抛**，随后必有 `callDidEnd`（不变量 I7）。
     @objc optional func callEngine(_ engine: IMCallEngine, callWasCancelledBy uid: String)
     /// 对方拒接。便利事件，只在 1v1 抛。

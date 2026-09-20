@@ -54,6 +54,8 @@ public struct IMCallContext: Equatable, Sendable {
     public var callerUID: String = ""
     public var chatGroupID: String = ""
     public var userData: String = ""
+    /// 1v1 的对端 uid（主叫 = 被叫，被叫 = 主叫）；群通话为空。只为 `onCallSummary` 记下，状态机不据它做决定。
+    public var peerUID: String = ""
 
     public init() {}
 }
@@ -140,6 +142,7 @@ public enum IMCallMachine {
         next.isGroup = isGroup
         next.chatGroupID = chatGroupID
         next.userData = userData
+        next.peerUID = isGroup ? "" : (calleeIDs.first ?? "")
 
         var frameData: [String: IMJSON] = [
             "callee_ids": .array(calleeIDs.map { .string($0) }),

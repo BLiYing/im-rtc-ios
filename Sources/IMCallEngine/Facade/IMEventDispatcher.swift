@@ -27,6 +27,8 @@ import Foundation
     case roomJoined, roomLeft, roomClosed
     /// 2026-09-17 增。**追加在末尾**：这是 `@objc enum : Int`，插在中间会改掉已有事件的 rawValue。
     case userRinging
+    /// 2026-09-20 增（通话记录设计 §4）：紧跟 `callEnd` 之后、每通有上下文的电话恰好一次。
+    case callSummary
 }
 
 extension IMCallEventName {
@@ -48,6 +50,7 @@ extension IMCallEventName {
         case .callReceived: return "callReceived"
         case .callBegin: return "callBegin"
         case .callEnd: return "callEnd"
+        case .callSummary: return "callSummary"
         case .callCancelled: return "callCancelled"
         case .callRejected: return "callRejected"
         case .callBusy: return "callBusy"
@@ -231,6 +234,9 @@ final class IMEventDispatcher {
                           reason: IMCallEndReason.from(wire: str("reason")),
                           durationSec: num("duration_sec"), endedBy: str("ended_by"))
 
+        case .callSummary:
+            d.callEngine?(e, callSummary: IMCallSummary(payload: p))
+
         case .callCancelled:
             d.callEngine?(e, callWasCancelledBy: str("by"))
         case .callRejected:
@@ -282,6 +288,7 @@ final class IMEventDispatcher {
         "onConnected": .connected, IMEmittedCallbackName.onDisconnected: .disconnected,
         IMEmittedCallbackName.onKickedOut: .kickedOut, "onError": .error,
         "onCallReceived": .callReceived, "onCallBegin": .callBegin, "onCallEnd": .callEnd,
+        "onCallSummary": .callSummary,
         "onCallCancelled": .callCancelled, "onCallRejected": .callRejected,
         "onCallBusy": .callBusy, "onCallNoAnswer": .callNoAnswer,
         "onCallMissed": .callMissed,

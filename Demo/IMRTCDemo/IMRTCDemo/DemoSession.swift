@@ -421,6 +421,10 @@ final class DemoSession {
         case .callEnd:
             // 通话记录页现在从服务端拉（`fetchCallHistory`），这里只通知它刷新。
             break
+        case .callSummary:
+            // 通话记录消息由宿主 IM 层按 role == caller 发；Demo 没有 IM，只留一行日志。
+            IMRTCLog.info("callSummary", event.payload.mapValues { String(describing: $0) })
+            return
         default:
             return
         }

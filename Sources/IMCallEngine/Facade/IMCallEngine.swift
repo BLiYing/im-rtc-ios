@@ -51,7 +51,8 @@ import Foundation
     private lazy var sender = IMFrameSender(media: media)
     lazy var loop = IMFrameLoop(
         sender: sender, dispatcher: dispatcher, media: media,
-        connection: { [weak self] in self?.currentConnection })
+        connection: { [weak self] in self?.currentConnection },
+        selfUID: { [weak self] in self?.uid ?? "" })
     /// 卡顿探针：登录期间盯着主线程、Swift 并发线程池、帧循环三条通道（见 `IMStallProbe`）。
     private lazy var stallProbe: IMStallProbe = {
         let loop = self.loop
