@@ -159,6 +159,8 @@ extension IMCallMachine {
             "caller": .string(next.callerUID),
             "inviter": .string(inviter),
             "callee_ids": .array(Wire.stringArray(data, "callee_ids").map { .string($0) }),
+            // 此刻已在通话里的人；旧服务端不带 = 空，Kit 回落成「只有 caller 在通话里」。
+            "joined_ids": .array(Wire.stringArray(data, "joined_ids").map { .string($0) }),
             "media_type": .string(mediaType),
             "is_group": .bool(next.isGroup),
             "chat_group_id": .string(next.chatGroupID),

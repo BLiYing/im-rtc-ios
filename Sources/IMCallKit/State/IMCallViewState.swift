@@ -166,7 +166,7 @@ public struct IMCallViewState: Equatable, Sendable {
 /// 驱动视图模型的输入。**写成显式枚举而不是把回调表整个映射过来**：看得出「界面到底用了哪几个」。
 public enum IMCallViewAction: Sendable {
     /// `calleeIDs` 是这通电话邀了谁（**已去掉自己**）。群通话靠它把还没接的人摆成占位格。
-    case callReceived(callID: String, caller: String, inviter: String = "", calleeIDs: [String],
+    case callReceived(callID: String, caller: String, inviter: String = "", calleeIDs: [String], joinedIDs: [String] = [],
                       mediaType: String, isGroup: Bool, selfUID: String = "")
     case callPlaced(calleeIDs: [String], mediaType: String, isGroup: Bool)
     case callBegin(callID: String, roomID: String, mediaType: String,
@@ -175,6 +175,9 @@ public enum IMCallViewAction: Sendable {
     case meetingJoined(roomID: String, now: TimeInterval)
     case roomLeft
     case mediaReady
+    /// 进房快照：房里此刻有谁。已接听却不在快照里的人，是响铃阶段（不在房里）时离场的——收掉他们的格子。
+    /// 还在响铃的占位格（`hasAccepted == false`）不归它管。
+    case roomSnapshot(uids: [String])
     /// 摄像头拿不到（权限被拒 / 没设备）：通话继续，按钮禁用。
     case cameraBlocked
     /// 本端往群通话里又拉了一批人，先摆上占位格。
@@ -220,7 +223,7 @@ public func reduceCallView(_ state: IMCallViewState,
                            _ action: IMCallViewAction) -> IMCallViewState {
     var next = state
     switch action {
-    case let .callReceived(callID, caller, inviter, calleeIDs, mediaType, isGroup, selfUID):
+    case let .callReceived(callID, caller, inviter, calleeIDs, joinedIDs, mediaType, isGroup, selfUID):
         next = IMCallViewState()
         next.connection = state.connection
         next.phase = .incoming
@@ -239,9 +242,14 @@ public func reduceCallView(_ state: IMCallViewState,
          `calleeIDs` 里已经由调用方去掉了自己。
         */
         // 离场后被重新邀请回来的发起人收到的 caller 就是他自己：「自己」不是远端成员，不摆格子。
-        let callerTile = caller == selfUID ? [] : [IMParticipant(uid: caller, hasAccepted: true)]
-        next.participants = callerTile
-            + calleeIDs.filter { $0 != caller }.map { IMParticipant(uid: $0, hasAccepted: false) }
+        /*
+         已在通话里的人（`joinedIDs`）摆成正常格子，其余 callee 才是「呼叫中…」占位格。
+         旧服务端不带 joined_ids：回落成只有发起人在通话里。
+        */
+        let joined = joinedIDs.isEmpty ? [caller] : joinedIDs
+        var uids: [String] = []
+        for uid in joined + calleeIDs where uid != selfUID && !uids.contains(uid) { uids.append(uid) }
+        next.participants = uids.map { IMParticipant(uid: $0, hasAccepted: joined.contains($0)) }
         // 摄像头默认态见 `imDefaultCameraOn`（群通话默认关）；
         // **默认不外放**（拍板 2026-09-06）：视频通话一样从听筒出声，要外放由用户自己点。
         next.selfState = IMSelfState(micOn: true,
@@ -321,6 +329,12 @@ public func reduceCallView(_ state: IMCallViewState,
         guard state.phase != .idle, state.phase != .ended else { return state }
         next.phase = .ended
         next.isMinimized = false
+
+    case let .roomSnapshot(uids):
+        // 只有被叫需要：他响铃时不在房里、名单靠来电帧摆的；主叫一路收着裁决帧，无需对账（还免得刚接听的人闪一下）。
+        guard state.role == "callee" else { break }
+        let present = Set(uids)
+        next.participants.removeAll { $0.hasAccepted && !present.contains($0.uid) }
 
     case .mediaReady:
         next.isMediaReady = true

@@ -18,6 +18,8 @@ import IMCallEngine
  顶部实时算「还能加 N 人」= 9 − 当前人数 − 已选。
  */
 final class IMInvitePickerViewController: UIViewController, UITableViewDataSource, UITableViewDelegate, UISearchBarDelegate {
+    /// 只活在这一次打开里：关掉选人页就丢，下次重新取（见 IMInviteAvatarLoader）。
+    private let avatarLoader = IMInviteAvatarLoader()
 
     /// provider 未在 10 秒内回调就按失败处理（§3.4：容信 iOS 现有实现账号全无效时不回调，页面永远转圈）。
     private static let requestTimeoutSeconds: TimeInterval = 10
@@ -383,7 +385,8 @@ final class IMInvitePickerViewController: UIViewController, UITableViewDataSourc
         } else {
             subtitle = candidate.subtitle
         }
-        row.configure(uid: candidate.uid, name: candidate.name, subtitle: subtitle, dimmed: blocked)
+        row.configure(uid: candidate.uid, name: candidate.name, subtitle: subtitle, dimmed: blocked,
+                      avatarURL: candidate.avatarURL, loader: avatarLoader)
         row.accessoryType = already || (!blocked && picked.contains(candidate.uid)) ? .checkmark : .none
         row.tintColor = blocked ? theme.secondaryText : theme.accept
         row.selectionStyle = blocked ? .none : .default
@@ -448,12 +451,60 @@ private final class IMInviteCandidateCell: UITableViewCell {
     @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("Kit 不用 storyboard") }
 
-    func configure(uid: String, name: String, subtitle: String?, dimmed: Bool) {
+    private var avatarToken: String?
+
+    override func prepareForReuse() {
+        super.prepareForReuse()
+        avatarToken = nil
+    }
+
+    func configure(uid: String, name: String, subtitle: String?, dimmed: Bool,
+                   avatarURL: URL? = nil, loader: IMInviteAvatarLoader? = nil) {
         avatar.apply(key: uid, name: name, size: Self.avatarSize)
+        // 宿主给了头像地址才去取；先显示首字母，图回来时这一行还是同一个人才换上去（cell 会复用）。
+        avatarToken = avatarURL?.absoluteString
+        if let url = avatarURL, let loader = loader {
+            loader.load(url) { [weak self] image in
+                guard let self = self, self.avatarToken == url.absoluteString else { return }
+                self.avatar.apply(key: uid, name: name, size: Self.avatarSize, image: image)
+            }
+        }
         nameLabel.text = name
         subtitleLabel.text = subtitle
         subtitleLabel.isHidden = subtitle?.isEmpty ?? true
         contentView.alpha = dimmed ? 0.45 : 1
+    }
+}
+
+/**
+ 选人页的头像加载器：**只活在这一次打开的选人页里**，关掉就丢。
+ 缓存只按 URL 存内存，不落盘——宿主换头像后同一个人换了新地址（或同址新内容）时，
+ 下次打开选人页一定重新取，不会一直拿旧图。请求走「向服务端验证」策略而不是盲信本地缓存。
+ */
+final class IMInviteAvatarLoader {
+    private let cache = NSCache<NSString, UIImage>()
+    private let session: URLSession
+
+    init() {
+        let config = URLSessionConfiguration.default
+        config.requestCachePolicy = .reloadRevalidatingCacheData
+        config.timeoutIntervalForRequest = 8
+        session = URLSession(configuration: config)
+    }
+
+    deinit { session.invalidateAndCancel() }
+
+    /// `done` 在主线程回；取不到（网络 / 非图片）就不回，界面保持首字母。
+    func load(_ url: URL, done: @escaping (UIImage) -> Void) {
+        let key = url.absoluteString as NSString
+        if let hit = cache.object(forKey: key) { done(hit); return }
+        session.dataTask(with: url) { [weak self] data, _, _ in
+            guard let data = data, let image = UIImage(data: data) else { return }
+            DispatchQueue.main.async {
+                self?.cache.setObject(image, forKey: key)
+                done(image)
+            }
+        }.resume()
     }
 }
 #endif

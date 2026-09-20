@@ -83,6 +83,9 @@ import Foundation
      `chatGroupID` 是宿主自己的群号（HOST_INTEGRATION_DESIGN §3.2），空串 = 不是从
      一个群发起、或宿主没传。`userData` 是宿主经 `call()` 透传下来的私有字节，SDK 不解析。
 
+     `joinedIDs` 是**此刻已经在通话里的人**（不含自己；发起人没离场就在里面）。展开页据此把他们摆成
+     正常格子，`calleeIDs` 里不在 `joinedIDs` 的才是「呼叫中…」。旧服务端不带 = 空数组，回落成只有 `caller`。
+
      `caller` 与 `inviter` **不是一回事**：`caller` 恒为这通电话的发起人，`inviter` 是
      **把你加进来的那个人**。首次邀请两者相同；群通话里被通话中的其他人 `inviteMore`
      进来时不同。**来电界面该显示的是 `inviter`**（旧服务端不带它，Engine 已回落成 `caller`）。
@@ -93,7 +96,7 @@ import Foundation
      */
     @objc optional func callEngine(_ engine: IMCallEngine, didReceiveCall callID: String,
                                    caller: String, inviter: String, calleeIDs: [String],
-                                   mediaType: String, isGroup: Bool,
+                                   joinedIDs: [String], mediaType: String, isGroup: Bool,
                                    chatGroupID: String, userData: String)
 
     /**
@@ -212,8 +215,10 @@ import Foundation
 
     // MARK: - 房间（会议）
 
-    /// 进会议房成功。
-    @objc optional func callEngine(_ engine: IMCallEngine, didJoinRoom roomID: String)
+    /// 进房成功（会议与通话都抛）。`memberUIDs` 是进房这一刻房里已有的人（快照，不含自己）——
+    /// 之后进出的人走 `userDidEnter` / `userDidLeave`。**在响铃阶段就摆好的成员名单要拿它对账**：
+    /// 那段时间不在房里，别人离场收不到通知。
+    @objc optional func callEngine(_ engine: IMCallEngine, didJoinRoom roomID: String, memberUIDs: [String])
 
     /// 自己离房成功。
     ///

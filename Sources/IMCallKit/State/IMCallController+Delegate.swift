@@ -30,11 +30,12 @@ extension IMCallController: IMCallEngineDelegate {
 
     public func callEngine(_ engine: IMCallEngine, didReceiveCall callID: String,
                            caller: String, inviter: String, calleeIDs: [String],
-                           mediaType: String, isGroup: Bool,
+                           joinedIDs: [String], mediaType: String, isGroup: Bool,
                            chatGroupID: String, userData: String) {
         // 名单里含自己，摆格子之前先去掉——「自己」不是远端成员。
         let others = calleeIDs.filter { $0 != engine.uid }
         apply(.callReceived(callID: callID, caller: caller, inviter: inviter, calleeIDs: others,
+                            joinedIDs: joinedIDs.filter { $0 != engine.uid },
                             mediaType: mediaType, isGroup: isGroup, selfUID: engine.uid))
         // 群号 / user_data 落地到界面状态（HOST_INTEGRATION_DESIGN §3.2）：「添加成员」靠
         // chatGroupID 决定问谁要候选人。独立成一次 apply——见 `IMCallViewAction.callContext`。
@@ -76,7 +77,10 @@ extension IMCallController: IMCallEngineDelegate {
     // 会议没有 callDidEnd，收尾只能靠这两条。漏订阅的话离房成功了界面还挂在那儿。
     public func callEngine(_ engine: IMCallEngine, didLeaveRoom roomID: String) { apply(.roomLeft) }
     public func callEngine(_ engine: IMCallEngine, roomDidClose roomID: String, reason: String) { apply(.roomLeft) }
-    public func callEngine(_ engine: IMCallEngine, didJoinRoom roomID: String) { apply(.mediaReady) }
+    public func callEngine(_ engine: IMCallEngine, didJoinRoom roomID: String, memberUIDs: [String]) {
+        apply(.roomSnapshot(uids: memberUIDs))
+        apply(.mediaReady)
+    }
     public func callEngine(_ engine: IMCallEngine, didReceiveFirstVideoFrame uid: String, trackID: String) {
         apply(.mediaReady)
     }

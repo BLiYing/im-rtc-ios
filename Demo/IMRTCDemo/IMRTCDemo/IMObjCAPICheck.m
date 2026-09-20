@@ -163,7 +163,7 @@
 
 - (void)callEngine:(IMCallEngine *)engine didReceiveCall:(NSString *)callID caller:(NSString *)caller
            inviter:(NSString *)inviter calleeIDs:(NSArray<NSString *> *)calleeIDs
-         mediaType:(NSString *)mediaType isGroup:(BOOL)isGroup
+         joinedIDs:(NSArray<NSString *> *)joinedIDs mediaType:(NSString *)mediaType isGroup:(BOOL)isGroup
        chatGroupID:(NSString *)chatGroupID userData:(NSString *)userData {
     NSLog(@"[objc] didReceiveCall %@ from=%@ inviter=%@ group=%@", callID, caller, inviter, chatGroupID);
 }

@@ -40,6 +40,33 @@ final class CallViewStateTests: XCTestCase {
         XCTAssertEqual(state.callerUID, "alice")
     }
 
+    func testRoomSnapshotDropsMembersWhoLeftWhileRinging() {
+        // 响铃时 alice、bob 在通话里；接听前 bob 挂了。进房快照只剩 alice，carol 仍在响铃。
+        let state = reduce(IMCallViewState(), [
+            .callReceived(callID: "c-1", caller: "alice", inviter: "alice", calleeIDs: ["bob", "carol"],
+                          joinedIDs: ["alice", "bob"], mediaType: "audio", isGroup: true),
+            .roomSnapshot(uids: ["alice"]),
+        ])
+        XCTAssertEqual(state.participants.map { $0.uid }, ["alice", "carol"], "bob 已离场，格子要收掉；carol 还在响铃，留着")
+    }
+
+    func testIncomingJoinedMembersAreNotPlaceholders() {
+        // alice 发起、bob 已接听；carol 在响铃；self=dave 被 bob 拉进来。
+        let state = reduce(IMCallViewState(), [
+            .callReceived(callID: "c-1", caller: "alice", inviter: "bob", calleeIDs: ["bob", "carol"],
+                          joinedIDs: ["alice", "bob"], mediaType: "audio", isGroup: true),
+        ])
+        let accepted = Dictionary(uniqueKeysWithValues: state.participants.map { ($0.uid, $0.hasAccepted) })
+        XCTAssertEqual(accepted, ["alice": true, "bob": true, "carol": false],
+                       "已在通话的人是正常格子，只有 carol 是「呼叫中…」")
+
+        // 旧服务端不带 joined_ids：回落成只有发起人在通话里。
+        let old = reduce(IMCallViewState(), [
+            .callReceived(callID: "c-1", caller: "alice", calleeIDs: ["bob"], mediaType: "audio", isGroup: true),
+        ])
+        XCTAssertEqual(old.participants.map { $0.hasAccepted }, [true, false])
+    }
+
     func testIncomingUsesInviterAndFallsBackToCaller() {
         let invited = reduce(IMCallViewState(), [
             .callReceived(callID: "c-1", caller: "alice", inviter: "bob", calleeIDs: ["carol"],

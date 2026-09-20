@@ -51,7 +51,13 @@ enum CallFrames {
         "call_id": .string(),
         "room_id": .string(),
         "caller": .string(),
+        /// 这次邀请是谁发的：首次邀请 = 主叫，`call.invite_more` 加进来的人 = 发那条加人请求的成员。
+        /// **必须列在这里**：解码只认表里的字段，漏了它服务端发来的 inviter 会被丢掉，引擎回落成 caller，
+        /// 被加进来的人看到的永远是发起人（2026-09-20 联测发现）。
+        "inviter": .string(),
         "callee_ids": .stringArray,
+        /// 此刻已在通话里的人（不含收件人）。**同样必须列在这里**，否则被丢掉，展开页把已在通话的人画成「呼叫中…」。
+        "joined_ids": .stringArray,
         "media_type": .enumeration(values: E.mediaTypes, fallback: "audio"),
         "is_group": .bool(),
         "timeout_sec": .int(defaultValue: E.defaultTimeoutSec,

@@ -96,7 +96,11 @@ extension IMRoomMachine {
     /// handleJoinOK 用快照把房间一次性搭起来：先成员，再他们的 Track。
     private static func handleJoinOK(_ ctx: IMRoomContext,
                                      _ data: [String: IMJSON]) -> IMMachineOutput<IMRoomContext> {
-        var emit = [IMEmittedEvent("onRoomJoined", ["room_id": .string(Wire.string(data, "room_id"))])]
+        // uids = 进房这一刻房里已有的人（快照）。界面靠它对账：响铃阶段不在房里的人，
+        // 中途离场是收不到 userLeave 的，只有这份快照能告诉他「谁已经不在了」。
+        let present = objects(data["participants"]).map { IMJSON.string(Wire.string($0, "uid")) }
+        var emit = [IMEmittedEvent("onRoomJoined", ["room_id": .string(Wire.string(data, "room_id")),
+                                                    "uids": .array(present)])]
         var next = ctx
         next.state = .joined
         // **这一笔账只在这里记**：它是「服务端真的受理了我们」的唯一证据，

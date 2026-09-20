@@ -198,4 +198,16 @@ final class ErrorBridgingTests: XCTestCase {
         let ns = IMRTCError(.badParams, "x") as NSError
         XCTAssertEqual(ns.userInfo[IMRTCErrorNameKey] as? String, "bad_params")
     }
+
+    /// `call.incoming.inviter` 必须穿过帧解码。
+    ///
+    /// 解码只认字段表里列出的字段。`inviter` 曾漏在表外：服务端发来的值被丢掉，引擎回落成 caller，
+    /// 群通话里被别人加进来的人看到的永远是发起人（2026-09-20 联测）。状态机测试直接喂已解码的数据，
+    /// 绕过了这一层，所以这里从原始帧走一遍。
+    func testIncomingInviterSurvivesDecoding() throws {
+        let raw = #"{"type":"call.incoming","req_id":"","ts":1,"data":{"call_id":"c1","room_id":"r1","caller":"alice","inviter":"bob","callee_ids":["bob","carol"],"media_type":"video","is_group":true}}"#
+        let data = try IMEnvelope.decode(raw).decodedData()
+        XCTAssertEqual(data["caller"]?.stringValue, "alice")
+        XCTAssertEqual(data["inviter"]?.stringValue, "bob")
+    }
 }

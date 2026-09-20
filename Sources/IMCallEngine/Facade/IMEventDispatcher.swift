@@ -217,6 +217,7 @@ final class IMEventDispatcher {
         case .callReceived:
             d.callEngine?(e, didReceiveCall: str("call_id"), caller: str("caller"),
                           inviter: str("inviter"), calleeIDs: strs("callee_ids"),
+                          joinedIDs: strs("joined_ids"),
                           mediaType: str("media_type"), isGroup: flag("is_group"),
                           chatGroupID: str("chat_group_id"), userData: str("user_data"))
         case .callBegin:
@@ -268,7 +269,7 @@ final class IMEventDispatcher {
             d.callEngine?(e, didReceiveFirstVideoFrame: str("uid"), trackID: str("track_id"))
 
         case .roomJoined:
-            d.callEngine?(e, didJoinRoom: str("room_id"))
+            d.callEngine?(e, didJoinRoom: str("room_id"), memberUIDs: strs("uids"))
         case .roomLeft:
             d.callEngine?(e, didLeaveRoom: str("room_id"))
         case .roomClosed:
