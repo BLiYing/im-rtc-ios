@@ -11,6 +11,8 @@
 媒体用 [libwebrtc 预编译包](https://github.com/webrtc-sdk/Specs)（SPM binaryTarget，与 Android 同一个 fork
 同一个版本 `150.7871.01`），UI 用原生 UIKit。
 
+> **接入指南（在线）**：启动 im-rtc-server 后访问 `/guide/ios`（本机默认 `http://127.0.0.1:8787/guide/ios`）——从换票到发起、接听、群通话的完整步骤，含界面示意图。
+
 ## 两种集成方式
 
 - **只引 Engine**：拿回调，界面自己画。适合已有设计体系的 App。
