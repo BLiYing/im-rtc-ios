@@ -20,6 +20,8 @@ import IMCallEngine
 final class IMInvitePickerViewController: UIViewController, UITableViewDataSource, UITableViewDelegate, UISearchBarDelegate {
     /// 只活在这一次打开里：关掉选人页就丢，下次重新取（见 IMInviteAvatarLoader）。
     private let avatarLoader = IMInviteAvatarLoader()
+    /// 导航栏标题下面那行「还能加 x 人」。
+    private let slotsLabel = UILabel()
 
     /// provider 未在 10 秒内回调就按失败处理（§3.4：容信 iOS 现有实现账号全无效时不回调，页面永远转圈）。
     private static let requestTimeoutSeconds: TimeInterval = 10
@@ -120,6 +122,7 @@ final class IMInvitePickerViewController: UIViewController, UITableViewDataSourc
         title = "添加成员"
         overrideUserInterfaceStyle = .dark
         view.backgroundColor = theme.banner
+        configureNavigationBar(theme)
 
         // 搜索框：固定在顶部
         searchBar.placeholder = provider != nil ? "搜索联系人" : (controller.inviteCandidates.isEmpty ? "输入对方 uid" : "搜索联系人")
@@ -181,9 +184,36 @@ final class IMInvitePickerViewController: UIViewController, UITableViewDataSourc
         }
     }
 
+    /// 标题与「还能加 x 人」放在自定义 titleView 里，**颜色显式给**：
+    /// 导航栏属于外层 UINavigationController，本 VC 的 `overrideUserInterfaceStyle` 管不到它，
+    /// 用系统 title / prompt 会是默认黑字压在深色底上，看不清。
+    private func configureNavigationBar(_ theme: IMKitTheme) {
+        navigationController?.overrideUserInterfaceStyle = .dark
+        let appearance = UINavigationBarAppearance()
+        appearance.configureWithOpaqueBackground()
+        appearance.backgroundColor = theme.banner
+        appearance.shadowColor = .clear
+        navigationItem.standardAppearance = appearance
+        navigationItem.scrollEdgeAppearance = appearance
+        navigationItem.compactAppearance = appearance
+        navigationController?.navigationBar.tintColor = theme.primaryText
+
+        let titleLabel = UILabel()
+        titleLabel.text = "添加成员"
+        titleLabel.font = .systemFont(ofSize: 17, weight: .semibold)
+        titleLabel.textColor = theme.primaryText
+        slotsLabel.font = .systemFont(ofSize: 12)
+        slotsLabel.textColor = theme.secondaryText
+        let stack = UIStackView(arrangedSubviews: [titleLabel, slotsLabel])
+        stack.axis = .vertical
+        stack.alignment = .center
+        stack.spacing = 1
+        navigationItem.titleView = stack
+    }
+
     private func refreshChrome() {
         let theme = IMKitTheme.current
-        navigationItem.prompt = "还能加 \(max(slotsLeft, 0)) 人"
+        slotsLabel.text = "还能加 \(max(slotsLeft, 0)) 人"
         inviteButton.setTitle(picked.isEmpty ? "邀请" : "邀请 \(picked.count) 人", for: .normal)
         inviteButton.backgroundColor = picked.isEmpty ? theme.controlBackground : theme.accept
         inviteButton.setTitleColor(picked.isEmpty ? theme.secondaryText : theme.acceptText, for: .normal)
