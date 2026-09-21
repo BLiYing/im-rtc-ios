@@ -54,7 +54,9 @@ public final class IMVideoProfile: NSObject {
 
     /// simulcastEncodings 三层的码率：h 满额、m 三分之一、l 十分之一（协议 §3.5）。
     /// 返回的是 (rid, 缩放倍数, 码率)，由媒体层翻成 `RTCRtpEncodingParameters`。
+    /// **顺序是低→高（l,m,h）**：libwebrtc 的 simulcast 要求 encodings 按分辨率升序，
+    /// Android / Web 同此；写成 h,m,l 会当场发 1/4 分辨率。
     public var simulcastLayers: [(rid: String, scaleDownBy: Double, bitrateBps: Int)] {
-        [("h", 1, maxBitrateBps), ("m", 2, maxBitrateBps / 3), ("l", 4, maxBitrateBps / 10)]
+        [("l", 4, maxBitrateBps / 10), ("m", 2, maxBitrateBps / 3), ("h", 1, maxBitrateBps)]
     }
 }

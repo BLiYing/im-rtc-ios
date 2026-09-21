@@ -168,8 +168,16 @@ final class IMPeerConnections: NSObject {
          VP8 仍在列表里，对端不支持这档 H.264 时靠它回落。
          要确认某次通话实际用的是哪个，看服务端日志 `上行 Track 已接入 … codec=`。
         */
+        /*
+         **套 simulcast adapter 才会真的编三层**（2026-09-21）。裸 `RTCDefaultVideoEncoderFactory`
+         不带 `SimulcastEncoderAdapter`，`sendEncodings` 配了 h/m/l 三条也只编第一条。
+         这个类是 webrtc-sdk 那个 fork 才有的（见 Package.swift），primary / fallback 都给默认工厂，
+         与 LiveKit 的用法一致：adapter 按 encoding 个数拆成多个内层编码器，硬编 H.264 / 软编 VP8 都适用。
+         **与 `IMVideoProfile.simulcastLayers` 的低→高顺序是同一刀**，单改一处会发 1/4 分辨率。
+        */
+        let encoderFactory = RTCDefaultVideoEncoderFactory()
         return RTCPeerConnectionFactory(
-            encoderFactory: RTCDefaultVideoEncoderFactory(),
+            encoderFactory: RTCVideoEncoderFactorySimulcast(primary: encoderFactory, fallback: encoderFactory),
             decoderFactory: RTCDefaultVideoDecoderFactory())
     }()
 }

@@ -30,10 +30,10 @@ final class VideoProfileTests: XCTestCase {
     /// simulcast 三层：h 满额、m 三分之一、l 十分之一（协议 §3.5）。
     func testSimulcastLayersScaleWithProfile() {
         let layers = IMVideoProfile.p1080.simulcastLayers
-        XCTAssertEqual(layers.map(\.rid), ["h", "m", "l"])
-        XCTAssertEqual(layers[0].bitrateBps, 3_000_000)
+        XCTAssertEqual(layers.map(\.rid), ["l", "m", "h"], "必须低→高，libwebrtc 才认")
+        XCTAssertEqual(layers[0].bitrateBps, 300_000)
         XCTAssertEqual(layers[1].bitrateBps, 1_000_000)
-        XCTAssertEqual(layers[2].bitrateBps, 300_000)
-        XCTAssertEqual(layers.map(\.scaleDownBy), [1, 2, 4])
+        XCTAssertEqual(layers[2].bitrateBps, 3_000_000)
+        XCTAssertEqual(layers.map(\.scaleDownBy), [4, 2, 1])
     }
 }

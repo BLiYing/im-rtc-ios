@@ -22,14 +22,14 @@
 **仍悬着（09-18 傍晚记下，没结案）**：
 - **后台掉线 = App 被系统挂起**：18:04 切后台 → 18:05 恢复窗口（30 s）到期 → `reason=network`；App 整整 4 分钟零日志，客户端任何定时参数都救不了没在运行的进程。出路是让 App 在通话中别被挂起（`UIBackgroundModes` 只有 `audio`，靠活跃音频 I/O 保活，未证实）。
 - **18:18 那通前台也断了，原因未定**：接通 19 s 后信令双向哑掉，服务端一个字节没收到，而客户端 `URLSessionWebSocketTask.send` 每帧都被收下（全段零条 `发帧失败`），36 s 后才以 TCP `Operation timed out` 放弃；同一 WiFi 上的 Android 没事。**别当网络问题结案，也别当已解决。**
-- **simulcast 三层没开**：见「已知坑」里「包已换成 webrtc-sdk M150」那条。
+- **simulcast 三层 09-21 已开、真机验过**：l/m/h = 270×480 / 540×960 / 1080×1920，帧率 ~30。**未测** CPU / 发热、多人房降层是否生效。
 
 **已收口（细节在 archive「2026-09-19」节）**：会议房 M2 四处 UI 修复（退订再重订画面定格、底部条格子、小格子紧凑名字牌、标题栏点击复制）用户确认已修好；视频通话双向无声（09-18 20:45 真机验过，根因留在「已知坑」）；结束帧表合并 `IMCallExit`、定时器 `imAfter` / `imEvery`、「调用结果回给调用方」`d2d2ae9`（真机未验 `joinCall` 1202/1402/1409 文案、拨号拿 callID、断网再挂断）、四仓 /simplify——均已推送。
 
 ## 下一步
 
 1. 后台存活：通话中切后台被系统挂起（见上）——现在麦克风真在录了，先复测一次看 `audio` 后台模式能否保住进程。
-2. iOS simulcast 三层：套 `RTCVideoEncoderFactorySimulcast` + 层序改 l,m,h 同一刀（见「已知坑」）。
+2. iOS simulcast 余项：真机看 CPU / 发热；多人房里让某接收者掉带宽，看服务端出现 `to:"m"/"l"`。
 3. 2.0.0：真机验 `joinCall` 文案 / 拨号 callID / 断网再挂断，用户通知后发版。
 4. 会议房离场不释放远端视图（暂不修，等真机看到内存问题，见「已知坑」）。
 5. 按需 / 后续期：自定义铃声没有 Demo UI、没真机验过；`IMInviteMemberProvider` / `presentInvitePicker` 没真实宿主跑过；IMProgram / 容信真实接入（M3~M7）。
@@ -41,14 +41,14 @@
 - **libwebrtc 的 `webRTCConfiguration` 是会话快照**（09-18 视频通话双向无声真根因，`IMWebRTCAudioConfiguration`）：这个 fork 的 `-[RTCAudioSessionConfiguration init]` 读的是**当下会话的 category/mode**，默认值是首次被碰那一刻的快照（上游写死 PlayAndRecord）。
   视频通话响铃期预览先建工厂 → 快照 = SoloAmbient → 开麦 `-50` → `InitPlayOrRecord failed`；纯音频先配会话后建工厂 → 快照对，同进程之后的视频也好（所以症状「偶然好了」）。
   修法：`sharedFactory` 建之前 + 每次 `applyCallAudioCategory` 时 `setWebRTC(_:)` 钉死 PlayAndRecord/VoiceChat。验收看 `音频会话已配成通话态 webrtc_config=…PlayAndRecord/…VoiceChat`、无 `有人把音频会话写成非通话类目`、`上行音频采样 packetsSent` 在涨。
-- **包已换成 webrtc-sdk M150（09-18），但 simulcast 还没开**：`Package.swift` 现在是自己写的
+- **包已换成 webrtc-sdk M150（09-18）；simulcast 09-21 已开（工厂 + 层序同一刀，待真机验）**：`Package.swift` 现在是自己写的
   `.binaryTarget` 指向 `webrtc-sdk/Specs` 的 `150.7871.01`——**不能用 `.package(url:)` 引它**，
   它的 `Package.swift` 近期 tag 全是坏的（声明 `tools-version:5.9` 却用了 6.2 才有的 `.visionOS(.v26)`）。
   模块名仍是 `WebRTC`，所以 `import` 一行没改。**升级要自己算 checksum**：`swift package compute-checksum`。
   **SwiftPM 首次解析偶尔卡成龟速**（冷缓存三次：21 分钟 / 72 分钟 / 64 秒；同期 curl 稳定 2~3 MB/s，
   SwiftPM 拉 stasel 18 秒，两个地址的重定向链和后端一模一样）。**原因没查出来，但是偶发的**，别当阻塞项。
   碰上了就 curl 下来放进 `~/Library/Caches/org.swift.swiftpm/artifacts/<URL 里非字母数字全换成下划线>`。
-  **下一步**：`IMPeerConnections.sharedFactory` 套 `RTCVideoEncoderFactorySimulcast`，
+  **09-21 已做**：`IMPeerConnections.sharedFactory` 套 `RTCVideoEncoderFactorySimulcast`，
   同时把 `IMVideoProfile.simulcastLayers` 的 h,m,l 改成 l,m,h（Android / Web 都是低→高，libwebrtc 要求如此；
   **两件事必须同一刀**——单独改顺序 = 当场发 1/4 分辨率，因为现在只有第一条 encoding 生效）。
   开三层后验收看服务端是否出现三条 `to:"h"/"m"/"l"`，**并且每个 rid 的分辨率对得上**（只数三条会被顺序错骗过去）。
