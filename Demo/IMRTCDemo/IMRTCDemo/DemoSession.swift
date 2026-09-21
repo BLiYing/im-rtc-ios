@@ -322,6 +322,22 @@ final class DemoSession {
         }
     }
 
+    /// 界面语言的选择：`auto`（跟随系统）/ `zh-CN` / `en`。落盘；立即写进 `kitConfig.locale`，下一条文案就用新语言。
+    var language: String = UserDefaults.standard.string(forKey: DemoSession.languageKey) ?? "auto" {
+        didSet {
+            UserDefaults.standard.set(language, forKey: Self.languageKey)
+            applyLanguage()
+        }
+    }
+
+    func applyLanguage() {
+        switch language {
+        case "zh-CN": kitConfig.locale = .zhCN
+        case "en": kitConfig.locale = .en
+        default: kitConfig.locale = IMLocale.system()
+        }
+    }
+
     /// 详细日志 = debug 级别（含主讲人 / 网络质量那些周期事件）。**缺省开**：Demo 就是拿来联调的。
     var verboseLog: Bool = UserDefaults.standard.object(forKey: DemoSession.verboseKey) as? Bool ?? true {
         didSet {
@@ -336,10 +352,12 @@ final class DemoSession {
     private static let floatingKey = "im-rtc-demo.floatingWindow"
     private static let verboseKey = "im-rtc-demo.verboseLog"
     private static let ringtoneMutedKey = "im-rtc-demo.ringtoneMuted"
+    private static let languageKey = "im-rtc-demo.language"
 
     /// 启动时把存过的值灌回去。只灌存过的——没存过就留 Kit 的缺省值。
     private func restoreSwitches() {
         let defaults = UserDefaults.standard
+        applyLanguage()
         if let saved = defaults.object(forKey: Self.bannerKey) as? Bool { kitConfig.bannerFirst = saved }
         if let saved = defaults.object(forKey: Self.floatingKey) as? Bool { kitConfig.floatingWindow = saved }
         if let saved = defaults.object(forKey: Self.ringtoneMutedKey) as? Bool { kitConfig.ringtoneMuted = saved }

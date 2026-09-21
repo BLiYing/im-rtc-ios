@@ -133,7 +133,7 @@ public final class IMFloatingBubble: UIView {
         ])
 
         imConfigureCircleIconButton(hangupButton, icon: .phoneDown, pointSize: 13, diameter: Self.hangupSize,
-                                    tint: theme.primaryText, background: theme.danger, accessibilityLabel: "挂断")
+                                    tint: theme.primaryText, background: theme.danger, accessibilityLabel: imT("ctl.hangup"))
         hangupButton.addTarget(self, action: #selector(hangupTapped), for: .touchUpInside)
         hangupButton.translatesAutoresizingMaskIntoConstraints = false
         addSubview(hangupButton)
@@ -150,7 +150,7 @@ public final class IMFloatingBubble: UIView {
         addGestureRecognizer(tap)
         addGestureRecognizer(UIPanGestureRecognizer(target: self, action: #selector(dragged)))
         body.isAccessibilityElement = true
-        body.accessibilityLabel = "通话中，点击展开"
+        body.accessibilityLabel = imT("mini.expand")
         body.accessibilityTraits = .button
     }
 

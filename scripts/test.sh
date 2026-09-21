@@ -88,6 +88,7 @@ run_step "门禁自检" ./scripts/check-file-size.sh --selftest
 run_step "门禁自检（日志）" ./scripts/check-logging.sh --selftest
 run_step "门禁自检（shell）" ./scripts/check-shell-portability.sh --selftest
 run_step "一致性向量可达" check_conformance_available
+run_step "多语言文案表与生成物一致" python3 scripts/gen-i18n.py --check
 run_step "swift build" swift build
 
 # swift test + **用例数对账**。

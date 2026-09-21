@@ -23,7 +23,7 @@ extension IMCallController {
     /// 开关摄像头。**还没进房时只改界面，不去发布**；禁用态点了要出提示，不能静默（规范 §06）。
     @objc public func toggleCamera() {
         if state.selfState.cameraBlocked {
-            apply(.hint("没有摄像头权限"))
+            apply(.hint(imT("hint.cameraDenied")))
             return
         }
         let on = !state.selfState.cameraOn

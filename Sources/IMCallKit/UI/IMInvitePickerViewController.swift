@@ -119,13 +119,13 @@ final class IMInvitePickerViewController: UIViewController, UITableViewDataSourc
     override func viewDidLoad() {
         super.viewDidLoad()
         let theme = IMKitTheme.current
-        title = "添加成员"
+        title = imT("invite.title")
         overrideUserInterfaceStyle = .dark
         view.backgroundColor = theme.banner
         configureNavigationBar(theme)
 
         // 搜索框：固定在顶部
-        searchBar.placeholder = provider != nil ? "搜索联系人" : (controller.inviteCandidates.isEmpty ? "输入对方 uid" : "搜索联系人")
+        searchBar.placeholder = provider != nil ? imT("invite.search") : (controller.inviteCandidates.isEmpty ? imT("invite.typeUid") : imT("invite.search"))
         searchBar.delegate = self
         searchBar.searchBarStyle = .minimal
         searchBar.translatesAutoresizingMaskIntoConstraints = false
@@ -199,7 +199,7 @@ final class IMInvitePickerViewController: UIViewController, UITableViewDataSourc
         navigationController?.navigationBar.tintColor = theme.primaryText
 
         let titleLabel = UILabel()
-        titleLabel.text = "添加成员"
+        titleLabel.text = imT("invite.title")
         titleLabel.font = .systemFont(ofSize: 17, weight: .semibold)
         titleLabel.textColor = theme.primaryText
         slotsLabel.font = .systemFont(ofSize: 12)
@@ -213,8 +213,8 @@ final class IMInvitePickerViewController: UIViewController, UITableViewDataSourc
 
     private func refreshChrome() {
         let theme = IMKitTheme.current
-        slotsLabel.text = "还能加 \(max(slotsLeft, 0)) 人"
-        inviteButton.setTitle(picked.isEmpty ? "邀请" : "邀请 \(picked.count) 人", for: .normal)
+        slotsLabel.text = imT("invite.slotsLeft", ["n": max(slotsLeft, 0)])
+        inviteButton.setTitle(picked.isEmpty ? imT("invite.action") : imT("invite.actionN", ["n": picked.count]), for: .normal)
         inviteButton.backgroundColor = picked.isEmpty ? theme.controlBackground : theme.accept
         inviteButton.setTitleColor(picked.isEmpty ? theme.secondaryText : theme.acceptText, for: .normal)
     }
@@ -371,11 +371,11 @@ final class IMInvitePickerViewController: UIViewController, UITableViewDataSourc
                 spinner.centerXAnchor.constraint(equalTo: container.centerXAnchor),
                 spinner.bottomAnchor.constraint(equalTo: label.topAnchor, constant: -12),
             ])
-            label.text = "正在加载…"
+            label.text = imT("invite.loading")
         case let .failed(message):
-            label.text = "加载失败：\(message)"
+            label.text = imT("invite.loadFailedMsg", ["message": message])
             let retryButton = UIButton(type: .system)
-            retryButton.setTitle("重试", for: .normal)
+            retryButton.setTitle(imT("invite.retry"), for: .normal)
             retryButton.setTitleColor(theme.accept, for: .normal)
             retryButton.addTarget(self, action: #selector(retry), for: .touchUpInside)
             retryButton.translatesAutoresizingMaskIntoConstraints = false
@@ -385,7 +385,7 @@ final class IMInvitePickerViewController: UIViewController, UITableViewDataSourc
                 retryButton.topAnchor.constraint(equalTo: label.bottomAnchor, constant: 12),
             ])
         case .loaded:
-            label.text = "没有可邀请的成员"
+            label.text = imT("invite.empty")
         }
         return container
     }
@@ -398,7 +398,7 @@ final class IMInvitePickerViewController: UIViewController, UITableViewDataSourc
         if indexPath.section == 0 {
             let uid = extraRows[indexPath.row]
             let isPicked = picked.contains(uid)
-            row.configure(uid: uid, name: isPicked ? uid : "邀请 \(uid)", subtitle: nil, dimmed: false)
+            row.configure(uid: uid, name: isPicked ? uid : imT("invite.uid", ["uid": uid]), subtitle: nil, dimmed: false)
             row.accessoryType = isPicked ? .checkmark : .none
             row.tintColor = theme.accept
             row.selectionStyle = .default
@@ -409,7 +409,7 @@ final class IMInvitePickerViewController: UIViewController, UITableViewDataSourc
         let blocked = already || !candidate.selectable
         let subtitle: String?
         if already {
-            subtitle = "已在通话中"
+            subtitle = imT("invite.already")
         } else if !candidate.selectable {
             subtitle = candidate.unselectableReason
         } else {

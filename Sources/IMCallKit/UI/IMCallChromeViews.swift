@@ -41,7 +41,7 @@ public final class IMCallHeaderView: UIView {
                       showsMinimize: Bool, showsInvite: Bool, memberCount: Int = 0,
                       titleIsCopyable: Bool = false) {
         titleLabel.isUserInteractionEnabled = titleIsCopyable
-        titleLabel.accessibilityHint = titleIsCopyable ? "点两下复制房间号" : nil
+        titleLabel.accessibilityHint = titleIsCopyable ? imT("a11y.copyRoomHint") : nil
         titleLabel.text = title
         subtitleLabel.text = subtitle
         networkBars.apply(level: networkLevel)
@@ -58,7 +58,7 @@ public final class IMCallHeaderView: UIView {
         membersButton.setTitleColor(theme.primaryText, for: .normal)
         membersButton.backgroundColor = theme.controlBackground
         membersButton.layer.cornerRadius = 16
-        membersButton.accessibilityLabel = "成员列表"
+        membersButton.accessibilityLabel = imT("header.members")
         membersButton.isHidden = true
         membersButton.translatesAutoresizingMaskIntoConstraints = false
         addSubview(membersButton)
@@ -69,8 +69,8 @@ public final class IMCallHeaderView: UIView {
             membersButton.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -16),
         ])
 
-        for (button, icon, label) in [(minimizeButton, IMKitIcon.pip, "收进小窗"),
-                                      (inviteButton, IMKitIcon.personAdd, "添加成员")] {
+        for (button, icon, label) in [(minimizeButton, IMKitIcon.pip, imT("header.minimize")),
+                                      (inviteButton, IMKitIcon.personAdd, imT("header.invite"))] {
             imConfigureCircleIconButton(button, icon: icon, pointSize: 15, diameter: 32,
                                         tint: theme.primaryText, background: theme.controlBackground,
                                         accessibilityLabel: label)
@@ -200,7 +200,7 @@ public final class IMPromptCardView: UIView {
             button.tintColor = theme.primaryText
             button.heightAnchor.constraint(equalToConstant: 44).isActive = true
         }
-        settingsButton.setTitle("去设置", for: .normal)
+        settingsButton.setTitle(imT("perm.settings"), for: .normal)
         secondaryButton.addTarget(self, action: #selector(secondaryTapped), for: .touchUpInside)
         primaryButton.addTarget(self, action: #selector(primaryTapped), for: .touchUpInside)
         settingsButton.addTarget(self, action: #selector(settingsTapped), for: .touchUpInside)

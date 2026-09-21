@@ -45,7 +45,7 @@ extension IMCallController: IMCallEngineDelegate {
     /// 通话中有人打进来，服务端已经替我们回了忙线——**只提示，不动当前通话**。
     public func callEngine(_ engine: IMCallEngine, missedCall callID: String,
                            caller: String, reason: String) {
-        apply(.hint("\(caller) 来电，已自动回复忙线"))
+        apply(.hint(imT("hint.missedBusy", ["uid": caller])))
     }
 
     public func callEngine(_ engine: IMCallEngine, callDidBegin callID: String, roomID: String,
@@ -64,10 +64,10 @@ extension IMCallController: IMCallEngineDelegate {
     }
 
     // 四个便利事件只在 1v1 抛，随后必有 callDidEnd——所以这里只做提示，**不改阶段**。
-    public func callEngine(_ engine: IMCallEngine, callWasRejectedBy uid: String) { apply(.hint("\(uid) 已拒接")) }
-    public func callEngine(_ engine: IMCallEngine, calleeIsBusy uid: String) { apply(.hint("\(uid) 忙线中")) }
-    public func callEngine(_ engine: IMCallEngine, calleeDidNotAnswer uid: String) { apply(.hint("\(uid) 无应答")) }
-    public func callEngine(_ engine: IMCallEngine, callWasCancelledBy uid: String) { apply(.hint("\(uid) 取消了呼叫")) }
+    public func callEngine(_ engine: IMCallEngine, callWasRejectedBy uid: String) { apply(.hint(imT("hint.peerRejected", ["uid": uid]))) }
+    public func callEngine(_ engine: IMCallEngine, calleeIsBusy uid: String) { apply(.hint(imT("hint.peerBusy", ["uid": uid]))) }
+    public func callEngine(_ engine: IMCallEngine, calleeDidNotAnswer uid: String) { apply(.hint(imT("hint.peerNoAnswer", ["uid": uid]))) }
+    public func callEngine(_ engine: IMCallEngine, callWasCancelledBy uid: String) { apply(.hint(imT("hint.peerCancelled", ["uid": uid]))) }
 
     /// 他设备处理了：来电页会随后收到 callDidEnd 而静默消失，这里**不弹提示**（交互稿 §06）。
     public func callEngine(_ engine: IMCallEngine, callHandledOnOtherDevice callID: String, action: String) {}

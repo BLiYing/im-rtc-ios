@@ -48,7 +48,7 @@ extension IMCallOverlayViewController {
         let roomID = controller.state.roomID
         guard controller.state.isMeeting, !roomID.isEmpty else { return }
         UIPasteboard.general.string = roomID
-        controller.apply(.hint("已复制房间号 \(roomID)"))
+        controller.apply(.hint(imT("hint.roomIdCopied", ["room": roomID])))
     }
 
     @objc func onMembers() {

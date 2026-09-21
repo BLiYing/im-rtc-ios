@@ -45,14 +45,14 @@ public final class IMIncomingBanner: UIView {
         avatarDisc.apply(key: inviter, name: shown, size: 38,
                          image: imResolvedAvatar(resolver, uid: inviter))
         titleLabel.text = shown
-        subtitleLabel.text = isGroup ? "邀请你加入群通话" : (mediaType == "video" ? "邀请你视频通话" : "邀请你语音通话")
+        subtitleLabel.text = imT(isGroup ? "incoming.group" : (mediaType == "video" ? "incoming.video" : "incoming.audio"))
         // 接听键恒为听筒，与来电页那颗、与 Web 一致（UI_SPEC「phone · 来电页、来电横幅」）。
         // 原先视频来电换成摄像机图标：群通话默认关着摄像头也显示摄像机，像是「以视频接听」。
         // 出不出镜只由最左那颗摄像头开关表达（§11-10）。
         // 语音来电没有摄像头可关。
         cameraButton.isHidden = mediaType != "video"
         cameraButton.setImage((cameraOn ? IMKitIcon.video : IMKitIcon.videoSlash).image(pointSize: 16), for: .normal)
-        cameraButton.accessibilityLabel = cameraOn ? "关摄像头" : "开摄像头"
+        cameraButton.accessibilityLabel = imT(cameraOn ? "ctl.cameraOff" : "ctl.cameraOn")
     }
 
     private func build() {
@@ -70,8 +70,8 @@ public final class IMIncomingBanner: UIView {
         subtitleLabel.textColor = theme.secondaryText
 
         for (button, color, tint, icon, label) in [
-            (rejectButton, theme.danger, theme.primaryText, IMKitIcon.xmark, "拒绝"),
-            (acceptButton, theme.accept, theme.acceptText, IMKitIcon.phone, "接听"),
+            (rejectButton, theme.danger, theme.primaryText, IMKitIcon.xmark, imT("ctl.reject")),
+            (acceptButton, theme.accept, theme.acceptText, IMKitIcon.phone, imT("ctl.accept")),
         ] {
             imConfigureCircleIconButton(button, icon: icon, pointSize: 16, diameter: 38,
                                         tint: tint, background: color, accessibilityLabel: label)

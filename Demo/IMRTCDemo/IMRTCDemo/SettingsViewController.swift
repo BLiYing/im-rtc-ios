@@ -65,12 +65,18 @@ final class SettingsViewController: UITableViewController {
     */
     private let profiles = IMVideoProfile.presets
 
-    override func numberOfSections(in tableView: UITableView) -> Int { 3 }
+    /// 语言各用自己的名字显示，任何语言的界面里都认得出。
+    private let languages: [(value: String, name: String)] = [
+        ("auto", "跟随系统 / Auto"), ("zh-CN", "简体中文"), ("en", "English"),
+    ]
+
+    override func numberOfSections(in tableView: UITableView) -> Int { 4 }
 
     override func tableView(_ tableView: UITableView, titleForHeaderInSection section: Int) -> String? {
         switch section {
         case 0: return "Kit 可配项"
         case 1: return "采集画质（宿主策略，换了要重登）"
+        case 2: return "语言 / Language"
         default: return "关于"
         }
     }
@@ -79,6 +85,7 @@ final class SettingsViewController: UITableViewController {
         switch section {
         case 0: return rows.count
         case 1: return profiles.count
+        case 2: return languages.count
         default: return about.count
         }
     }
@@ -107,6 +114,12 @@ final class SettingsViewController: UITableViewController {
             cell.accessoryView = nil
             cell.accessoryType = profile.name == session.videoProfile.name ? .checkmark : .none
             cell.selectionStyle = .default
+        case 2:
+            let item = languages[indexPath.row]
+            content.text = item.name
+            cell.accessoryView = nil
+            cell.accessoryType = item.value == session.language ? .checkmark : .none
+            cell.selectionStyle = .default
         default:
             let item = about[indexPath.row]
             content.text = item.name
@@ -118,9 +131,16 @@ final class SettingsViewController: UITableViewController {
     }
 
     override func tableView(_ tableView: UITableView, didSelectRowAt indexPath: IndexPath) {
-        guard indexPath.section == 1 else { return }
-        session.videoProfile = profiles[indexPath.row]
-        tableView.reloadSections(IndexSet(integer: 1), with: .none)
+        switch indexPath.section {
+        case 1:
+            session.videoProfile = profiles[indexPath.row]
+            tableView.reloadSections(IndexSet(integer: 1), with: .none)
+        case 2:
+            session.language = languages[indexPath.row].value
+            tableView.reloadSections(IndexSet(integer: 2), with: .none)
+        default:
+            return
+        }
         tableView.deselectRow(at: indexPath, animated: true)
     }
 

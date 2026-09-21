@@ -55,13 +55,13 @@ final class IMSpeakerStageView: UIView {
         strip.translatesAutoresizingMaskIntoConstraints = false
         addSubview(strip)
 
-        unpinButton.setTitle("📌 取消钉住", for: .normal)
+        unpinButton.setTitle(imT("meeting.unpinLabel"), for: .normal)
         unpinButton.titleLabel?.font = .systemFont(ofSize: 12)
         unpinButton.setTitleColor(theme.primaryText, for: .normal)
         unpinButton.backgroundColor = theme.pillBackground
         unpinButton.layer.cornerRadius = 14
         unpinButton.contentEdgeInsets = UIEdgeInsets(top: 0, left: 10, bottom: 0, right: 10)
-        unpinButton.accessibilityLabel = "取消钉住"
+        unpinButton.accessibilityLabel = imT("meeting.unpin")
         unpinButton.translatesAutoresizingMaskIntoConstraints = false
         addSubview(unpinButton)
 

@@ -116,7 +116,7 @@ public func imNewCallAllowed(from phase: IMCallPhase) -> Bool {
 }
 
 /// 已在一场里又想开始新的一场时的提示。用 toast 而不是通话界面里的 hint：通话收成小窗、人在宿主界面上时 hint 根本看不见。
-public let imBusyNoticeText = "你正在通话中，请先结束当前通话"
+public var imBusyNoticeText: String { imT("busy.notice") }
 
 /// 通话主界面的三种版式（规范 §03 / §04）。
 public enum IMCallLayout: String, Sendable {
@@ -148,9 +148,9 @@ public func imPickLayout(for state: IMCallViewState) -> IMCallLayout {
 public func imSettledText(_ outcome: IMSettledOutcome) -> String {
     switch outcome {
     case .none:     return ""
-    case .rejected: return "已拒绝"
-    case .noAnswer: return "未接听"
-    case .offline:  return "对方不在线"
+    case .rejected: return imT("tile.rejected")
+    case .noAnswer: return imT("tile.noAnswer")
+    case .offline:  return imT("tile.offline")
     }
 }
 
@@ -163,36 +163,36 @@ public func imSettledText(_ outcome: IMSettledOutcome) -> String {
 public func imEndReasonText(_ reason: String, role: String, durationSec: Int) -> String {
     switch reason {
     case "hangup":
-        return durationSec > 0 ? "通话结束 · \(imFormatDuration(durationSec))" : "通话结束"
+        return durationSec > 0 ? imT("end.hangupDuration", ["duration": imFormatDuration(durationSec)]) : imT("end.hangup")
     case "cancel":
-        return role == "caller" ? "已取消" : "对方已取消"
+        return imT(role == "caller" ? "end.cancelCaller" : "end.cancelCallee")
     case "reject":
-        return role == "caller" ? "对方已拒接" : "已拒接"
+        return imT(role == "caller" ? "end.rejectCaller" : "end.rejectCallee")
     case "busy":
-        return "对方忙线中"
+        return imT("end.busy")
     case "no_answer":
-        return role == "caller" ? "对方无人接听" : "未接来电"
+        return imT(role == "caller" ? "end.noAnswerCaller" : "end.noAnswerCallee")
     case "offline":
-        return "对方当前不在线"
+        return imT("end.offline")
     case "network":
-        return "网络中断"
+        return imT("end.network")
     case "answered_elsewhere":
-        return "已在其他设备接听"
+        return imT("end.answeredElsewhere")
     case "rejected_elsewhere":
-        return "已在其他设备拒绝"
+        return imT("end.rejectedElsewhere")
     case "room_closed":
-        return "房间已解散"
+        return imT("end.roomClosed")
     case "kicked":
-        return "已被移出"
+        return imT("end.kicked")
     /*
      `join_denied` 不是协议里的 reason（协议 §6 那张表没有它）——它是 Kit 本地的伪原因，
      只在 `IMCallController.joinCall(_:)` 被拒（任何码）时使用，从不上线路、从不来自服务端。
      真实的服务端结局折到这条分支之外那个 `default`，与四端共用的原因表不冲突。
     */
     case "join_denied":
-        return "无法加入该通话"
+        return imT("hint.joinDenied")
     default:
-        return "已结束"
+        return imT("end.default")
     }
 }
 
@@ -208,10 +208,10 @@ public func imEndedHoldSeconds(_ reason: String) -> TimeInterval {
 public func imNetworkText(level: Int) -> String {
     switch level {
     case ...0:  return ""
-    case 1...2: return "网络良好"
-    case 3...4: return "网络一般"
-    case 5:     return "网络很差"
-    default:    return "正在重连…"
+    case 1...2: return imT("net.good")
+    case 3...4: return imT("net.fair")
+    case 5:     return imT("net.poor")
+    default:    return imT("net.reconnecting")
     }
 }
 

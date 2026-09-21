@@ -78,7 +78,7 @@ public final class IMVideoTileView: UIView {
         netPlate.layer.cornerRadius = 12
         netPlate.isHidden = true
         netPlate.isAccessibilityElement = true
-        netPlate.accessibilityLabel = "网络不佳"
+        netPlate.accessibilityLabel = imT("tile.networkPoor")
 
         ringingLabel.font = .monospacedDigitSystemFont(ofSize: 11, weight: .regular)
         ringingLabel.textColor = theme.primaryText
@@ -198,12 +198,12 @@ public final class IMVideoTileView: UIView {
         // 只设 accessibilityLabel 的话读屏软件根本不会念它，会掉进里头的 nameLabel
         // 只读出名字——静音与说话就此静默消失（原先的 mutedPlate 是有这一行的）。
         namePlate.isAccessibilityElement = true
-        namePlate.accessibilityLabel = !hasAudio ? "\(label)，已静音"
-            : (isSpeaking && showsSpeaking) ? "\(label)，正在说话" : "\(label)，麦克风已开启"
+        namePlate.accessibilityLabel = !hasAudio ? imT("a11y.muted", ["name": label])
+            : (isSpeaking && showsSpeaking) ? imT("a11y.speaking", ["name": label]) : imT("a11y.micOn", ["name": label])
         // 邀请中的占位格：整格 55% 不透明 + 顶部一行终局（规范 §06）。
         alpha = isRinging ? 0.55 : 1
         ringingLabel.isHidden = !isRinging
-        ringingLabel.text = settled == .none ? "呼叫中…" : imSettledText(settled)
+        ringingLabel.text = settled == .none ? imT("tile.calling") : imSettledText(settled)
     }
 }
 #endif

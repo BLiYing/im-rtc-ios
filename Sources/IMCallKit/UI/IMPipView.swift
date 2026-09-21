@@ -59,8 +59,8 @@ public final class IMPipView: UIView {
 
         isAccessibilityElement = true
         accessibilityTraits = .button
-        accessibilityLabel = "本端画面"
-        accessibilityHint = "轻点两下互换，轻点两下并按住可移动"
+        accessibilityLabel = imT("aria.selfView")
+        accessibilityHint = imT("pip.hint")
     }
 
     /**

@@ -7,6 +7,8 @@
 
 ## 当前焦点
 
+- **09-21 多语言（zh-CN / en）iOS 已做**：`IMCallKitConfig.locale` / `messages`，`imT(key)` 取词，文案表 `IMMessages.gen.swift` 由 `scripts/gen-i18n.py` 从 server `docs/i18n/strings.json` 生成；Demo 设置页「语言 / Language」。`test.sh` 11 步绿（434 测试）。Demo 各页自己的文案未进表。设计见 server `docs/design/I18N_DESIGN.md`。
+
 - **09-19 头像 / 名字对照设计文档补齐（未提交、未上真机）**：语音大头像页接头像图、接通后标题栏 1v1 走解析器（`imCallTitle(_:resolver:)`）、来电展开页取 inviter、成员列表头像底色改按 uid；新增 ObjC 入口 `IMDebugToken`（DEBUG 调试签票）与 `IMRTCLogBridge`（SDK 日志接进宿主日志）。IMProgram 已按本地 SPM 接入，见其 `current_task.md`。
 - **09-19 新增 `IMCallEngine.fetchCallHistory(limit:cursor:)`**（`IMCallEngine+CallHistory.swift`，`GET /v1/calls`，游标翻页，只返回本人）：单测 `CallHistoryTests` 过、全量 406 项过；Demo 通话记录页改成调它（下拉刷新 + 倒数第 3 行加载下一页），本地拼记录那套（`Record` / `records` / 垃圾桶）已删。**未真机验**；依赖服务端 `requireBearer` 不再核对设备号（同日已修）。 09-19 晚记录页布局对齐 Android（左图标 / 中间两行 / 右时间，insetGrouped 卡片），时间按「今天 `HH:mm` / 昨天 / `M月d日` / 往年带年份」四档（`HistoryTime.swift`，`Tests/DemoLogicTests` 8 条用例，符号链接编进测试 target）。**未上真机**。
 

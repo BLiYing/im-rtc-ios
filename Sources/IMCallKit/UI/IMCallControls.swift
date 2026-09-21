@@ -14,13 +14,13 @@ import UIKit
  */
 final class IMCallControls {
     let stack = UIStackView()
-    let micButton = IMControlButton(icon: .mic, caption: "静音", onIcon: .micSlash, onCaption: "已静音")
-    let cameraButton = IMControlButton(icon: .videoSlash, caption: "开摄像头", onIcon: .video, onCaption: "关摄像头")
-    let speakerButton = IMControlButton(icon: .speaker, caption: "扬声器", onIcon: .speaker, onCaption: "扬声器")
-    let switchCameraButton = IMControlButton(icon: .cameraFlip, caption: "翻转")
-    let endButton = IMControlButton(role: .danger, icon: .phoneDown, caption: "挂断")
-    let acceptButton = IMControlButton(role: .accept, icon: .phone, caption: "接听")
-    let rejectButton = IMControlButton(role: .danger, icon: .xmark, caption: "拒绝")
+    let micButton = IMControlButton(icon: .mic, caption: imT("ctl.mute"), onIcon: .micSlash, onCaption: imT("ctl.muted"))
+    let cameraButton = IMControlButton(icon: .videoSlash, caption: imT("ctl.cameraOn"), onIcon: .video, onCaption: imT("ctl.cameraOff"))
+    let speakerButton = IMControlButton(icon: .speaker, caption: imT("ctl.speaker"), onIcon: .speaker, onCaption: imT("ctl.speaker"))
+    let switchCameraButton = IMControlButton(icon: .cameraFlip, caption: imT("ctl.flip"))
+    let endButton = IMControlButton(role: .danger, icon: .phoneDown, caption: imT("ctl.hangup"))
+    let acceptButton = IMControlButton(role: .accept, icon: .phone, caption: imT("ctl.accept"))
+    let rejectButton = IMControlButton(role: .danger, icon: .xmark, caption: imT("ctl.reject"))
 
     private let top = UIStackView()
     private let bottom = UIStackView()
@@ -46,7 +46,7 @@ final class IMCallControls {
         micButton.isOn = !state.selfState.micOn
         cameraButton.isOn = state.selfState.cameraOn
         cameraButton.isDisabledLook = state.selfState.cameraBlocked
-        cameraButton.caption = state.selfState.cameraBlocked ? "无权限" : "开摄像头"
+        cameraButton.caption = imT(state.selfState.cameraBlocked ? "ctl.cameraBlocked" : "ctl.cameraOn")
         speakerButton.isOn = state.selfState.speakerOn
 
         let (topRow, bottomRow) = rows(for: state)
@@ -56,7 +56,7 @@ final class IMCallControls {
         switchCameraButton.isEnabled = state.selfState.cameraOn && !state.selfState.cameraBlocked
         switchCameraButton.alpha = switchCameraButton.isEnabled ? 1 : 0.4
         // 红按钮的语义按房间类型分叉（规范 §05）：群 / 会议写「离开」，拨出中写「取消」。
-        endButton.caption = state.isGroup || state.isMeeting ? "离开" : state.phase == .outgoing ? "取消" : "挂断"
+        endButton.caption = imT(state.isGroup || state.isMeeting ? "ctl.leave" : state.phase == .outgoing ? "ctl.cancel" : "ctl.hangup")
     }
 
     private func rows(for state: IMCallViewState) -> ([UIView], [UIView]) {

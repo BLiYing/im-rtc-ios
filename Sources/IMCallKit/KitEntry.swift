@@ -78,6 +78,19 @@ public let IMCallKitVersion = IMCallEngineVersion
     /// 同样现用现读。只 iOS 有，判据见 `imShouldVibrate(_:enabled:)`。
     @objc public var incomingVibration: Bool = false
 
+    /**
+     界面语言，默认简体中文（与加多语言之前一致）。支持 `.zhCN` / `.en`；想跟随系统传 `IMLocale.system()`。
+     **已经显示在屏幕上的提示不会回译**，下一条才用新语言。与 Web / Android 的 `locale` 同名同义。
+     */
+    @objc public var locale: IMLocale = .zhCN {
+        didSet { IMText.locale = locale }
+    }
+
+    /// 按语言覆盖个别文案（只写要改的 key，key 见跨端文案表 `docs/i18n/strings.json`）。
+    public var messages: [IMLocale: [String: String]] = [:] {
+        didSet { IMText.overrides = messages }
+    }
+
     @objc public override init() {
         super.init()
     }
@@ -106,6 +119,8 @@ public let IMCallKitVersion = IMCallEngineVersion
         // **存的是同一个 config 实例，不是拷贝字段**：铃声那三个字段要「现用现读」
         // （见 IMCallKitConfig 的注释），controller 里随时 `config.incomingRingtone` 都是最新值。
         self.controller.config = config
+        IMText.locale = config.locale
+        IMText.overrides = config.messages
         super.init()
     }
 

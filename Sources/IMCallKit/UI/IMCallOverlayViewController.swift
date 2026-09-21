@@ -217,7 +217,7 @@ public final class IMCallOverlayViewController: UIViewController {
      */
     @objc private func onInvite() {
         guard controller.canStartInvite() else {
-            controller.apply(.hint("没有权限添加成员"))
+            controller.apply(.hint(imT("hint.inviteNoPermission")))
             return
         }
         if let provider = controller.inviteMemberProvider,
@@ -319,14 +319,14 @@ public final class IMCallOverlayViewController: UIViewController {
     /// 顶部橙条：正在重连 / 连接已断开 / 对方网络不佳（2s 后收成角标，**不一直霸占顶部**）。
     private func renderBanner(_ state: IMCallViewState) {
         switch state.connection {
-        case .reconnecting: banner.apply(text: "正在重连…"); return
-        case .lost: banner.apply(text: "连接已断开"); return
+        case .reconnecting: banner.apply(text: imT("banner.reconnecting")); return
+        case .lost: banner.apply(text: imT("banner.lost")); return
         case .ok: break
         }
         let poor = !state.isGroup && state.participants.contains { imIsNetworkPoor(level: $0.networkLevel) } // 只做 1v1
         if poor, !poorNetworkShown {
             poorNetworkShown = true
-            banner.apply(text: "对方网络不佳")
+            banner.apply(text: imT("banner.peerNetwork"))
             networkBannerTimer?.cancel()
             networkBannerTimer = imAfter(IMKitTheme.current.networkBannerHold, on: .main) { [weak self] in self?.banner.apply(text: "") }
         } else if !poor {
@@ -341,7 +341,7 @@ public final class IMCallOverlayViewController: UIViewController {
         let peer = state.participants.first
         // 来电页显示「把你拉进来的人」（与横幅同一个 uid）；其余时候是对端。
         let who = state.phase == .incoming && !state.inviterUID.isEmpty ? state.inviterUID : state.peerUID
-        audioStage.apply(uid: who, name: imResolvedName(controller.profileResolver, uid: who, fallback: who.isEmpty ? (peer?.uid ?? "通话中") : who),
+        audioStage.apply(uid: who, name: imResolvedName(controller.profileResolver, uid: who, fallback: who.isEmpty ? (peer?.uid ?? imT("call.ongoing")) : who),
                          status: imCallStatusLine(state), isRinging: state.phase == .outgoing,
                          networkLevel: peer?.networkLevel ?? 0,
                          // 接通之后名字与时长归标题栏，中间只留头像——两处各走各的计时是重复也是打架。
@@ -381,7 +381,7 @@ public final class IMCallOverlayViewController: UIViewController {
         pip.setContent(small)
         pip.isHidden = false
         pip.liftsForControls = chrome.visible
-        pip.accessibilityLabel = state.isSwapped ? "对方画面" : "本端画面"
+        pip.accessibilityLabel = state.isSwapped ? imT("pip.peerLabel") : imT("aria.selfView")
         controller.attachLocalPreview(to: selfTile.renderView)
         remoteTiles.report(peer.uid, layer: state.isSwapped ? "l" : "h", hasVideo: peer.hasVideo)
     }
@@ -429,7 +429,7 @@ public final class IMCallOverlayViewController: UIViewController {
     /// 本端那格。**只表达麦克风开 / 关两态**（2026-09-09 拍板）——自己在不在说话自己知道，
     /// 所以不再需要「哪种版式才显示说话」那个参数，三种版式一视同仁。
     func applySelfTile(_ state: IMCallViewState, avatarSize: CGFloat) {
-        selfTile.apply(uid: "", label: "我", hasVideo: state.selfState.cameraOn && controller.hasLocalCamera,
+        selfTile.apply(uid: "", label: imT("self"), hasVideo: state.selfState.cameraOn && controller.hasLocalCamera,
                        hasAudio: state.selfState.micOn,
                        isSpeaking: false, volume: 0, showsSpeaking: false,
                        avatarSize: avatarSize,

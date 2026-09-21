@@ -170,7 +170,7 @@ public protocol IMCallControllerObserver: AnyObject {
                 imLogRejected("拨号", error)
                 let code = imRTCErrorCode(error)
                 if code == IMErrorCode.inviteDenied.rawValue {
-                    await MainActor.run { self.apply(.hint("对方暂时无法被邀请")) }
+                    await MainActor.run { self.apply(.hint(imT("hint.inviteRejected"))) }
                 } else if code == IMErrorCode.alreadyInCall.rawValue {
                     await MainActor.run { self.showNotice(imBusyNoticeText) }
                 }

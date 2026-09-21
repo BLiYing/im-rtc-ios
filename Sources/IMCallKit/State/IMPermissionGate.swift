@@ -112,11 +112,11 @@ public struct IMPermissionCopy: Equatable, Sendable {
 public func imPermissionExplanation(_ kind: IMDeviceKind) -> IMPermissionCopy {
     switch kind {
     case .microphone:
-        return IMPermissionCopy(title: "需要用到麦克风",
-                                body: "通话时对方要听见你的声音。接下来系统会问你要不要允许。")
+        return IMPermissionCopy(title: imT("perm.mic.explainTitle"),
+                                body: imT("perm.mic.explainBodyOs"))
     case .camera:
-        return IMPermissionCopy(title: "需要用到摄像头",
-                                body: "视频通话时对方要看见你。接下来系统会问你要不要允许。")
+        return IMPermissionCopy(title: imT("perm.cam.explainTitle"),
+                                body: imT("perm.cam.explainBodyOs"))
     }
 }
 
@@ -124,17 +124,17 @@ public func imPermissionExplanation(_ kind: IMDeviceKind) -> IMPermissionCopy {
 public func imPermissionBlocked(_ kind: IMDeviceKind, _ failure: IMPermissionFailure) -> IMPermissionCopy {
     switch (kind, failure) {
     case (.camera, .denied):
-        return IMPermissionCopy(title: "没有摄像头权限，已用语音继续通话",
-                                body: "要开视频，请到系统设置里打开摄像头权限。")
+        return IMPermissionCopy(title: imT("perm.cam.deniedTitle"),
+                                body: imT("perm.cam.blockedBodyOs"))
     case (.camera, .noDevice):
-        return IMPermissionCopy(title: "找不到可用的摄像头，已用语音继续通话",
-                                body: "摄像头可能被其他应用占用。")
+        return IMPermissionCopy(title: imT("perm.cam.missingTitle"),
+                                body: imT("perm.cam.missingBodyOs"))
     case (.microphone, .denied):
-        return IMPermissionCopy(title: "没有麦克风权限，无法通话",
-                                body: "到「设置 › 隐私 › 麦克风」里打开后重试。")
+        return IMPermissionCopy(title: imT("perm.mic.deniedTitle"),
+                                body: imT("perm.mic.blockedBodyIos"))
     case (.microphone, .noDevice):
-        return IMPermissionCopy(title: "找不到可用的麦克风",
-                                body: "请检查麦克风是否被其他应用占用。")
+        return IMPermissionCopy(title: imT("perm.mic.missingTitle"),
+                                body: imT("perm.mic.missingBodyOs"))
     }
 }
 
@@ -194,7 +194,7 @@ public final class IMPermissionGate: @unchecked Sendable {
         for kind in devices {
             if imNeedsPermissionExplanation(systemProbe.status(of: kind)) {
                 let copy = imPermissionExplanation(kind)
-                let go = await present(card(.explain, kind, copy, primary: "好", secondary: "取消"))
+                let go = await present(card(.explain, kind, copy, primary: imT("perm.ok"), secondary: imT("perm.cancel")))
                 if !go { return .cancelled }
             }
             let failure: IMPermissionFailure?
@@ -207,7 +207,7 @@ public final class IMPermissionGate: @unchecked Sendable {
             }
             guard let failure else { continue }
             let copy = imPermissionBlocked(kind, failure)
-            _ = await present(card(.blocked, kind, copy, primary: "知道了", secondary: ""))
+            _ = await present(card(.blocked, kind, copy, primary: imT("perm.gotIt"), secondary: ""))
             if kind == .microphone { return .micBlocked }
             outcome = .cameraBlocked
         }

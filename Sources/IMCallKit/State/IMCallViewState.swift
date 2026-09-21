@@ -386,7 +386,7 @@ public func reduceCallView(_ state: IMCallViewState,
 
     case .inviteDenied:
         next.canInvite = false
-        next.hint = "你已不在通话中，无法添加成员"
+        next.hint = imT("hint.inviteDenied")
 
     case let .callContext(caller, chatGroupID, userData):
         if !caller.isEmpty { next.callerUID = caller }

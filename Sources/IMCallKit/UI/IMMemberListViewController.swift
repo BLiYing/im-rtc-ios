@@ -44,7 +44,7 @@ final class IMMemberListViewController: UIViewController {
         super.viewDidLoad()
         let theme = IMKitTheme.current
         view.backgroundColor = theme.overlayBackground
-        title = "成员（\(members.count + 1)）"
+        title = imT("members.title", ["n": members.count + 1])
 
         let titleLabel = UILabel()
         titleLabel.text = title
@@ -82,7 +82,7 @@ extension IMMemberListViewController: UITableViewDataSource {
         let cell = tableView.dequeueReusableCell(withIdentifier: IMMemberCell.reuseID,
                                                  for: indexPath) as! IMMemberCell
         if indexPath.row == 0 {
-            cell.apply(uid: "", name: "我", avatar: nil, micOn: selfMicOn, cameraOn: selfCameraOn)
+            cell.apply(uid: "", name: imT("self"), avatar: nil, micOn: selfMicOn, cameraOn: selfCameraOn)
             return cell
         }
         let member = members[indexPath.row - 1]
@@ -141,8 +141,8 @@ private final class IMMemberCell: UITableViewCell {
         cameraIcon.image = (cameraOn ? IMKitIcon.video : IMKitIcon.videoSlash).image(pointSize: 13)
         micIcon.alpha = micOn ? 1 : 0.35
         cameraIcon.alpha = cameraOn ? 1 : 0.35
-        micIcon.accessibilityLabel = micOn ? "麦克风开" : "麦克风关"
-        cameraIcon.accessibilityLabel = cameraOn ? "摄像头开" : "摄像头关"
+        micIcon.accessibilityLabel = imT(micOn ? "members.micOn" : "members.micOff")
+        cameraIcon.accessibilityLabel = imT(cameraOn ? "members.camOn" : "members.camOff")
     }
 }
 #endif
