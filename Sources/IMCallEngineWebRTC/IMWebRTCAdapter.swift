@@ -459,6 +459,8 @@ public final class IMWebRTCAdapter: NSObject, IMMediaAdapter, @unchecked Sendabl
         previewTrack = nil
         publishedCameraCID = nil
         capturePaused = false
+        // 适配器跨通话复用：上一通翻到后置的话，不复位下一通就直接开后置（2026-09-21 真机）。
+        usingFrontCamera = true
         localTracks = [:]
         peers = nil
         audioSessionActive = false

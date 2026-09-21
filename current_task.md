@@ -21,7 +21,7 @@
 
 **仍悬着（09-18 傍晚记下，没结案）**：
 - **后台掉线 = App 被系统挂起**：18:04 切后台 → 18:05 恢复窗口（30 s）到期 → `reason=network`；App 整整 4 分钟零日志，客户端任何定时参数都救不了没在运行的进程。出路是让 App 在通话中别被挂起（`UIBackgroundModes` 只有 `audio`，靠活跃音频 I/O 保活，未证实）。
-- **18:18 那通前台也断了，原因未定**：接通 19 s 后信令双向哑掉，服务端一个字节没收到，而客户端 `URLSessionWebSocketTask.send` 每帧都被收下（全段零条 `发帧失败`），36 s 后才以 TCP `Operation timed out` 放弃；同一 WiFi 上的 Android 没事。**别当网络问题结案，也别当已解决。**
+- **18:18 那通前台也断了，原因未定（用户 09-21 判定偶现、忽略；没复现前不追）**：接通 19 s 后信令双向哑掉，服务端一个字节没收到，而客户端 `URLSessionWebSocketTask.send` 每帧都被收下（全段零条 `发帧失败`），36 s 后才以 TCP `Operation timed out` 放弃；同一 WiFi 上的 Android 没事。**别当网络问题结案，也别当已解决。**
 - **simulcast 三层 09-21 已开、真机验过**：l/m/h = 270×480 / 540×960 / 1080×1920，帧率 ~30。**未测** CPU / 发热、多人房降层是否生效。
 
 **已收口（细节在 archive「2026-09-19」节）**：会议房 M2 四处 UI 修复（退订再重订画面定格、底部条格子、小格子紧凑名字牌、标题栏点击复制）用户确认已修好；视频通话双向无声（09-18 20:45 真机验过，根因留在「已知坑」）；结束帧表合并 `IMCallExit`、定时器 `imAfter` / `imEvery`、「调用结果回给调用方」`d2d2ae9`（真机未验 `joinCall` 1202/1402/1409 文案、拨号拿 callID、断网再挂断）、四仓 /simplify——均已推送。
@@ -30,11 +30,12 @@
 
 1. 后台存活：通话中切后台被系统挂起（见上）——现在麦克风真在录了，先复测一次看 `audio` 后台模式能否保住进程。
 2. iOS simulcast 余项：真机看 CPU / 发热；多人房里让某接收者掉带宽，看服务端出现 `to:"m"/"l"`。
-3. 2.0.0：真机验 `joinCall` 文案 / 拨号 callID / 断网再挂断，用户通知后发版。
+3. ~~2.0.0 发版~~ 已发（09-20，tag `2.0.0`）。simulcast 那刀在 tag 之后、未发版。
 4. 会议房离场不释放远端视图（暂不修，等真机看到内存问题，见「已知坑」）。
 5. 按需 / 后续期：自定义铃声没有 Demo UI、没真机验过；`IMInviteMemberProvider` / `presentInvitePicker` 没真实宿主跑过；IMProgram / 容信真实接入（M3~M7）。
 
 ## 已知坑 / 限制
+- **适配器跨通话复用，状态要在 `close()` 里复位**（09-21 真机：后置挂断，下一通还是后置）：`usingFrontCamera` 原先漏了，现已复位；以后给 `IMWebRTCAdapter` 加「每通一份」的状态，都要问一句 `close()` 里清了没有。
 
 - **Demo 开 `.xcodeproj` 与开 `.xcworkspace` 是两个档**：脚本一律 `-workspace`，写成 `-project` 会联网、验的是 GitHub 上的旧代码。workspace 自己的 `Package.resolved` 不落地（Xcode.app 里开过也没有），别当配置错误去追。
 - **音频会话不在 `login()` 时配置**（09-16 改）：「该出声没出声」先查是不是漏了 `ensureAudioSessionConfigured()`（挂在 `acquireMicrophone()` / `setSpeakerOn(_:)`）。
