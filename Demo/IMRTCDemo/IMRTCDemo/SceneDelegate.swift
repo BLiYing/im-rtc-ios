@@ -1,4 +1,5 @@
 import UIKit
+import IMCallKit
 
 /*
  **纯代码建 window，没有 storyboard。**
@@ -21,9 +22,9 @@ final class SceneDelegate: UIResponder, UIWindowSceneDelegate {
         // 草图 §02 的三个 tab：拨号 / 记录 / 设置。登录也在拨号页的身份卡里。
         let tabs = UITabBarController()
         tabs.viewControllers = [
-            nav(DialerViewController(), "拨号", "phone"),
-            nav(HistoryViewController(), "记录", "clock"),
-            nav(SettingsViewController(), "设置", "gearshape"),
+            nav(DialerViewController(), dt("demo.tab.dial"), "phone"),
+            nav(HistoryViewController(), dt("demo.tab.history"), "clock"),
+            nav(SettingsViewController(), dt("demo.tab.settings"), "gearshape"),
         ]
         window.rootViewController = tabs
         window.makeKeyAndVisible()

@@ -20,18 +20,23 @@ import Foundation
  */
 func formatCallTime(startedAtMS: Int64, nowMS: Int64,
                     calendar: Calendar = .current,
+                    // 三档默认就是中文——不传就是原来的行为，`HistoryTimeTests` 不用改。
+                    // Demo 工程按语言传本地化版本（见 `DemoText.swift` 的 `dt("demo.time.*")`）。
+                    yesterday: (String) -> String = { "昨天 \($0)" },
+                    sameYear: (Int, Int, String) -> String = { m, d, t in "\(m)月\(d)日 \(t)" },
+                    otherYear: (Int, Int, Int, String) -> String = { y, m, d, t in "\(y)年\(m)月\(d)日 \(t)" },
                     hourMinute: (Date) -> String) -> String {
     let started = Date(timeIntervalSince1970: Double(startedAtMS) / 1000)
     let now = Date(timeIntervalSince1970: Double(nowMS) / 1000)
     let time = hourMinute(started)
 
     if startedAtMS >= nowMS || calendar.isDate(started, inSameDayAs: now) { return time }
-    if let yesterday = calendar.date(byAdding: .day, value: -1, to: now),
-       calendar.isDate(started, inSameDayAs: yesterday) {
-        return "昨天 \(time)"
+    if let dayBefore = calendar.date(byAdding: .day, value: -1, to: now),
+       calendar.isDate(started, inSameDayAs: dayBefore) {
+        return yesterday(time)
     }
     let parts = calendar.dateComponents([.year, .month, .day], from: started)
     let year = parts.year ?? 0, month = parts.month ?? 0, day = parts.day ?? 0
-    if year == calendar.component(.year, from: now) { return "\(month)月\(day)日 \(time)" }
-    return "\(year)年\(month)月\(day)日 \(time)"
+    if year == calendar.component(.year, from: now) { return sameYear(month, day, time) }
+    return otherYear(year, month, day, time)
 }

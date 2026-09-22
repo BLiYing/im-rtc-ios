@@ -45,7 +45,7 @@ final class HistoryViewController: UITableViewController {
 
     override func viewDidLoad() {
         super.viewDidLoad()
-        title = "通话记录"
+        title = dt("demo.history.title")
         tableView.register(HistoryCell.self, forCellReuseIdentifier: "r")
         tableView.backgroundView = statusLabel
         refreshControl = UIRefreshControl()
@@ -69,7 +69,7 @@ final class HistoryViewController: UITableViewController {
 
     private func load(first: Bool) {
         guard !isLoading, let engine = session.engine else {
-            if session.engine == nil { show(records: [], message: "未登录") }
+            if session.engine == nil { show(records: [], message: dt("demo.conn.loggedOut")) }
             refreshControl?.endRefreshing()
             return
         }
@@ -86,14 +86,14 @@ final class HistoryViewController: UITableViewController {
             } catch {
                 guard ticket == generation else { return }
                 let detail = (error as? IMRTCError)?.detail ?? error.localizedDescription
-                show(records: first ? [] : records, message: "加载失败：\(detail)\n下拉重试")
+                show(records: first ? [] : records, message: dt("demo.history.loadFailedIos", ["msg": detail]))
             }
         }
     }
 
     private func show(records: [IMCallHistoryRecord], message: String?) {
         self.records = records
-        statusLabel.text = records.isEmpty ? (message ?? "还没有通话记录") : nil
+        statusLabel.text = records.isEmpty ? (message ?? dt("demo.history.emptyIos")) : nil
         tableView.reloadData()
     }
 
@@ -131,10 +131,10 @@ final class HistoryViewController: UITableViewController {
     private static func peerText(_ record: IMCallHistoryRecord, me: String) -> String {
         if record.isGroup {
             let count = max(record.members.count, 1) + (record.members.contains { $0.uid == record.caller } ? 0 : 1)
-            return "群通话 · \(count) 人"
+            return dt("demo.history.groupCall", ["n": count])
         }
-        if record.caller != me { return record.caller.isEmpty ? "（未知）" : record.caller }
-        return record.members.first { $0.uid != me }?.uid ?? "（未知）"
+        if record.caller != me { return record.caller.isEmpty ? dt("demo.history.unknown") : record.caller }
+        return record.members.first { $0.uid != me }?.uid ?? dt("demo.history.unknown")
     }
 
     /*
@@ -142,7 +142,7 @@ final class HistoryViewController: UITableViewController {
      Demo 不自己另存一份随时间漂走的映射。
      */
     private static func summary(_ record: IMCallHistoryRecord, role: String) -> String {
-        let direction = role == "callee" ? "来电" : "呼出"
+        let direction = role == "callee" ? dt("demo.history.incoming") : dt("demo.history.outgoing")
         let outcome = imEndReasonText(record.reason, role: role, durationSec: record.durationSec)
         return "\(direction) · \(outcome)"
     }
@@ -150,7 +150,10 @@ final class HistoryViewController: UITableViewController {
     /// 今天 `HH:mm`、昨天 `昨天 HH:mm`、今年更早 `M月d日 HH:mm`、往年带年份；见 ``formatCallTime``。
     private static func timeText(_ record: IMCallHistoryRecord) -> String {
         formatCallTime(startedAtMS: record.startedAtMS,
-                       nowMS: Int64(Date().timeIntervalSince1970 * 1000)) {
+                       nowMS: Int64(Date().timeIntervalSince1970 * 1000),
+                       yesterday: { dt("demo.time.yesterday", ["time": $0]) },
+                       sameYear: { dt("demo.time.sameYear", ["month": $0, "day": $1, "time": $2]) },
+                       otherYear: { dt("demo.time.otherYear", ["year": $0, "month": $1, "day": $2, "time": $3]) }) {
             DateFormatter.localizedString(from: $0, dateStyle: .none, timeStyle: .short)
         }
     }

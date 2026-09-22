@@ -29,10 +29,10 @@ final class ContactPickerViewController: UITableViewController {
 
     override func viewDidLoad() {
         super.viewDidLoad()
-        title = "选人"
+        title = dt("demo.picker.title")
         tableView.register(UITableViewCell.self, forCellReuseIdentifier: "c")
         navigationItem.rightBarButtonItem = UIBarButtonItem(
-            title: "完成", style: .done, target: self, action: #selector(done))
+            title: dt("demo.picker.done"), style: .done, target: self, action: #selector(done))
         updateTitle()
     }
 
@@ -43,7 +43,7 @@ final class ContactPickerViewController: UITableViewController {
     }
 
     private func updateTitle() {
-        navigationItem.prompt = "已选 \(selected.count) / \(limit)"
+        navigationItem.prompt = dt("demo.dial.picked", ["n": selected.count, "max": limit])
     }
 
     override func tableView(_ tableView: UITableView, numberOfRowsInSection section: Int) -> Int {

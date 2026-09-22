@@ -44,7 +44,9 @@ final class DemoSession {
 
     private var logSink: RemoteLogSink?
     private var observerToken: NSUUID?
-    private(set) var connectionText = "未登录"
+    /** 连接状态文案；存「怎么说」而不是说好的话，语言切换后下次刷新就跟得上。 */
+    private var connectionMake: () -> String = { dt("demo.conn.loggedOut") }
+    var connectionText: String { connectionMake() }
 
     /**
      状态变了通知界面。三个 tab 各自订阅。
@@ -202,7 +204,7 @@ final class DemoSession {
         self.kit = kit
         observerToken = engine.addEventObserver { [weak self] event in self?.handle(event) }
 
-        connectionText = "连接中…"
+        connectionMake = { dt("demo.conn.connecting") }
         notify()
         /*
          **换票成功不等于登录成功**：WS 那一步还可能被拒（token 过期 4401、
@@ -229,7 +231,7 @@ final class DemoSession {
         kit = nil
         IMRTCLog.setSink(nil)
         logSink = nil
-        connectionText = "未登录"
+        connectionMake = { dt("demo.conn.loggedOut") }
         notify()
     }
 
@@ -373,7 +375,7 @@ final class DemoSession {
         kit = nil
         IMRTCLog.setSink(nil)
         logSink = nil
-        connectionText = "未登录"
+        connectionMake = { dt("demo.conn.loggedOut") }
         notify()
     }
 
@@ -397,7 +399,7 @@ final class DemoSession {
         } catch {
             IMRTCLog.info("静默重登失败", ["err": String(describing: error)])
             await logout()
-            connectionText = "登录态过期，重登也失败了"
+            connectionMake = { dt("demo.conn.reloginFailed") }
             notify()
         }
     }
@@ -407,10 +409,11 @@ final class DemoSession {
     private func handle(_ event: IMCallEvent) {
         switch event.name {
         case .connected:
-            connectionText = "已连接 · \(server.replacingOccurrences(of: "http://", with: ""))"
+            let host = server.replacingOccurrences(of: "http://", with: "")
+            connectionMake = { dt("demo.conn.connectedTo", ["host": host]) }
         case .disconnected:
             let will = (event.payload["will_reconnect"] as? NSNumber)?.boolValue ?? false
-            connectionText = will ? "重连中…" : "已断开"
+            connectionMake = { will ? dt("demo.conn.reconnectingShort") : dt("demo.conn.disconnectedShort") }
         case .kickedOut:
             /*
              **三种原因，三种处置**（与 Android DemoSession.onKickedOut 同一个分岔，真实宿主照这个写）。
@@ -423,16 +426,16 @@ final class DemoSession {
             switch IMKickedOutReason(rawValue: raw) {
             case .authExpired:
                 // 票不好使：取一枚新票重登即可，不必打扰用户。
-                connectionText = "登录态过期，正在重新获取…"
+                connectionMake = { dt("demo.conn.tokenRefreshing") }
                 Task { await self.relogin() }
             case .takenOver:
                 // 账号在别处登录或被宿主吊销，换票救不了。别再自动重登，否则重启就撞回同一个死胡同。
-                connectionText = "账号在其它设备登录"
+                connectionMake = { dt("demo.conn.takenOver") }
                 UserDefaults.standard.set(false, forKey: Self.autoKey)
                 Task { await self.logout() }
             default:
                 // 接入参数被拒：换票和重试都没用，等人去改配置。
-                connectionText = "登录态失效，请重新登录"
+                connectionMake = { dt("demo.conn.sessionInvalid") }
                 UserDefaults.standard.set(false, forKey: Self.autoKey)
                 Task { await self.logout() }
             }

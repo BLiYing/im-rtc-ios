@@ -1,4 +1,5 @@
 import Foundation
+import IMCallKit
 
 /*
  Demo 用到的 REST 调用。
@@ -17,14 +18,14 @@ enum DemoAPI {
     /// demoLogin 走服务端的免密登录（仅 `-demo-login` 下存在）。
     static func login(server: String, username: String) async throws -> String {
         let out = try await post("\(server)/v1/demo/login", body: ["username": username])
-        guard let token = out["token"] as? String else { throw Failure(message: "应答里没有 token") }
+        guard let token = out["token"] as? String else { throw Failure(message: dt("demo.api.noToken")) }
         return token
     }
 
     /// createMeetingRoom 建一个会议房，返回房间号。
     static func createMeetingRoom(server: String, token: String) async throws -> String {
         let out = try await post("\(server)/v1/rooms", body: ["kind": "meeting"], bearer: token)
-        guard let roomID = out["room_id"] as? String else { throw Failure(message: "应答里没有 room_id") }
+        guard let roomID = out["room_id"] as? String else { throw Failure(message: dt("demo.api.noRoomId")) }
         return roomID
     }
 
@@ -34,7 +35,7 @@ enum DemoAPI {
         let out = try await post("\(server)/v1/rooms/\(roomID)/tokens",
                                  body: ["device_id": deviceID], bearer: token)
         guard let roomToken = out["room_token"] as? String else {
-            throw Failure(message: "应答里没有 room_token")
+            throw Failure(message: dt("demo.api.noRoomToken"))
         }
         return roomToken
     }
@@ -46,7 +47,7 @@ enum DemoAPI {
      */
     private static func post(_ url: String, body: [String: Any],
                              bearer: String? = nil) async throws -> [String: Any] {
-        guard let endpoint = URL(string: url) else { throw Failure(message: "地址不合法：\(url)") }
+        guard let endpoint = URL(string: url) else { throw Failure(message: dt("demo.api.badUrl", ["url": url])) }
         var request = URLRequest(url: endpoint)
         request.httpMethod = "POST"
         request.timeoutInterval = 10
@@ -59,8 +60,8 @@ enum DemoAPI {
         let json = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] ?? [:]
         guard status == 200 else {
             let detail = json["error"] as? String
-                ?? String(data: data.prefix(200), encoding: .utf8) ?? "（无正文）"
-            throw Failure(message: "\(url) 返回 \(status)：\(detail)")
+                ?? String(data: data.prefix(200), encoding: .utf8) ?? dt("demo.api.noBody")
+            throw Failure(message: dt("demo.api.status", ["url": url, "status": status, "detail": detail]))
         }
         return json
     }

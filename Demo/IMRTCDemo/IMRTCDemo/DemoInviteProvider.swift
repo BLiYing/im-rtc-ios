@@ -18,10 +18,10 @@ final class DemoInviteProvider: NSObject, IMInviteMemberProvider {
 
     /// 全量名单：真实 Demo 账号在前，假成员在后。
     private lazy var allMembers: [IMInviteCandidate] = {
-        let real = DemoSession.demoContacts.map { IMInviteCandidate(uid: $0, subtitle: "Demo 账号") }
+        let real = DemoSession.demoContacts.map { IMInviteCandidate(uid: $0, subtitle: dt("demo.invite.demoAccount")) }
         let fake = (1...Self.fakeMemberCount).map { index in
             IMInviteCandidate(uid: String(format: "member-%02d", index),
-                              name: "群成员\(index)", subtitle: "假数据·凑分页")
+                              name: dt("demo.fakeMember", ["n": index]), subtitle: dt("demo.invite.fakeSubtitle"))
         }
         return real + fake
     }()
@@ -33,7 +33,7 @@ final class DemoInviteProvider: NSObject, IMInviteMemberProvider {
         if q == "slow" { return }
         if q == "fail" {
             let error = NSError(domain: "com.imrtc.demo", code: -1,
-                                userInfo: [NSLocalizedDescriptionKey: "演示：服务端出错了"])
+                                userInfo: [NSLocalizedDescriptionKey: dt("demo.invite.fail")])
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { completion([], nil, error) }
             return
         }

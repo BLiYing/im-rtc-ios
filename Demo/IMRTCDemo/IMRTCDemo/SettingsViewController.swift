@@ -23,16 +23,16 @@ final class SettingsViewController: UITableViewController {
     }
 
     private lazy var rows: [Row] = [
-        Row(title: "来电先出横幅", detail: "关掉则来电直接全屏",
+        Row(title: dt("demo.settings.bannerFirst"), detail: dt("demo.settings.bannerFirstMobileNote"),
             isOn: { self.session.bannerFirst },
             set: { self.session.bannerFirst = $0 }),
-        Row(title: "悬浮窗", detail: "允许把通话收成悬浮球",
+        Row(title: dt("demo.settings.floatWindow"), detail: dt("demo.settings.floatWindowNoteIos"),
             isOn: { self.session.floatingWindow },
             set: { self.session.floatingWindow = $0 }),
-        Row(title: "静音来电铃声", detail: "关掉来电铃声与回铃音，方便真机对照验证",
+        Row(title: dt("demo.settings.ringtoneMuted"), detail: dt("demo.settings.ringtoneMutedMobileNoteIos"),
             isOn: { self.session.ringtoneMuted },
             set: { self.session.ringtoneMuted = $0 }),
-        Row(title: "详细日志", detail: "debug 级别，含主讲人/网络质量的周期事件",
+        Row(title: dt("demo.settings.verboseLog"), detail: dt("demo.settings.verboseLogMobileNote"),
             isOn: { self.session.verboseLog },
             set: { self.session.verboseLog = $0 }),
     ]
@@ -47,14 +47,14 @@ final class SettingsViewController: UITableViewController {
         [
             ("SDK", "im-rtc-ios \(IMCallKitVersion)"),
             ("libwebrtc", "M150（webrtc-sdk 150.7871.01）"),
-            ("视频编码", "H.264 硬编优先（libwebrtc 默认顺序），对端不支持时回落 VP8"),
-            ("设备 ID", session.deviceID),
+            (dt("demo.settings.videoCodec"), dt("demo.settings.videoCodecValue")),
+            (dt("demo.settings.deviceId"), session.deviceID),
         ]
     }
 
     override func viewDidLoad() {
         super.viewDidLoad()
-        title = "设置"
+        title = dt("demo.settings.title")
         tableView.register(UITableViewCell.self, forCellReuseIdentifier: "s")
     }
 
@@ -74,10 +74,10 @@ final class SettingsViewController: UITableViewController {
 
     override func tableView(_ tableView: UITableView, titleForHeaderInSection section: Int) -> String? {
         switch section {
-        case 0: return "Kit 可配项"
-        case 1: return "采集画质（宿主策略，换了要重登）"
+        case 0: return dt("demo.settings.kitGroup")
+        case 1: return dt("demo.settings.profileMobile")
         case 2: return "语言 / Language"
-        default: return "关于"
+        default: return dt("demo.settings.about")
         }
     }
 

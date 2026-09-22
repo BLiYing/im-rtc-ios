@@ -13,9 +13,9 @@ final class DialerViewController: UIViewController {
 
     private let serverField = DemoUI.field(placeholder: DemoSession.serverPlaceholder,
                                            text: DemoSession.defaultServer)
-    private let userField = DemoUI.field(placeholder: "用户 ID", text: DemoSession.defaultUsername)
-    private let calleeField = DemoUI.field(placeholder: "对方 ID", text: DemoSession.defaultCallee)
-    private let roomField = DemoUI.field(placeholder: "房间号（留空则新建）", text: "")
+    private let userField = DemoUI.field(placeholder: dt("demo.field.userId"), text: DemoSession.defaultUsername)
+    private let calleeField = DemoUI.field(placeholder: dt("demo.field.calleeId"), text: DemoSession.defaultCallee)
+    private let roomField = DemoUI.field(placeholder: dt("demo.field.roomId"), text: "")
     /// 按 call_id 主动加入一通正在进行的群通话（`IMCallKit.joinCall(_:)`，HOST_INTEGRATION_DESIGN §3.4）。
     /// **真实宿主怎么知道有通话在进行中不在本协议里**——这里让人手填 call_id 只是为了验证这条路径。
     private let joinCallField = DemoUI.field(placeholder: "call_id", text: "")
@@ -41,7 +41,7 @@ final class DialerViewController: UIViewController {
 
     override func viewDidLoad() {
         super.viewDidLoad()
-        title = "拨号"
+        title = dt("demo.tab.dial")
         view.backgroundColor = .systemGroupedBackground
         build()
         changeObserverToken = session.addChangeObserver { [weak self] in self?.refresh() }
@@ -67,7 +67,7 @@ final class DialerViewController: UIViewController {
         if !me.isEmpty, groupPick.contains(me) {
             groupPick.removeAll { $0 == me }
         }
-        groupLabel.text = groupPick.isEmpty ? "👥 （请选人）" : "👥 " + groupPick.joined(separator: "、")
+        groupLabel.text = groupPick.isEmpty ? dt("demo.dial.pickEmpty") : "👥 " + groupPick.joined(separator: dt("demo.dial.listSep"))
     }
 
     // MARK: - 动作
@@ -87,9 +87,9 @@ final class DialerViewController: UIViewController {
         errorLabel.text = ""
         let server = serverField.text?.trimmingCharacters(in: .whitespaces) ?? ""
         let user = userField.text?.trimmingCharacters(in: .whitespaces) ?? ""
-        guard !server.isEmpty else { return setLoginHint("请先填服务器地址（\(DemoSession.serverPlaceholder)）") }
-        guard !user.isEmpty else { return setLoginHint("请先填用户 ID") }
-        setLoginHint("登录中…", isError: false)
+        guard !server.isEmpty else { return setLoginHint(dt("demo.dial.err.needServer", ["hint": DemoSession.serverPlaceholder])) }
+        guard !user.isEmpty else { return setLoginHint(dt("demo.dial.err.needUser")) }
+        setLoginHint(dt("demo.login.busy"), isError: false)
         loginButton.isEnabled = false
         Task { @MainActor in
             do {
@@ -111,7 +111,7 @@ final class DialerViewController: UIViewController {
     */
     private func syntheticRow() -> UIStackView {
         let label = UILabel()
-        label.text = "合成画面（模拟器没有摄像头）"
+        label.text = dt("demo.dial.synthetic")
         label.font = .systemFont(ofSize: 13)
         label.textColor = .secondaryLabel
         label.numberOfLines = 0
@@ -170,8 +170,8 @@ final class DialerViewController: UIViewController {
     @objc private func onJoinByCallID() {
         errorLabel.text = ""
         let callID = joinCallField.text?.trimmingCharacters(in: .whitespaces) ?? ""
-        guard !callID.isEmpty else { return errorLabel.text = "请先填 call_id" }
-        guard let kit = session.kit else { return errorLabel.text = "还没登录" }
+        guard !callID.isEmpty else { return errorLabel.text = dt("demo.dial.err.needCallId") }
+        guard let kit = session.kit else { return errorLabel.text = dt("demo.dial.err.notLoggedIn") }
         kit.joinCall(callID)
     }
 
@@ -215,29 +215,27 @@ final class DialerViewController: UIViewController {
         errorLabel.numberOfLines = 0
         groupLabel.font = .systemFont(ofSize: 15)
 
-        DemoUI.style(loginButton, title: "登录", action: #selector(onLogin), target: self)
-        DemoUI.style(logoutButton, title: "退出", action: #selector(onLogout), target: self)
-        let audio = DemoUI.button("📞 语音", #selector(onAudio), self)
-        let video = DemoUI.button("📹 视频", #selector(onVideo), self)
-        let pick = DemoUI.button("选人 ›", #selector(onPickGroup), self)
-        let group = DemoUI.button("发起群通话", #selector(onGroupCall), self)
-        let join = DemoUI.button("加入房间", #selector(onJoinMeeting), self)
-        let joinCall = DemoUI.button("加入这通电话", #selector(onJoinByCallID), self)
+        DemoUI.style(loginButton, title: dt("demo.login.title"), action: #selector(onLogin), target: self)
+        DemoUI.style(logoutButton, title: dt("demo.logout"), action: #selector(onLogout), target: self)
+        let audio = DemoUI.button(dt("demo.dial.audio"), #selector(onAudio), self)
+        let video = DemoUI.button(dt("demo.dial.video"), #selector(onVideo), self)
+        let pick = DemoUI.button(dt("demo.dial.pick"), #selector(onPickGroup), self)
+        let group = DemoUI.button(dt("demo.dial.startGroup"), #selector(onGroupCall), self)
+        let join = DemoUI.button(dt("demo.dial.joinRoom"), #selector(onJoinMeeting), self)
+        let joinCall = DemoUI.button(dt("demo.dial.joinThisCall"), #selector(onJoinByCallID), self)
         callButtons = [audio, video, pick, group, join, joinCall]
 
         let stack = UIStackView(arrangedSubviews: [
-            DemoUI.card("身份", [serverField, DemoUI.note(DemoSession.serverHint),
+            DemoUI.card(dt("demo.identity"), [serverField, DemoUI.note(DemoSession.serverHint),
                                userField, syntheticRow(), statusLabel,
                                loginButton, logoutButton, loginHint]),
-            DemoUI.card("单人通话", [calleeField, DemoUI.row([audio, video])]),
-            DemoUI.card("多人通话（最多 8 人）", [DemoUI.row([groupLabel, pick]), group,
-                                        DemoUI.note("群号固定 \"\(Self.demoChatGroupID)\"（HOST_INTEGRATION_DESIGN §3.2），"
-                                                    + "「添加成员」据此向 DemoInviteProvider 要候选人。")]),
-            DemoUI.card("加入进行中的群通话", [joinCallField, joinCall,
-                                       DemoUI.note("真实宿主靠 webhook call.started 或后台查询知道哪通电话在进行中，"
-                                                   + "这里手填 call_id 只是为了验证 call.join 这条路径。")]),
-            DemoUI.card("会议房间", [roomField, join,
-                                 DemoUI.note("会议不走振铃，直接进房。把房间号发给另一台设备就能双开。")]),
+            DemoUI.card(dt("demo.dial.single"), [calleeField, DemoUI.row([audio, video])]),
+            DemoUI.card(dt("demo.dial.groupLimit", ["n": 8]), [DemoUI.row([groupLabel, pick]), group,
+                                        DemoUI.note(dt("demo.dial.groupNoteIos", ["id": Self.demoChatGroupID]))]),
+            DemoUI.card(dt("demo.dial.joinGroupCall"), [joinCallField, joinCall,
+                                       DemoUI.note(dt("demo.dial.joinCallNoteIos"))]),
+            DemoUI.card(dt("demo.dial.meeting"), [roomField, join,
+                                 DemoUI.note(dt("demo.dial.meetingNote"))]),
             errorLabel,
         ])
         stack.axis = .vertical
