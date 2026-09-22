@@ -154,13 +154,37 @@ extension IMWebRTCAdapter {
         // 只加计数、不碰底层会话（见 `releaseAudioSession`），elapsed 会是 2~3 ms，路由不会重新协商。
         let wasActive = session.isActive
         var failure: String?
+        var orphanReclaimed = false
         do {
             try session.setCategory(.playAndRecord, mode: .voiceChat, options: [.allowBluetooth])
             try session.setActive(true)
-            // 成功一次记一笔，`close()` 按这个数还回去；见 `audioActivations`。
+            /*
+             **成功一次记一笔，`close()` 按这个数还回去；见 `audioActivations`。**
+
+             这里跟 `close()` 之间有一道没锁住的窗口：`reassertCallAudioCategory`
+             （打断结束 / 媒体服务重置 / 路由变化发现类目不对）先在自己的 `lock` 临界区里读一次
+             `audioSessionActive`，**放锁之后**才走到这儿来真正调 `setActive(true)`——
+             如果 `close()` 恰好插在这两步中间跑完（挂断跟这三条通知赛跑，今天没真机走过这条），
+             `close()` 早就把 `audioActivations` 读走清零、`audioSessionActive` 也已经是 false，
+             这次 `setActive(true)` 成功挣来的一次激活就没人会在这通电话里替它还账——
+             算进 `audioActivations` 只会让它顶到下一通电话头上，重演这个文件要修的那个泄漏。
+             所以这里重新核实一遍：`audioSessionActive` 已经不是 true 了，说明这次改动来迟了，
+             当场用 `setActive(false)` 把它还掉，不进计数。
+            */
             lock.lock()
-            audioActivations += 1
+            let stillActive = audioSessionActive
+            if stillActive { audioActivations += 1 }
             lock.unlock()
+            if !stillActive {
+                orphanReclaimed = true
+                do {
+                    try session.setActive(false)
+                } catch {
+                    // 还不掉也不该往上抛：通话已经在别的线程结束了，顶多计数还欠着，
+                    // 下一通电话激活时 `rtc_was_active` 会揭示。
+                    IMRTCLog.warn("补还迟到的音频会话激活失败", ["err": String(describing: error)])
+                }
+            }
         } catch {
             // 配不上不该让通话直接失败：多数情况下仍能出声，只是路由不理想。
             failure = String(describing: error)
@@ -173,6 +197,9 @@ extension IMWebRTCAdapter {
             "elapsed_ms": String(elapsedMS),
             "rtc_was_active": String(wasActive),
             "rtc_active": String(session.isActive),
+            // 与 close() 赛跑迟到的激活被当场还掉了；为 true 时上面这些回读字段仍是这一刀
+            // 生效前的状态，别拿它们当「通话态配成了」的证据。
+            "orphan_reclaimed": String(orphanReclaimed),
             "category": av.category.rawValue,
             "mode": av.mode.rawValue,
             "inputs": String(av.currentRoute.inputs.count),
@@ -185,7 +212,8 @@ extension IMWebRTCAdapter {
         fields["webrtc_config"] = "\(webrtc.category)/\(webrtc.mode)"
         if let failure { fields["err"] = failure }
         // **回读对不上比抛错更值得喊**：抛错至少还有个错误码，回读对不上是纯静默。
-        if failure != nil || !landed {
+        // 迟到的激活也当 warn 喊出来：通话已经在别的线程挂断，这一刀本就不该有实际效果。
+        if failure != nil || !landed || orphanReclaimed {
             IMRTCLog.warn("音频会话没配成通话态", fields)
         } else {
             IMRTCLog.info("音频会话已配成通话态", fields)

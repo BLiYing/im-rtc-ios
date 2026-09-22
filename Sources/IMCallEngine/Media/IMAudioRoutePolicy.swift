@@ -14,9 +14,7 @@ import Foundation
  */
 
 /// 设备插拔引起的路由变化（`newDeviceAvailable` = 1、`oldDeviceUnavailable` = 2）。
-/// `public`：`IMCallKit` 的 `imShouldUpdateRoutePickerAvailability`（`IMAudioRoutePickerPolicy.swift`）
-/// 判的是同一组 reason，直接引用这份，别再起一份容易随 Apple 改语义而两边漂移的副本。
-public let imRouteChangeDeviceReasons: Set<UInt> = [1, 2]
+let imRouteChangeDeviceReasons: Set<UInt> = [1, 2]
 
 /// `AVAudioSession.Port.builtInSpeaker` 的字符串值。
 let imBuiltInSpeakerPort = "Speaker"

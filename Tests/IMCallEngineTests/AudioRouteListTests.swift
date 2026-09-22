@@ -72,4 +72,14 @@ final class AudioRouteListTests: XCTestCase {
         XCTAssertEqual(a, b, "同一个设备改了显示名仍是同一条路由")
         XCTAssertNotEqual(a, IMAudioRoute(kind: .bluetooth, name: "AirPods", uid: "bt-2"))
     }
+
+    /// **接了两只同类设备时，`imPickCurrentRoute` 按 `kind` 认，分不出哪一只在用**——
+    /// `inputPort(for:)` 的注释里写过这个已知限制（按类型分不出是哪一只蓝牙），这里把它钉成用例：
+    /// 清单两条都在，勾会落在遍历到的第一条上，不代表那一条真的在用。别指望这个函数能分辨。
+    func testPickCurrentIsAmbiguousWithTwoOfSameKind() {
+        let routes = build([("BluetoothHFP", "车载", "bt-car"), ("BluetoothHFP", "AirPods", "bt-airpods")])
+        XCTAssertEqual(routes.filter { $0.kind == .bluetooth }.count, 2, "两只蓝牙都要出现在清单里")
+        XCTAssertEqual(imPickCurrentRoute(routes: routes, outputPorts: ["BluetoothHFP"])?.uid, "bt-car",
+                       "按 kind 认，只会落在清单里第一条同类路由上——即使实际在用的是 AirPods")
+    }
 }

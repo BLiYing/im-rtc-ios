@@ -24,6 +24,26 @@
   群通话用户也测过正常。**蓝牙连着时选「听筒」仍走蓝牙是设计行为**（用户 09-22 拍板：`override(.none)` 就是「交还系统」，
   系统有蓝牙就走蓝牙，不算限制、不要再想着改 category 去「修」它）。CLIENT_PARITY iOS 那行 🟡 → ✅；Android 三处同晚跟上并真机 ✅（v1.65）。
   角标离边 8 → 11（Android 真机反馈 8 压在圆边上，两端同改）；测法 / 判据 / 坑沉淀在 server `docs/ops/AUDIO_ROUTE_TESTING.md`，盯日志用 server `scripts/audiowatch.sh <uid>`。
+  - **`/code-review --fix` 补的三处（09-22 晚，`test.sh` 全绿，未上真机）**：
+    ① `applyCallAudioCategory` 与 `close()` 之间原来有一道没锁住的窗口——`reassertCallAudioCategory`
+    （打断结束 / 媒体服务重置 / 路由变化发现类目不对）先读一次 `audioSessionActive` 再放锁，
+    `close()` 若恰好插在这两步中间跑完，那次迟到的 `setActive(true)` 会算进已经清零的 `audioActivations`，
+    在下一通电话身上顶账——原样重演这个文件要修的那个泄漏。现在改成锁内二次核实：还是活的才计数，
+    不是就当场 `setActive(false)` 还掉，新增日志字段 `orphan_reclaimed`。**这条路径今天没真机走过**，
+    真出现看 `orphan_reclaimed=true` 那一行。
+    ② `setAudioRoute` 目标设备（蓝牙 / 有线耳机）已经不在 `availableInputs` 里时，原来会直接
+    静默改到内置麦（`inputPort(for:)` 的兜底），与 `IMMediaAdapter.setAudioRoute` 协议注释写的
+    「静默忽略」不符——现在先判一道 `routeStillAvailable`，真不在清单里就什么都不做；
+    `inputPort(for:)` 的内置麦兜底留着，专门防它自己临界区里的协商窗口（不是同一件事）。
+    ③ `imRouteChangeDeviceReasons` 被前一刀改成 `public`，理由写的是「`IMCallKit` 的
+    `imShouldUpdateRoutePickerAvailability`（`IMAudioRoutePickerPolicy.swift`）也要用」——
+    全仓搜不到这个函数或文件，是句悬空引用，改回内部可见性。
+    单测补了两条纯逻辑用例（两只蓝牙同时在场时 `imPickCurrentRoute` 按 kind 认、天然分不出哪只在用；
+    `audioRoutesChanged(current: nil)` 不该动 `speakerOn`）。
+    **仍未处理、留作已知限制**：面板已经开着时若打断/媒体服务重置把会话打回未配置，
+    `setAudioRoute` 此时只记得住「要不要外放」这个布尔，记不住用户选的具体蓝牙/有线设备——
+    真要补要在 reassert 路径上重放具体设备，属于这次「不主动抢路由、交给系统协商」既定取舍之外的
+    新行为，没有真机验证不敢动。
 - **09-22 Demo 各页自己的文案也进表了**：`gen-i18n.py` 拆成两份生成物——Kit 表 `IMMessages.gen.swift`（`imT()`）与 Demo 表 `Demo/.../DemoMessages.gen.swift`（`DemoText.swift` 的 `dt()`）。`HistoryTime.swift` 的三档文案改成可注入闭包，默认值仍是原中文——不破坏 `DemoLogicTests` 那张用例表，Demo 侧调用时传 `dt()` 本地化版本。9 个 Demo 文件接入。`test.sh` 全绿（11 步，含 `xcodebuild`）。
 - **09-21 多语言（zh-CN / en）iOS 已做**：`IMCallKitConfig.locale` / `messages`，`imT(key)` 取词，文案表由 `scripts/gen-i18n.py` 从 server `docs/i18n/strings.json` 生成；Demo 设置页「语言 / Language」。设计见 server `docs/design/I18N_DESIGN.md`。
 

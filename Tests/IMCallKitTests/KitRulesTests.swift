@@ -467,4 +467,15 @@ final class AudioRoutePickerTests: XCTestCase {
         XCTAssertEqual(imRouteDisplayName(route(.earpiece, uid: imAudioRouteEarpieceUID)), imT("route.earpiece"),
                        "内置两条没有设备名，用本地化文案")
     }
+
+    /// `current == nil`（清单非空但认不出在用哪条）时**不能替用户瞎猜外放开关**——
+    /// 保持原样，总比按 `nil` 误判成「不是扬声器」强。
+    func testCurrentNilDoesNotTouchSpeakerFlag() {
+        var state = IMCallViewState()
+        state = reduceCallView(state, .setSpeaker(true))
+        let routes = builtInTwo + [route(.bluetooth, uid: "bt-1", name: "AirPods")]
+        state = reduceCallView(state, .audioRoutesChanged(routes: routes, current: nil))
+        XCTAssertTrue(state.selfState.speakerOn, "认不出在用哪条时不该动 speakerOn")
+        XCTAssertNil(state.selfState.currentAudioRoute)
+    }
 }

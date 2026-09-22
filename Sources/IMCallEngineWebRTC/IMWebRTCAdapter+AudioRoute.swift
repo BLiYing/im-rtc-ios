@@ -55,17 +55,52 @@ extension IMWebRTCAdapter {
     public func setAudioRoute(_ route: IMAudioRoute) {
         lock.lock()
         let active = audioSessionActive
-        // 两套意图同步，见文件头部。
-        desiredSpeakerOn = route.kind == .speaker
         lock.unlock()
         guard active else {
+            // 会话还没配好（`availableAudioRoutes` 这时是空清单，面板本不该出现），
+            // 或者打断 / 媒体服务重置恰好在面板已经开着时把会话打回未配置——
+            // 具体设备（哪一只蓝牙）这里记不住，只能先记下粗粒度的「要不要外放」，
+            // 交给会话重新配好时系统协商。两套意图同步，见文件头部。
+            lock.lock()
+            desiredSpeakerOn = route.kind == .speaker
+            lock.unlock()
             IMRTCLog.info("会话还没配好，先记下路由意向", ["kind": String(route.kind.rawValue)])
             return
         }
+        /*
+         **目标设备已经不在清单里就静默忽略，别把通话弄断，也别悄悄改去别的设备**
+         （`IMMediaAdapter.setAudioRoute` 的协议注释）。设备可能刚被拔掉，或用户点下去
+         那一刻它正好在 HFP/A2DP 之间协商，`availableInputs` 里瞬间没有它。
+
+         这道检查与 `inputPort(for:)` 里「找不到就退回内置麦」的兜底不是一回事：那条是
+         `applyAudioRoute` 已经进了 `RTCAudioSession` 的锁、没法回头时的最后防线，
+         真触发时会把路由**悄悄改到内置麦**，而不是什么都不做——留着它是为了防会话级
+         API 传 `nil`（那会把会话往 A2DP 推，比切错设备更糟）。这里提前判一道，
+         让「设备真的还在」与「设备刚好消失」这两种情况分流：前者才走到那条兜底可能触发的窗口。
+        */
+        guard Self.routeStillAvailable(route) else {
+            IMRTCLog.warn("音频路由切换目标已不在清单里，忽略这次切换",
+                          ["kind": String(route.kind.rawValue), "uid": route.uid])
+            return
+        }
+        lock.lock()
+        // 两套意图同步，见文件头部。
+        desiredSpeakerOn = route.kind == .speaker
+        lock.unlock()
         applyAudioRoute(route)
         // 系统未必发 routeChangeNotification（比如目标就是当前路由），自己补一次广播，
         // 免得面板上的勾不跟手。
         notifyAudioRoutesChanged()
+    }
+
+    /// 目标路由此刻还在清单里吗：内置两条恒在，外接设备按 `uid` 认。见 `setAudioRoute`。
+    private static func routeStillAvailable(_ route: IMAudioRoute) -> Bool {
+        switch route.kind {
+        case .earpiece, .speaker:
+            return true
+        case .wiredHeadset, .bluetooth:
+            return currentInputDescriptors().contains { $0.uid == route.uid }
+        }
     }
 
     /// 真正去改。**只在会话配好之后调**，全程在 `RTCAudioSession` 的锁里。
