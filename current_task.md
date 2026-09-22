@@ -24,7 +24,7 @@
   群通话用户也测过正常。**蓝牙连着时选「听筒」仍走蓝牙是设计行为**（用户 09-22 拍板：`override(.none)` 就是「交还系统」，
   系统有蓝牙就走蓝牙，不算限制、不要再想着改 category 去「修」它）。CLIENT_PARITY iOS 那行 🟡 → ✅；Android 三处同晚跟上并真机 ✅（v1.65）。
   角标离边 8 → 11（Android 真机反馈 8 压在圆边上，两端同改）；测法 / 判据 / 坑沉淀在 server `docs/ops/AUDIO_ROUTE_TESTING.md`，盯日志用 server `scripts/audiowatch.sh <uid>`。
-  - **`/code-review --fix` 补的三处（09-22 晚，`test.sh` 全绿，未上真机）**：
+  - **`/code-review --fix` 补的三处（09-22 晚，`test.sh` 全绿；20:51~20:54 grace × web bob 两通复验主路径 ✅：开场真激活、面板切换、挂断归零；打断 / 重置那条补偿路径仍没真机走过）**：
     ① `applyCallAudioCategory` 与 `close()` 之间原来有一道没锁住的窗口——`reassertCallAudioCategory`
     （打断结束 / 媒体服务重置 / 路由变化发现类目不对）先读一次 `audioSessionActive` 再放锁，
     `close()` 若恰好插在这两步中间跑完，那次迟到的 `setActive(true)` 会算进已经清零的 `audioActivations`，
