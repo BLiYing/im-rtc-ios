@@ -8,7 +8,7 @@ import Foundation
  **五端统一 2.0.0**（2026-09-11 起统一版本；2.0.0 起协议版本升到 2），协议不兼容才升大版本。
  握手帧里的 `sdk` 只用于日志与灰度，不驱动逻辑（RTC_PROTOCOL.md）。
  */
-public let IMCallEngineVersion = "2.0.0"
+public let IMCallEngineVersion = "2.1.0"
 
 extension IMCallEngine {
     /// SDK 版本号（= `IMCallEngineVersion`）。全局常量 ObjC 看不见，所以门面上再挂一个。
