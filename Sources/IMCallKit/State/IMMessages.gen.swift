@@ -280,7 +280,7 @@ enum IMMessages {
         "invite.emptyTyping": "You can type a user ID above",
         "invite.slotsLeft": "{n} more can be added",
         "ctl.speaker": "Speaker",
-        "route.earpiece": "iPhone",
+        "route.earpiece": "Earpiece",
         "route.speaker": "Speaker",
         "route.wiredHeadset": "Wired Headset",
         "route.bluetooth": "Bluetooth",
