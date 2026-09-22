@@ -140,8 +140,10 @@ public final class IMControlButton: UIControl {
 
         NSLayoutConstraint.activate([
             // 右下角 8×8，离边 8（设计稿 §04 的尺寸表）。
-            chevron.trailingAnchor.constraint(equalTo: circle.trailingAnchor, constant: -8),
-            chevron.bottomAnchor.constraint(equalTo: circle.bottomAnchor, constant: -8),
+            // 离外接矩形 11：圆在 45° 角上比矩形往里缩了 8.2（56 × (1 − 1/√2) / 2），
+            // 用 8 会让角标外角正好压在圆边上（Android 真机 09-22 用户反馈「太挨着边缘」），11 才整个落在圆里。两端同值。
+            chevron.trailingAnchor.constraint(equalTo: circle.trailingAnchor, constant: -11),
+            chevron.bottomAnchor.constraint(equalTo: circle.bottomAnchor, constant: -11),
             chevron.widthAnchor.constraint(equalToConstant: 8),
             chevron.heightAnchor.constraint(equalToConstant: 8),
         ])

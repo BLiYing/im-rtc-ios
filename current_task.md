@@ -22,7 +22,8 @@
   面板扬声器 ↔ AirPods 来回切都落到位（`route_inputs` 跟着走）；用户确认双向都听得到。
   之前拖了 8 轮的「第二通双向无声」根因是 **`releaseAudioSession()` 绕过 `RTCAudioSession` 关底层、激活计数没还**（见「已知坑」第一条），已修。
   群通话用户也测过正常。**蓝牙连着时选「听筒」仍走蓝牙是设计行为**（用户 09-22 拍板：`override(.none)` 就是「交还系统」，
-  系统有蓝牙就走蓝牙，不算限制、不要再想着改 category 去「修」它）。CLIENT_PARITY iOS 那行 🟡 → ✅，Android 三处（公开枚举、回调、面板）还没跟。
+  系统有蓝牙就走蓝牙，不算限制、不要再想着改 category 去「修」它）。CLIENT_PARITY iOS 那行 🟡 → ✅；Android 三处同晚跟上并真机 ✅（v1.65）。
+  角标离边 8 → 11（Android 真机反馈 8 压在圆边上，两端同改）；测法 / 判据 / 坑沉淀在 server `docs/ops/AUDIO_ROUTE_TESTING.md`，盯日志用 server `scripts/audiowatch.sh <uid>`。
 - **09-22 Demo 各页自己的文案也进表了**：`gen-i18n.py` 拆成两份生成物——Kit 表 `IMMessages.gen.swift`（`imT()`）与 Demo 表 `Demo/.../DemoMessages.gen.swift`（`DemoText.swift` 的 `dt()`）。`HistoryTime.swift` 的三档文案改成可注入闭包，默认值仍是原中文——不破坏 `DemoLogicTests` 那张用例表，Demo 侧调用时传 `dt()` 本地化版本。9 个 Demo 文件接入。`test.sh` 全绿（11 步，含 `xcodebuild`）。
 - **09-21 多语言（zh-CN / en）iOS 已做**：`IMCallKitConfig.locale` / `messages`，`imT(key)` 取词，文案表由 `scripts/gen-i18n.py` 从 server `docs/i18n/strings.json` 生成；Demo 设置页「语言 / Language」。设计见 server `docs/design/I18N_DESIGN.md`。
 
