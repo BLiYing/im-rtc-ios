@@ -1,4 +1,6 @@
 import Foundation
+// 只为 `IMAudioRoute` 这一个公开类型（路由清单来自 Engine 的回调表，见 `IMSelfState.audioRoutes`）。
+import IMCallEngine
 
 /*
  通话界面的视图模型 —— **纯值语义，不碰 UIKit、不碰 Engine**。
@@ -92,14 +94,52 @@ public struct IMSelfState: Equatable, Sendable {
     /// 用户在**来电页上亲手关掉了**摄像头（拍板 §11-10：关掉摄像头再接听 = 以语音接听）。
     /// 不能拿 `cameraOn == false` 代替：群通话默认就关着进来，那不是用户的选择，接听照样要问摄像头（交互稿 §01）。
     public var cameraOptedOut = false
+    /**
+     此刻能选哪些音频路由（`IMCallEngine.availableAudioRoutes` 经回调抛上来，设计稿 §04）。
+
+     **空数组 = 不提供路由选择**：会话还没配好（响铃期故意不配）、或这个平台没有这个概念。
+     只有内置两条时扬声器键是二态开关，出现第三条才变成路由选择器，判据见 `imShowsRoutePicker`。
+     **不跨通话保留**：通话结束会话就释放了，清单随之作废，下一通由 Engine 重新抛。
+    */
+    public var audioRoutes: [IMAudioRoute] = []
+    /// 此刻声音从哪出；认不出来时 nil（面板就不打勾，总比打错强）。
+    public var currentAudioRoute: IMAudioRoute?
 
     public init(micOn: Bool = true, cameraOn: Bool = false, speakerOn: Bool = false,
-                cameraBlocked: Bool = false, cameraOptedOut: Bool = false) {
+                cameraBlocked: Bool = false, cameraOptedOut: Bool = false,
+                audioRoutes: [IMAudioRoute] = [], currentAudioRoute: IMAudioRoute? = nil) {
         self.micOn = micOn
         self.cameraOn = cameraOn
         self.speakerOn = speakerOn
         self.cameraBlocked = cameraBlocked
         self.cameraOptedOut = cameraOptedOut
+        self.audioRoutes = audioRoutes
+        self.currentAudioRoute = currentAudioRoute
+    }
+}
+
+/**
+ imShowsRoutePicker 扬声器键此刻该是「路由选择器」还是「二态开关」（设计稿 §04 v3.5）。
+
+ **判据是可选路由多于内置那两条**，不是「当前在用的是不是外接设备」——
+ 用户在面板里选回听筒之后蓝牙其实还连着，入口不该因此消失（上一版栽过这个跟头）。
+ */
+public func imShowsRoutePicker(_ routes: [IMAudioRoute]) -> Bool { routes.count > 2 }
+
+/**
+ imRouteDisplayName 面板那一行 / 按钮文案该写什么。
+
+ 外接设备用系统给的真名（「AirPods」），内置两条用本地化文案——Engine 没有 UI、不做本地化，
+ 所以「听筒」「扬声器」这两个词只能在 Kit 取（见 `IMAudioRoute.name` 的注释）。
+ **放在这里而不是面板那个文件**：面板是 `#if canImport(UIKit)` 的，macOS 上 `swift test` 编不到它。
+ */
+public func imRouteDisplayName(_ route: IMAudioRoute) -> String {
+    if !route.name.isEmpty { return route.name }
+    switch route.kind {
+    case .earpiece: return imT("route.earpiece")
+    case .speaker: return imT("route.speaker")
+    case .wiredHeadset: return imT("route.wiredHeadset")
+    case .bluetooth: return imT("route.bluetooth")
     }
 }
 
@@ -213,6 +253,8 @@ public enum IMCallViewAction: Sendable {
     case setMic(Bool)
     case setCamera(Bool)
     case setSpeaker(Bool)
+    /// Engine 抛来的可选路由清单 / 当前路由（插拔耳机、连断蓝牙、用户自己切都会来一条）。
+    case audioRoutesChanged(routes: [IMAudioRoute], current: IMAudioRoute?)
     case setMinimized(Bool)
     case setSwapped(Bool)
     case dismiss
@@ -448,6 +490,12 @@ public func reduceCallView(_ state: IMCallViewState,
 
     case let .setSpeaker(on):
         next.selfState.speakerOn = on
+
+    case let .audioRoutesChanged(routes, current):
+        next.selfState.audioRoutes = routes
+        next.selfState.currentAudioRoute = current
+        // 路由与「外放与否」是同一件事的两种说法，勾在扬声器那一行时按钮也该是亮的。
+        if let current { next.selfState.speakerOn = current.kind == .speaker }
 
     case let .setMinimized(minimized):
         next.isMinimized = minimized

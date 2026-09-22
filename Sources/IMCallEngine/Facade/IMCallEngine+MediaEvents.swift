@@ -52,6 +52,17 @@ extension IMCallEngine {
             guard pc == .sub, state == "connected" else { return }
             Task { await self.loop.dispatch(.internalEvent(name: "media_ready")) }
         }
+        events.onAudioRoutesChanged = { [weak self] (routes: [IMAudioRoute], current: IMAudioRoute?) in
+            guard let self else { return }
+            IMRTCLog.info("音频路由清单变化", [
+                "count": String(routes.count),
+                "current": current.map { "\($0.kind.rawValue):\($0.uid)" } ?? "-",
+            ])
+            // 本地事件，不进状态机：路由是设备的事，跟通话状态无关。
+            self.dispatcher.emitConnectionEvent(.audioRoutesChanged, [
+                "routes": routes, "current": current as Any,
+            ])
+        }
         events.onFirstVideoFrame = { [weak self] trackID in
             guard let self else { return }
             Task {

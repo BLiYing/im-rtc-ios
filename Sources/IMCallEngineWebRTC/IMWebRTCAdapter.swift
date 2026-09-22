@@ -91,6 +91,9 @@ public final class IMWebRTCAdapter: NSObject, IMMediaAdapter, @unchecked Sendabl
     /// 下一个上行 offer 要不要带 ICE restart。见 `restartPubICE()`。
     var pubICERestartPending = false
     var audioSessionActive = false // 见 IMWebRTCAdapter+AudioSession.swift。
+    /// 我们在 `RTCAudioSession` 上欠着几次 `setActive(true)`。**每一次都要在 `close()` 里用
+    /// `setActive(false)` 还掉**——它的激活是引用计数的，少还一次下一通就哑（见 `releaseAudioSession`）。
+    var audioActivations = 0
     var desiredSpeakerOn = false // 同上：会话还没配好时先记下来，配好再补应用。
     /// 同上：音频会话的三个监听（路由变化 / 被打断 / 媒体服务重置），`close()` 时一起摘。
     var sessionObservers: [NSObjectProtocol] = []
@@ -465,6 +468,8 @@ public final class IMWebRTCAdapter: NSObject, IMMediaAdapter, @unchecked Sendabl
         peers = nil
         audioSessionActive = false
         desiredSpeakerOn = false
+        let activations = audioActivations
+        audioActivations = 0
         lock.unlock()
 
         staleOpening?.task.cancel()
@@ -477,7 +482,7 @@ public final class IMWebRTCAdapter: NSObject, IMMediaAdapter, @unchecked Sendabl
         uplinkVideoStats.cancel()
         uplinkAudioStats.cancel()
         oldPeers?.close()
-        if wasAudioSessionActive { Self.releaseAudioSession() }
+        if wasAudioSessionActive { Self.releaseAudioSession(activations: activations) }
     }
 
     // MARK: - 内部

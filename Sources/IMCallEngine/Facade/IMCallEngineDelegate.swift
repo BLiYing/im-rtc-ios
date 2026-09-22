@@ -220,6 +220,18 @@ import Foundation
     @objc optional func callEngine(_ engine: IMCallEngine, didReceiveFirstVideoFrame uid: String,
                                    trackID: String)
 
+    /**
+     可选音频路由清单、或此刻在用的那条变了（设计文档 §7.5）。
+
+     本地事件，没有对应的信令帧。四个时刻都会抛：插有线耳机、拔有线耳机、连蓝牙、断蓝牙，
+     以及宿主自己调 `setAudioRoute(_:)` / `setSpeakerOn(_:)` 之后真的切过去了。
+     **只有 iOS / Android 抛**：Web 与桌面没有音频路由这个概念，`routes` 恒为空。
+
+     `current` 是此刻在用的那条，认不出来时 nil（界面就别打勾，总比打错强）。
+    */
+    @objc optional func callEngine(_ engine: IMCallEngine, audioRoutesDidChange routes: [IMAudioRoute],
+                                   current: IMAudioRoute?)
+
     // MARK: - 房间（会议）
 
     /// 进房成功（会议与通话都抛）。`memberUIDs` 是进房这一刻房里已有的人（快照，不含自己）——

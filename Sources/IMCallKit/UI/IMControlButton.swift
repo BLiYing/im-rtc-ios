@@ -47,11 +47,24 @@ public final class IMControlButton: UIControl {
         set { offCaption = newValue; applyStyle() }
     }
 
+    /// 顶掉 `icon` / `onIcon` 的字形。扬声器键变成「路由选择」形态时用它换成当前路由的字形
+    /// （设计稿 §04）；nil = 还按开关那两个字形走。
+    public var overrideIcon: IMKitIcon? {
+        didSet { applyStyle() }
+    }
+
+    /// 右下角那枚 8×8 的 `chevron-up` 角标：**只在「路由选择」形态下出现**，
+    /// 二态开关形态没有（设计稿 §04 的尺寸表）。它是「点开还有东西」的唯一提示。
+    public var showsRouteChevron = false {
+        didSet { chevron.isHidden = !showsRouteChevron }
+    }
+
     private let role: Role
     private let size: Size
     private let circle = UIView()
     private let iconView = UIImageView()
     private let captionLabel = UILabel()
+    private let chevron = UIImageView()
     private let offIcon: IMKitIcon
     private let onIcon: IMKitIcon
     private var offCaption: String
@@ -116,6 +129,23 @@ public final class IMControlButton: UIControl {
         iconView.translatesAutoresizingMaskIntoConstraints = false
         circle.addSubview(iconView)
 
+        // 路由选择形态的角标，默认藏着（见 showsRouteChevron）。
+        chevron.image = UIImage(systemName: "chevron.up",
+                                withConfiguration: UIImage.SymbolConfiguration(pointSize: 8, weight: .bold))
+        chevron.tintColor = theme.primaryText
+        chevron.contentMode = .scaleAspectFit
+        chevron.isHidden = true
+        chevron.translatesAutoresizingMaskIntoConstraints = false
+        circle.addSubview(chevron)
+
+        NSLayoutConstraint.activate([
+            // 右下角 8×8，离边 8（设计稿 §04 的尺寸表）。
+            chevron.trailingAnchor.constraint(equalTo: circle.trailingAnchor, constant: -8),
+            chevron.bottomAnchor.constraint(equalTo: circle.bottomAnchor, constant: -8),
+            chevron.widthAnchor.constraint(equalToConstant: 8),
+            chevron.heightAnchor.constraint(equalToConstant: 8),
+        ])
+
         NSLayoutConstraint.activate([
             circle.topAnchor.constraint(equalTo: topAnchor),
             circle.centerXAnchor.constraint(equalTo: centerXAnchor),
@@ -147,7 +177,8 @@ public final class IMControlButton: UIControl {
             circle.backgroundColor = isOn ? theme.controlActiveBackground : theme.controlBackground
             iconView.tintColor = isOn ? theme.controlActiveText : theme.primaryText
         }
-        iconView.image = (isOn ? onIcon : offIcon).image(pointSize: iconPointSize)
+        iconView.image = (overrideIcon ?? (isOn ? onIcon : offIcon)).image(pointSize: iconPointSize)
+        chevron.tintColor = iconView.tintColor
         captionLabel.text = isOn ? onCaption : offCaption
         alpha = isDisabledLook ? 0.35 : 1
         accessibilityLabel = captionLabel.text

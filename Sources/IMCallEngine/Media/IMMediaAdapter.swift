@@ -76,6 +76,9 @@ public struct IMMediaAdapterEvents: Sendable {
     /// **判据必须是「出数据」而不是「协商完成」**：协商完成时远端轨道还是静的，
     /// 那一刻让 UI 撤 loading 就是露黑屏。Web 端为此改过一次（用轨道的 `unmute`）。
     public var onFirstVideoFrame: (@Sendable (String) -> Void)?
+    /// 可选音频路由清单、或此刻在用的那条变了（插拔耳机、连断蓝牙、用户自己在面板里切）。
+    /// 第二个参数是「此刻在用哪条」，认不出来时 nil。
+    public var onAudioRoutesChanged: (@Sendable ([IMAudioRoute], IMAudioRoute?) -> Void)?
 
     public init() {}
 }
@@ -152,7 +155,20 @@ public protocol IMMediaAdapter: AnyObject, Sendable {
     func setMuted(_ cid: String, _ muted: Bool)
 
     /// setSpeakerOn 切换扬声器 / 听筒。**只改路由不改采集**，通话不中断。
+    ///
+    /// 四条路由的完整版是下面那组 `audioRoute` 成员；这一个保留，
+    /// 它表达的是「强制外放开 / 关」这个更粗的意图，宿主与旧代码都还在用。
     func setSpeakerOn(_ on: Bool)
+
+    /// 此刻能选哪些音频路由（设计稿 §04 面板的数据源）。**是「能选哪些」不是「在用哪个」。**
+    var availableAudioRoutes: [IMAudioRoute] { get }
+
+    /// 此刻声音从哪出；认不出来时 nil。
+    var currentAudioRoute: IMAudioRoute? { get }
+
+    /// setAudioRoute 切到指定的那条。**只改路由不改采集**，通话不中断；
+    /// 清单里已经没有这条设备（刚被拔掉）时静默忽略，别把通话弄断。
+    func setAudioRoute(_ route: IMAudioRoute)
 
     /**
      switchCamera 前后摄像头翻转。
@@ -203,4 +219,10 @@ public extension IMMediaAdapter {
 
     /// 默认什么都不做：没有采集的适配器无预览可停，已有的实现不受影响。
     func stopLocalPreview() {}
+
+    /// 默认没有路由可选：纯信令形态、以及 iOS 以外的实现都不必操心这三个。
+    /// 空清单的语义是「这个平台不提供路由选择」，界面据此退回二态扬声器开关。
+    var availableAudioRoutes: [IMAudioRoute] { [] }
+    var currentAudioRoute: IMAudioRoute? { nil }
+    func setAudioRoute(_ route: IMAudioRoute) {}
 }

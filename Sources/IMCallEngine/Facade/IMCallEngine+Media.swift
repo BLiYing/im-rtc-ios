@@ -68,12 +68,40 @@ extension IMCallEngine {
         try await act("mute", ["track_id": .string(trackID), "muted": .bool(muted)])
     }
 
-    /// setSpeakerOn 切换扬声器 / 听筒（设计文档 §7.5 的 `setAudioRoute`）。
+    /// setSpeakerOn 强制外放开 / 关。
     ///
     /// 提示类：不 throw。没有媒体适配器、或 `destroy()` 之后静默忽略。
+    /// 四条路由的完整版见下面 `setAudioRoute(_:)`；这一个表达的是更粗的「外放与否」，
+    /// 保留给旧宿主与「只要一个扬声器按钮」的界面用。
     @objc public func setSpeakerOn(_ on: Bool) {
         guard !(stateQueue.sync { isDestroyed }) else { return }
         media?.setSpeakerOn(on)
+    }
+
+    /**
+     availableAudioRoutes 此刻能选哪些音频路由（设计文档 §7.5，设计稿 §04 的面板数据源）。
+
+     **是「能选哪些」不是「在用哪个」**：内置听筒 / 扬声器恒在，插着的有线耳机、
+     连着的蓝牙各占一条。空数组 = 这个平台不提供路由选择（桌面 / Web / 纯信令形态），
+     界面据此退回二态扬声器开关。
+
+     顺序固定「听筒 / 扬声器 / 有线耳机 / 蓝牙」，与设计稿面板的行序一致。
+     */
+    @objc public var availableAudioRoutes: [IMAudioRoute] { media?.availableAudioRoutes ?? [] }
+
+    /// currentAudioRoute 此刻声音从哪出；认不出来、或平台不支持时 nil。
+    @objc public var currentAudioRoute: IMAudioRoute? { media?.currentAudioRoute }
+
+    /**
+     setAudioRoute 切到指定的那条路由（设计文档 §7.5）。
+
+     提示类：不 throw。`destroy()` 之后、没有媒体适配器、或这条设备刚好被拔掉时静默忽略——
+     **切不过去也绝不能把通话弄断**，顶多是声音还在原来那条路上。
+     结果以 `callEngine(_:audioRoutesDidChange:current:)` 回调为准，别假设调完就生效。
+     */
+    @objc public func setAudioRoute(_ route: IMAudioRoute) {
+        guard !(stateQueue.sync { isDestroyed }) else { return }
+        media?.setAudioRoute(route)
     }
 
     /**

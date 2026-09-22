@@ -119,6 +119,12 @@ public protocol IMCallControllerObserver: AnyObject {
         engine.delegate = self
         observeAppLifecycle()
         networkWatcher = IMNetworkWatcher { [weak engine] in engine?.notifyNetworkChanged() }
+        /*
+         **音频路由不在这里监听。** Kit 一个字都不碰 `AVAudioSession`——
+         清单与当前路由由 Engine 经 `audioRoutesDidChange` 回调抛上来（见 `+Delegate`）。
+         2026-09-22 试过在这里起观察者直接探会话，那比 `ensureAudioSessionConfigured()` 早得多，
+         违反 `IMWebRTCAdapter+AudioSession.swift` 头部那条「设置类入口一律不许触发配置」。
+        */
     }
 
     deinit {
@@ -280,6 +286,18 @@ public protocol IMCallControllerObserver: AnyObject {
         let on = !state.selfState.speakerOn
         apply(.setSpeaker(on))
         engine.setSpeakerOn(on)
+    }
+
+    /**
+     selectAudioRoute 面板里选了一条路由（设计稿 §04）。
+
+     **不乐观改本端状态**：路由切没切成只有系统说了算（设备可能刚被拔掉），
+     界面等 `audioRoutesDidChange` 回调再变——这跟 `toggleSpeaker` 的乐观更新不同，
+     那一个是纯布尔、切不过去也不会自相矛盾，而这里选错行会让勾打在没生效的设备上。
+     */
+    @objc public func selectAudioRoute(_ route: IMAudioRoute) {
+        IMRTCLog.info("[Kit] 选择音频路由", ["kind": String(route.kind.rawValue), "name": route.name])
+        engine.setAudioRoute(route)
     }
 
     /**

@@ -85,6 +85,12 @@ extension IMCallController: IMCallEngineDelegate {
         apply(.mediaReady)
     }
 
+    /// 可选路由清单 / 当前路由变了（插拔耳机、连断蓝牙、用户自己在面板里切）。
+    public func callEngine(_ engine: IMCallEngine, audioRoutesDidChange routes: [IMAudioRoute],
+                           current: IMAudioRoute?) {
+        apply(.audioRoutesChanged(routes: routes, current: current))
+    }
+
     // MARK: 成员
 
     public func callEngine(_ engine: IMCallEngine, userDidEnter uid: String) { apply(.userEnter(uid: uid)) }

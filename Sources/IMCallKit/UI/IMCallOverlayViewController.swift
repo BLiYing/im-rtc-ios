@@ -208,7 +208,23 @@ public final class IMCallOverlayViewController: UIViewController {
     @objc private func onEnd() { controller.end() }
     @objc private func onAccept() { controller.accept() }
     @objc private func onReject() { controller.reject() }
-    @objc private func onSpeaker() { controller.toggleSpeaker() }
+    /**
+     扬声器键：两种形态两条路（设计稿 §04 v3.5）。
+
+     只有内置两条路由时还是老样子——点一下就切外放。出现第三条时它是「路由选择」形态，
+     点开面板让用户挑，**不再直接切**：此刻「外放」已经不是二选一里的那一选了。
+    */
+    @objc private func onSpeaker() {
+        let state = controller.state
+        guard imShowsRoutePicker(state.selfState.audioRoutes) else {
+            controller.toggleSpeaker()
+            return
+        }
+        IMAudioRoutePanel(routes: state.selfState.audioRoutes,
+                          current: state.selfState.currentAudioRoute) { [weak self] route in
+            self?.controller.selectAudioRoute(route)
+        }.present(in: view)
+    }
     @objc private func onSwitchCamera() { controller.switchCamera() }
     /**
      加人入口（草图 §05）。**取名单优先级见 `IMInvitePickerViewController`**：这里只决定

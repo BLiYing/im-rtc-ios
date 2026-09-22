@@ -45,6 +45,19 @@ import IMCallEngine
  「配没配过 / 路由选了什么」这两件事，真正的 `RTCAudioSession` 配置与释放仍在
  `IMWebRTCAdapter+Support.swift` 的 `configureAudioSession()` / `releaseAudioSession()`。
  */
+/**
+ imDescribeAudioPorts 把端口清单压成一行日志：`BluetoothHFP:AirPods|BuiltInMic:iPhone 麦克风`。
+
+ **这是路由面板将来要吃的那份数据**（2026-09-22 先只用来打日志）：
+ `availableInputs` 给的是「此刻能选哪些」，与 `currentRoute` 的「此刻在用哪个」不是一回事——
+ 上一版路由选择器栽的跟头之一就是拿 `currentRoute` 当可选清单用。
+ 记 `portName` 是因为光看 `portType` 分不出是哪一只蓝牙设备（车载 / 音箱 / 耳机都是 HFP）。
+ */
+func imDescribeAudioPorts(_ ports: [AVAudioSessionPortDescription]?) -> String {
+    guard let ports, !ports.isEmpty else { return "-" }
+    return ports.map { "\($0.portType.rawValue):\($0.portName)" }.joined(separator: "|")
+}
+
 extension IMWebRTCAdapter {
     /// ensureAudioSessionConfigured 把会话配置成通话态，**只做一次**（归 `audioSessionActive`）。
     /// 两个入口都调（`acquireMicrophone` / `answerSubOffer`，各自调用点有注释说明为什么要调，
@@ -62,11 +75,31 @@ extension IMWebRTCAdapter {
         guard needsConfig else { return }
         configureAudioSession()
         observeRouteChanges()
-        // 会话刚配好，把响铃期间记下的扬声器选择补上（见 setSpeakerOn）。
+        /*
+         **通话开始时不主动抢路由，交给系统——这条已经反复验证过两次，别再动。**
+
+         2026-09-22 真机试过在这里主动 `applyAudioRoute(defaultRoute())` 想「钉一条合法的」，
+         结果引入了一个更隐蔽的问题：上一通挂断后，蓝牙耳机会被 iOS 自动从 HFP（通话用）
+         降回 A2DP（媒体用）；下一通开场我们主动去查「AirPods 现在的输入口」这一瞬间，
+         系统很可能还没来得及把它协商回 HFP——查不到，代码把 `nil` 传给了
+         `setPreferredInput`，等于又执行一次「撤销输入偏好」，会话当场摔成 A2DP，
+         `InitRecording failed`（16:14:03 真机日志：`elapsed=3ms outputs=A2DP route_inputs=空`）。
+
+         老逻辑只设 category（带 `.allowBluetooth`）然后 `setActive`，不碰 `preferredInput`——
+         这一步本身就会让系统按自己的算法自动协商到最合适的路由（含把蓝牙从 A2DP 拉回 HFP），
+         这正是「跟随系统」这个说法的字面含义。别再想着替系统做这个决定。
+        */
         lock.lock()
         let wanted = desiredSpeakerOn
         lock.unlock()
         applySpeakerRoute(wanted)
+        /*
+         **会话配好这一刻要主动广播一次路由清单。**
+         `availableInputs` 只有会话配好才准（响铃期故意不配），而 `routeChangeNotification`
+         只在插拔时才来——不补这一下，界面要等到用户第一次插拔耳机才知道有哪些路由可选，
+         「通话一接通就该看见蓝牙那一行」这件事就做不到。
+        */
+        notifyAudioRoutesChanged()
     }
 
     /// setSpeakerOn 切扬声器。走 `RTCAudioSession` 而不是直接碰 `AVAudioSession`——
@@ -191,8 +224,14 @@ extension IMWebRTCAdapter {
         let active = audioSessionActive
         lock.unlock()
         guard active else { return }
-        IMRTCLog.info("音频路由变化", ["reason": String(reason), "outputs": outputs.joined(separator: ","),
-                                     "speaker": String(wanted)])
+        IMRTCLog.info("音频路由变化", [
+            "reason": String(reason),
+            "outputs": outputs.joined(separator: ","),
+            "speaker": String(wanted),
+            // 可选清单（面板的数据源）与在用的那条分开记，见 imDescribeAudioPorts。
+            "available_inputs": imDescribeAudioPorts(AVAudioSession.sharedInstance().availableInputs),
+            "route_inputs": imDescribeAudioPorts(AVAudioSession.sharedInstance().currentRoute.inputs),
+        ])
         /*
          **兜底：category 被谁踢掉了都补回来。**
 
@@ -210,9 +249,13 @@ extension IMWebRTCAdapter {
             reassertCallAudioCategory(why: "路由变化时发现类目不对")
             return
         }
+        // 清单或在用的那条可能都变了，先把界面喂饱（插拔耳机 / 连断蓝牙四个时刻全走这里）。
+        notifyAudioRoutesChanged()
         guard imShouldReapplySpeaker(wantsSpeaker: wanted, reason: reason, outputPorts: outputs) else { return }
         IMRTCLog.info("插拔后系统清掉了外放覆盖，按钮还亮着：补回扬声器", [:])
         applySpeakerRoute(true)
+        // 补完外放，此刻在用的那条又变了，再广播一次。
+        notifyAudioRoutesChanged()
     }
 
     /// 真正去改路由。**只在会话已经配置过之后调**——`overrideOutputAudioPort` 只有
@@ -221,8 +264,16 @@ extension IMWebRTCAdapter {
         let session = RTCAudioSession.sharedInstance()
         session.lockForConfiguration()
         defer { session.unlockForConfiguration() }
+        // 记耗时：16:27:46 那通视频在会话配好之后、libwebrtc 拿到锁配置之前空了 17 s
+        // （两条采样日志同一毫秒到齐，定时器全被卡住），还没定位到是谁把锁占着；
+        // 这里是那段里唯一持 `RTCAudioSession` 锁做 IPC 的地方，先量出来。
+        let startedNS = DispatchTime.now().uptimeNanoseconds
         do {
             try session.overrideOutputAudioPort(on ? .speaker : .none)
+            IMRTCLog.info("扬声器覆盖已应用", [
+                "on": String(on),
+                "elapsed_ms": String((DispatchTime.now().uptimeNanoseconds - startedNS) / 1_000_000),
+            ])
         } catch {
             IMRTCLog.warn("切换扬声器失败", ["on": String(on), "err": String(describing: error)])
         }

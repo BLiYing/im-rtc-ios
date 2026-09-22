@@ -150,10 +150,17 @@ extension IMWebRTCAdapter {
         session.lockForConfiguration()
         defer { session.unlockForConfiguration() }
         let startedNS = DispatchTime.now().uptimeNanoseconds
+        // **`isActive` 是判这一刀有没有真做的关键**：为 YES 时 `RTCAudioSession.setActive(true)`
+        // 只加计数、不碰底层会话（见 `releaseAudioSession`），elapsed 会是 2~3 ms，路由不会重新协商。
+        let wasActive = session.isActive
         var failure: String?
         do {
             try session.setCategory(.playAndRecord, mode: .voiceChat, options: [.allowBluetooth])
             try session.setActive(true)
+            // 成功一次记一笔，`close()` 按这个数还回去；见 `audioActivations`。
+            lock.lock()
+            audioActivations += 1
+            lock.unlock()
         } catch {
             // 配不上不该让通话直接失败：多数情况下仍能出声，只是路由不理想。
             failure = String(describing: error)
@@ -164,9 +171,15 @@ extension IMWebRTCAdapter {
         var fields = [
             "why": why,
             "elapsed_ms": String(elapsedMS),
+            "rtc_was_active": String(wasActive),
+            "rtc_active": String(session.isActive),
             "category": av.category.rawValue,
             "mode": av.mode.rawValue,
             "inputs": String(av.currentRoute.inputs.count),
+            // 会话刚配好这一刻的可选路由清单：路由面板的数据源，见 imDescribeAudioPorts。
+            // 光靠 routeChangeNotification 看不到这一刻——没插拔就不会有那条通知。
+            "available_inputs": imDescribeAudioPorts(av.availableInputs),
+            "outputs": av.currentRoute.outputs.map(\.portType.rawValue).joined(separator: ","),
         ]
         let webrtc = IMWebRTCAudioConfiguration.current()
         fields["webrtc_config"] = "\(webrtc.category)/\(webrtc.mode)"
@@ -180,24 +193,68 @@ extension IMWebRTCAdapter {
     }
 
     /**
-     releaseAudioSession 媒体停止时把会话放开，与 `configureAudioSession()` 成对。
+     releaseAudioSession 媒体停止时把会话放开，与 `applyCallAudioCategory` 成对：
+     那边每成功 `setActive(true)` 一次，这里就 `setActive(false)` 一次。
 
-     **必须带 `notifyOthersOnDeactivation`**：不带的话别的 App（宿主自己的背景音乐、
-     或者用户切出去正放着的别的音频）不会收到「可以恢复了」的通知，会一直静音到
-     它自己下次主动检查。`RTCAudioSession.setActive(_:error:)` 没有带 options 的重载，
-     所以这里取它的 `.session`（就是同一个 `AVAudioSession.sharedInstance()`）来传这个参数——
-     **仍然在 `lockForConfiguration`/`unlockForConfiguration` 里做**，不是绕开
-     `RTCAudioSession` 直接改（那样才会跟 libwebrtc 自己的会话管理打架，见 `setSpeakerOn` 的注释）。
+     # 「第一通有声、挂断再打就哑」的根因（2026-09-22，真机 8 轮 100% 复现）
+
+     `RTCAudioSession` 的激活是**引用计数 + 一个 `isActive` 标记**，`setActive:` 的规则
+     （从 WebRTC.framework 反汇编核实，这一版与上游略有出入）：
+     - `setActive(true)`：`isActive == NO` 才真调底层 `AVAudioSession.setActive(true)`，
+       否则**只加计数**——2~3 ms 就返回，路由不会重新协商；
+     - `setActive(false)`：只有 `isActive == YES && count == 1` 才真关底层，并把 `isActive` 清掉；
+       **其余情形只减计数、`isActive` 保持 YES**。
+
+     旧代码为了传 `notifyOthersOnDeactivation`，走的是 `session.session.setActive(false, options:)`
+     ——**绕过了 `RTCAudioSession` 直接关底层**。后果：底层会话真关了，`RTCAudioSession`
+     仍记着 `count=1 / isActive=YES`（我们那一次激活从没还回去；libwebrtc 自己那一次 2→1 是配平的）。
+     下一通 `setActive(true)` 一看 `isActive=YES` → 只加计数（日志 `Number of current activations: 2`、
+     `elapsed_ms=3`），底层会话**根本没被激活**：`currentRoute` 看到的是系统闲置态
+     （蓝牙 `A2DP`、`inputs=0`），libwebrtc `setPreferredInputNumberOfChannels` 报 `-50`，
+     `InitRecording: InitPlayOrRecord failed`，音频单元起不来，两个方向同时无声。
+     没接蓝牙时音频单元启动会隐式激活会话、用内置麦，所以这条从 09-16 起一直没暴露。
+
+     而这一天前几轮盯着 `setPreferredInput(nil)`、开场钉路由、改 category 的修法全是在这条
+     错误前提上打转——那些现象（A2DP、`inputs=0`）都是「会话没激活」的**表象**，不是原因。
+
+     # 现在的做法
+
+     全部经 `RTCAudioSession.setActive(_:)`，**不再碰 `session.session`**。它自己在真关底层时
+     就会传 `notifyOthersOnDeactivation`（头文件明写），旧注释说「没有带 options 的重载所以要绕」
+     是误读。次序无所谓：libwebrtc 的 ADM 与我们谁后走，谁那一次 `count==1` 就真关底层——
+     `isActive` 在此之前一直是 YES。回读 `rtc_active` 是为下一次真机排查留的把手：
+     释放完仍为 true 就说明还有人欠着一次没还。
+
+     **这里仍然绝不能撤输入偏好**（`setPreferredInput(nil)`）：蓝牙连着时那会把会话往 A2DP 推。
+     跨通话状态不归调用方管，只在 category/mode 上表达意图，「选哪条」交给系统协商；
+     用户手动选路由那条路径要保证 `setPreferredInput` 永远不传 nil
+     （见 `IMWebRTCAdapter+AudioRoute.swift` 的 `inputPort(for:)`）。
      */
-    static func releaseAudioSession() {
+    static func releaseAudioSession(activations: Int) {
         let session = RTCAudioSession.sharedInstance()
         session.lockForConfiguration()
         defer { session.unlockForConfiguration() }
-        do {
-            try session.session.setActive(false, options: [.notifyOthersOnDeactivation])
-        } catch {
-            // 放不开不该往上抛：通话已经结束了，顶多是路由状态留了一会儿没归位。
-            IMRTCLog.warn("音频会话释放失败", ["err": String(describing: error)])
+        var failure: String?
+        // 只还欠着的那几次：`setActive(true)` 一次都没成功过就一次也别减，计数减到负数会被 libwebrtc 断言。
+        for _ in 0..<activations {
+            do {
+                try session.setActive(false)
+            } catch {
+                // 放不开不该往上抛：通话已经结束了，顶多是路由状态留了一会儿没归位。
+                failure = String(describing: error)
+            }
+        }
+        var fields = [
+            "activations": String(activations),
+            "rtc_active": String(session.isActive),
+            "outputs": AVAudioSession.sharedInstance().currentRoute.outputs.map(\.portType.rawValue)
+                .joined(separator: ","),
+        ]
+        if let failure { fields["err"] = failure }
+        if failure != nil || session.isActive {
+            IMRTCLog.warn("音频会话释放后仍是激活态", fields)
+        } else {
+            IMRTCLog.info("音频会话已释放", fields)
         }
     }
 

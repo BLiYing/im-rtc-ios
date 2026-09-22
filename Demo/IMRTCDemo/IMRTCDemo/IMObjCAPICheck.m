@@ -44,8 +44,19 @@
     }];
     [_engine removeEventObserver:token];
 
-    // 扬声器：设计文档 §7.5 的 setAudioRoute。
+    // 扬声器：强制外放开 / 关（设计文档 §7.5）。
     [_engine setSpeakerOn:YES];
+
+    // 音频路由四选一（2026-09-22，设计文档 §7.5 的 setAudioRoute）：
+    // 列清单、读当前、切过去，三件事宿主自画 UI 时都要用得上。
+    for (IMAudioRoute *route in _engine.availableAudioRoutes) {
+        NSLog(@"[objc] 路由 kind=%ld uid=%@ name=%@", (long)route.kind, route.uid, route.name);
+    }
+    IMAudioRoute *current = _engine.currentAudioRoute;
+    if (current != nil) {
+        NSLog(@"[objc] 当前路由 %@", current.uid);
+        [_engine setAudioRoute:current];
+    }
 
     // 挂画面：UI 拿到画面的唯一途径（CONVENTIONS §1）。
     [_engine attachView:@"bob" to:nil];

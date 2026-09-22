@@ -24,6 +24,7 @@ import Foundation
     case userEnter, userLeave, userAccept, userReject, userNoResponse
     case userAudioAvailable, userVideoAvailable
     case activeSpeakers, networkQuality, firstVideoFrame
+    case audioRoutesChanged
     case roomJoined, roomLeft, roomClosed
     /// 2026-09-17 增。**追加在末尾**：这是 `@objc enum : Int`，插在中间会改掉已有事件的 rawValue。
     case userRinging
@@ -68,6 +69,7 @@ extension IMCallEventName {
         case .activeSpeakers: return "activeSpeakers"
         case .networkQuality: return "networkQuality"
         case .firstVideoFrame: return "firstVideoFrame"
+        case .audioRoutesChanged: return "audioRoutesChanged"
         case .roomJoined: return "roomJoined"
         case .roomLeft: return "roomLeft"
         case .roomClosed: return "roomClosed"
@@ -273,6 +275,10 @@ final class IMEventDispatcher {
             d.callEngine?(e, networkQualityDidChange: rows("entries").map(Self.networkQuality))
         case .firstVideoFrame:
             d.callEngine?(e, didReceiveFirstVideoFrame: str("uid"), trackID: str("track_id"))
+        case .audioRoutesChanged:
+            // 本地事件，payload 直接装对象（不过线路，不需要 snake_case 的线路形状）。
+            d.callEngine?(e, audioRoutesDidChange: p["routes"] as? [IMAudioRoute] ?? [],
+                          current: p["current"] as? IMAudioRoute)
 
         case .roomJoined:
             d.callEngine?(e, didJoinRoom: str("room_id"), memberUIDs: strs("uids"))

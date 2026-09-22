@@ -7,6 +7,22 @@
 
 ## 当前焦点
 
+- **09-22 音频路由四选一（听筒 / 扬声器 / 有线耳机 / 蓝牙）：自画面板版，真机 ✅（16:57~17:05 第九轮，grace iOS × alice Android）。**
+  起因是用户反馈「插耳机/连蓝牙看不到切换选项」，核实属实（v1.35 只做了「跟随系统」，按钮外观从没变过）。
+  先试的系统 `AVRoutePickerView` 那版已废弃（让系统直接改路由、绕开 `RTCAudioSession`，真机双向无声，见「已知坑」）。
+  现在跟 Android 同一条路子：自己画面板，经 `RTCAudioSession` 切。
+  - Engine 公开 API（设计文档 §7.5，**用户拍板「设备清单式」**）：`IMAudioRoute`（kind + 设备名 + uid）/ `IMAudioRouteKind` 四态 /
+    `availableAudioRoutes` / `currentAudioRoute` / `setAudioRoute(_:)` / 回调 `callEngine(_:audioRoutesDidChange:current:)`。ObjC 面在 `IMObjCAPICheck.m` 验过。
+  - 清单数据源是 **`availableInputs`（能选哪些）不是 `currentRoute`（在用哪个）**；纯逻辑 `imBuildAudioRoutes` / `imPickCurrentRoute` macOS 可测（9 条）。
+  - 切换全程在 `RTCAudioSession.lockForConfiguration()` 里：扬声器走 `overrideOutputAudioPort(.speaker)`，其余先撤覆盖再 `setPreferredInput`
+    （**永远不传 nil**，查不到退回内置麦）；**绝不碰 category**（通话中改 category 会把上行停死，真机翻过）。切换时同步 `desiredSpeakerOn`。
+  - Kit：`IMAudioRoutePanel`（底部升起、行高 56、当前项打勾、点面板外取消）+ 扬声器键变形（当前路由字形 + 设备名 + `chevron-up`）。
+    判据 `imShowsRoutePicker` = 清单多于内置两条。文案 `route.*` 五条在 server `strings.json`。
+  **真机结论**：连打三通（语音 → 视频 → 语音）每通 `rtc_was_active=false / elapsed≈40 / inputs=1 / HFP`，每次挂断计数归零、`rtc_active=false`；
+  面板扬声器 ↔ AirPods 来回切都落到位（`route_inputs` 跟着走）；用户确认双向都听得到。
+  之前拖了 8 轮的「第二通双向无声」根因是 **`releaseAudioSession()` 绕过 `RTCAudioSession` 关底层、激活计数没还**（见「已知坑」第一条），已修。
+  群通话用户也测过正常。**蓝牙连着时选「听筒」仍走蓝牙是设计行为**（用户 09-22 拍板：`override(.none)` 就是「交还系统」，
+  系统有蓝牙就走蓝牙，不算限制、不要再想着改 category 去「修」它）。CLIENT_PARITY iOS 那行 🟡 → ✅，Android 三处（公开枚举、回调、面板）还没跟。
 - **09-22 Demo 各页自己的文案也进表了**：`gen-i18n.py` 拆成两份生成物——Kit 表 `IMMessages.gen.swift`（`imT()`）与 Demo 表 `Demo/.../DemoMessages.gen.swift`（`DemoText.swift` 的 `dt()`）。`HistoryTime.swift` 的三档文案改成可注入闭包，默认值仍是原中文——不破坏 `DemoLogicTests` 那张用例表，Demo 侧调用时传 `dt()` 本地化版本。9 个 Demo 文件接入。`test.sh` 全绿（11 步，含 `xcodebuild`）。
 - **09-21 多语言（zh-CN / en）iOS 已做**：`IMCallKitConfig.locale` / `messages`，`imT(key)` 取词，文案表由 `scripts/gen-i18n.py` 从 server `docs/i18n/strings.json` 生成；Demo 设置页「语言 / Language」。设计见 server `docs/design/I18N_DESIGN.md`。
 
@@ -38,6 +54,53 @@
 5. 按需 / 后续期：自定义铃声没有 Demo UI、没真机验过；`IMInviteMemberProvider` / `presentInvitePicker` 没真实宿主跑过；IMProgram / 容信真实接入（M3~M7）。
 
 ## 已知坑 / 限制
+- **「第一通有声、挂断再打就哑」根因：`RTCAudioSession` 激活计数没还（09-22，第九刀才对）。**
+  症状：同一进程第一通正常，挂断后第二通（不分语音 / 视频 / 群）双向无声、面板切不动；重启 App 又好一通。
+  - **决定性日志**（`dev-logs/client-ios-grace.log`，全天 8 轮 100% 吻合）：第一通 `Number of current activations: 1`
+    → `已配成通话态 elapsed_ms=46 inputs=1 outputs=BluetoothHFP`；挂断只见 libwebrtc 自己 `2→1`，**从没归零**；
+    第二通 `activations: 2`、`elapsed_ms=3 inputs=0 outputs=BluetoothA2DPOutput` →
+    `Failed to set preferred input number of channels -50` → `InitRecording: InitPlayOrRecord failed`。
+  - **机制**（`RTCAudioSession.setActive:` 从 WebRTC.framework 反汇编核实，与上游略有出入）：
+    `setActive(true)` 只在 `isActive == NO` 时真激活底层，否则只加计数；`setActive(false)` 只在
+    `isActive && count == 1` 时真关底层并清 `isActive`，**其余只减计数、`isActive` 保持 YES**。
+    旧 `releaseAudioSession()` 为了传 `notifyOthersOnDeactivation` 走 `session.session.setActive(false)`
+    ——绕过 `RTCAudioSession` 直接关了底层，它却仍记着 `count=1 / isActive=YES`；下一通 `setActive(true)`
+    看 `isActive=YES` 就只加计数，**底层会话根本没激活**，`currentRoute` 看到的是系统闲置态（A2DP、0 输入口）。
+    没接蓝牙时音频单元启动会隐式激活会话、用内置麦，所以 09-16 起一直没暴露。
+  - **修法**：激活 / 释放全走 `RTCAudioSession.setActive(_:)`（它真关底层时自己传 `notifyOthersOnDeactivation`，
+    头文件明写），`audioActivations` 记我们欠几次、`close()` 按数还清；日志新增 `rtc_was_active` / `rtc_active`。
+  - **前几刀为什么都错**：`setPreferredInput(nil)`、开场 `applyAudioRoute(defaultRoute())`、切内置时改 category options
+    ——看到的 A2DP / `inputs=0` 全是「会话没激活」的表象；后两刀还各自新添了坑（开场钉路由撞 HFP 协商窗口传 nil；
+    通话中改 category 把上行停死）。**排查口诀**：`elapsed_ms` 个位数 + `rtc_was_active=true` = 这一刀没做；
+    判路由切没切成看 `inputs` / `route_inputs`，不看 `outputs`。
+  - **仍没解释的**：16:27:46 那通视频在会话配好之后、libwebrtc 拿到锁配置之前空了 17 s（两条采样日志同一毫秒到齐），
+    其余 10 通都是 80 ms。`applySpeakerRoute` 现在记耗时（第九轮最慢一次 339 ms），下次再出现先看它。
+  - **`上行音频采样` 的包数 / 采样时长冻住 ≠ 上行死了，先看是不是静音**：这个 webrtc-sdk fork 静音时会真的
+    `AudioDeviceIOS::StopRecording`（释放麦克风、橙点熄灭），取消静音才 `StartRecording`，计数在静音期间不动。
+    09-22 第九轮我按这个误判过一次「切路由后上行停死」。判上行是否真死：静音期之外计数还不涨才算。
+- **别再用 `AVRoutePickerView` 做通话里的路由切换（09-22 真机：两个方向同时无声，拔了蓝牙也不恢复）。**
+  症状：AirPods 连上、用系统面板切过一次路由之后，alice(Android) 说话 grace(iOS) 听不到，
+  iOS 说话 Android 也听不到；**断开蓝牙依旧无声**。那一版四个文件已删，现在走的是自画面板。
+  - **为什么前两轮真机没暴出来**：①点不动 ②面板弹不出，都卡在「根本切不成」，所以从没真正切过一次路由。
+  - **违反的是两条白纸黑字的既有约束**（`IMWebRTCAdapter+AudioSession.swift` 头部与 `setSpeakerOn` 注释）：
+    「**设置类的入口（改路由、改音量这种）一律不许触发配置，只许记录意向**」——而那版观察者在
+    `IMCallController.init()` 就去碰 `AVAudioSession.sharedInstance()`，比 `ensureAudioSessionConfigured()` 早得多；
+    「`setSpeakerOn` 走 `RTCAudioSession` 而不是直接碰 `AVAudioSession`——**libwebrtc 自己也在管这个 session，
+    绕开它会两边打架**」——而 `AVRoutePickerView` 是让**系统**去改路由，彻底绕开 `RTCAudioSession`。
+  - **最像的机制（假说，至今未用日志证实）**：那是媒体/AirPlay 语义的控件，把 AirPods 设为输出时
+    很可能落到 **A2DP（只有输出、没有输入）**，而通话要的是 HFP；`.playAndRecord` 撞上没有输入的路由，
+    正是 `applyCallAudioCategory` 注释里记过的那个画面——`inputs=0`、`totalSamplesDuration=0`、
+    `overrideOutputAudioPort` 回 `-50`。ADM 的 `InitPlayOrRecord` 一旦失败，
+    **`RTCPeerConnectionFactory` 全进程一份、永不销毁**，所以拔了蓝牙也不会自愈。
+  - **现在这版为什么不该重蹈覆辙**：切换全程在 `RTCAudioSession.lockForConfiguration()` 里、
+    只动 `overrideOutputAudioPort` / `setPreferredInput`、绝不碰 category，libwebrtc 全程知情。
+    **但这只是推理，同样没上过真机**——验收时第一件事就是「切过一趟之后双向还有没有声音」。
+    真出问题看这几行（Xcode 控制台，别等回传——iOS 回传会整批丢）：`音频路由变化 reason=… outputs=…`
+    （`BluetoothA2DPOutput` 还是 `BluetoothHFP`）、`上行音频采样 … session.inputs=…`（是不是 0）、
+    `音频路由已切换` / `音频路由切换失败`、以及 libwebrtc 的 `InitPlayOrRecord failed`。
+  - **设计稿 §04「iOS 不画这张面板，直接用系统 `AVRoutePickerView`」这条已被证伪、但还没改**：
+    它还跟同一段里「图标换成当前路由的字形、文案换成设备名」自相矛盾——那个系统控件
+    画的是自己的 AirPlay 字形，既不给蓝牙耳机图标也不给设备名文案。**改设计稿要动五仓真相源，待办。**
 - **适配器跨通话复用，状态要在 `close()` 里复位**（09-21 真机：后置挂断，下一通还是后置）：`usingFrontCamera` 原先漏了，现已复位；以后给 `IMWebRTCAdapter` 加「每通一份」的状态，都要问一句 `close()` 里清了没有。
 
 - **Demo 开 `.xcodeproj` 与开 `.xcworkspace` 是两个档**：脚本一律 `-workspace`，写成 `-project` 会联网、验的是 GitHub 上的旧代码。workspace 自己的 `Package.resolved` 不落地（Xcode.app 里开过也没有），别当配置错误去追。

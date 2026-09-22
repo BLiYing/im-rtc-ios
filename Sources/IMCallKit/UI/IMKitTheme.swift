@@ -148,6 +148,13 @@ public enum IMKitIcon: String {
     case expand = "arrow.up.left.and.arrow.down.right"
     case speaker = "speaker.wave.2.fill"
     case speakerSlash = "speaker.slash.fill"
+    /// 音频路由面板那四行的字形（2026-09-22）。听筒那条用 iPhone 字形，与 iOS 系统
+    /// 自己的输出面板一致（系统那张面板里内置听筒就写「iPhone」）；蓝牙没有官方字形，
+    /// 用无线波形——`airpods` 之类太具体，车载蓝牙戴不上。
+    case earpiece = "iphone"
+    case headphones = "headphones"
+    case bluetooth = "dot.radiowaves.left.and.right"
+    case check = "checkmark"
     case cameraFlip = "arrow.triangle.2.circlepath.camera"
     case personAdd = "person.badge.plus"
     case plus = "plus"

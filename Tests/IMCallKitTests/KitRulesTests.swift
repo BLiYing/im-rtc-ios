@@ -410,3 +410,61 @@ final class CameraFailureTests: XCTestCase {
         XCTAssertEqual(state.hint, "")
     }
 }
+
+
+/// 扬声器键什么时候该变成路由选择器，以及 Engine 抛来的清单怎么落进 state（设计稿 §04 v3.5）。
+final class AudioRoutePickerTests: XCTestCase {
+
+    private func route(_ kind: IMAudioRouteKind, uid: String, name: String = "") -> IMAudioRoute {
+        IMAudioRoute(kind: kind, name: name, uid: uid)
+    }
+
+    private var builtInTwo: [IMAudioRoute] {
+        [route(.earpiece, uid: imAudioRouteEarpieceUID), route(.speaker, uid: imAudioRouteSpeakerUID)]
+    }
+
+    func testTwoStateWhenOnlyBuiltIn() {
+        XCTAssertFalse(imShowsRoutePicker([]), "空清单 = 不提供路由选择，退回二态开关")
+        XCTAssertFalse(imShowsRoutePicker(builtInTwo), "只有内置听筒 / 扬声器：还是二态开关")
+    }
+
+    func testPickerWhenThirdRouteAppears() {
+        XCTAssertTrue(imShowsRoutePicker(builtInTwo + [route(.bluetooth, uid: "bt-1", name: "AirPods")]))
+        XCTAssertTrue(imShowsRoutePicker(builtInTwo + [route(.wiredHeadset, uid: "w-1", name: "有线耳机")]))
+    }
+
+    /// 判据是「可选路由的条数」而不是「当前在用的是不是外接设备」——
+    /// 用户在面板里选回听筒之后蓝牙还连着，入口不该消失（上一版栽过的跟头）。
+    func testPickerStaysWhenCurrentIsBuiltIn() {
+        let routes = builtInTwo + [route(.bluetooth, uid: "bt-1", name: "AirPods")]
+        var state = IMCallViewState()
+        state = reduceCallView(state, .audioRoutesChanged(routes: routes, current: routes[0]))
+        XCTAssertTrue(imShowsRoutePicker(state.selfState.audioRoutes),
+                      "当前在用听筒，但蓝牙还在清单里：按钮仍是路由选择器")
+    }
+
+    func testReducerStoresRoutesAndCurrent() {
+        let routes = builtInTwo + [route(.bluetooth, uid: "bt-1", name: "AirPods")]
+        var state = IMCallViewState()
+        state = reduceCallView(state, .audioRoutesChanged(routes: routes, current: routes.last))
+        XCTAssertEqual(state.selfState.audioRoutes.count, 3)
+        XCTAssertEqual(state.selfState.currentAudioRoute?.uid, "bt-1")
+    }
+
+    /// 勾在扬声器那一行时，老的 `speakerOn` 也要跟着亮——两套意图是同一件事的两种说法。
+    func testSpeakerFlagFollowsCurrentRoute() {
+        var state = IMCallViewState()
+        let routes = builtInTwo + [route(.bluetooth, uid: "bt-1", name: "AirPods")]
+        state = reduceCallView(state, .audioRoutesChanged(routes: routes, current: routes[1]))
+        XCTAssertTrue(state.selfState.speakerOn, "选中扬声器")
+        state = reduceCallView(state, .audioRoutesChanged(routes: routes, current: routes.last))
+        XCTAssertFalse(state.selfState.speakerOn, "切到蓝牙就不是外放了")
+    }
+
+    func testDisplayNamePrefersDeviceName() {
+        XCTAssertEqual(imRouteDisplayName(route(.bluetooth, uid: "bt-1", name: "AirPods Pro")), "AirPods Pro",
+                       "外接设备显示系统给的真名")
+        XCTAssertEqual(imRouteDisplayName(route(.earpiece, uid: imAudioRouteEarpieceUID)), imT("route.earpiece"),
+                       "内置两条没有设备名，用本地化文案")
+    }
+}
