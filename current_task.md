@@ -7,6 +7,19 @@
 
 ## 当前焦点
 
+- **09-28 走了个弯路又撤回：`IMCallKit` 不需要加 `businessDelegate`**。起因是参考 Android
+  `TencentTUIUtils`/`IMCallKit.wrap()` 时，以为 iOS 缺一个等价能力——`IMCallController.init(engine:)`
+  独占 `engine.delegate`，以为 Kit 接管后宿主拿不到 `callSummary`（通话记录）/`wasKickedOutFor`/
+  `tokenWillExpireAt`/`didFailWithError`。写完转发器、补完测试、`test.sh` 全绿之后才发现
+  **`IMCallEngine.addEventObserver(_:)`（`Facade/IMCallEngine.swift`，**2.1.0 就有**）本来就是一条
+  完全独立于 `delegate` 的广播通道**——`IMEventDispatcher.deliver(_:)` 里 `observers`（block 观察者，
+  不限数量）与 `delegate`（单槽位）是两条并行分发路径，Kit 占了 `delegate` 不影响 `observers` 照样收到
+  同一份事件（`IMCallEvent.payload`，键是协议 snake_case 名，`.name == .callSummary` 时能拿到通话记录
+  要的全部字段）。**纯 ObjC 宿主也能直接用**（`(IMCallEvent) -> Void` 是 block）。
+  已把那次 SDK 改动整个 `git reset --hard` 撤掉（没推送过，代价为零）——**不需要发新版本，
+  `rongxin4` 现在锁的 `Exact Version 2.1.0` 已经够用**，之前计划里「改 SDK → 本地联调 → 发 2.1.1 →
+  切回远端」这条链直接省掉，`im-ios`（`rongxin4`）那边想要业务事件，`TUIAutoCallObserver` 里
+  `engine.addEventObserver { event in ... }` 判 `event.name` 就是了，不用等我这边发版。
 - **09-27 Demo 补上调试密钥登录开关**（此前本仓完全没有这条逻辑，Web/Android 已各自有）：
   `DemoSession.useDebugKeyLogin`（`#if DEBUG` 包住，跟 SDK 里的 `IMDebugTokenGenerator` 一样只在
   Debug 构建存在），身份卡（`DialerViewController`）合成画面开关下面加一行同款 `UISwitch`，登录后
