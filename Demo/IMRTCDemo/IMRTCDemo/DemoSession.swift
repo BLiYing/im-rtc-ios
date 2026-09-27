@@ -166,8 +166,44 @@ final class DemoSession {
 
     var isLoggedIn: Bool { engine != nil }
 
+    #if DEBUG
+    /**
+     调试密钥登录开关（草图 §02-B 身份卡）：勾上就跳过服务端 `/v1/demo/login`，
+     本地用调试密钥直接签票（`IMDebugTokenGenerator`，与 im-rtc-web demo-react 登录面板上的
+     同名开关对齐）。**只在 Debug 构建里存在**——生成器本身也包在 `#if DEBUG` 里，
+     Release 构建看不到这个开关，不会给出假承诺。
+
+     **默认关、不落盘**：每次重开 app 都要重新勾选，避免有人忘记关掉之后
+     拿着调试租户的票去跑真实验收。**登录后锁定**（[DialerViewController] 负责禁用开关）：
+     换票方式在登录那一刻就定了，中途拨它不会生效。
+
+     四个常量四端共用（Android/Web/桌面同一套），方便跨端对拨联调时落在同一个 SDKAppID 下。
+     */
+    var useDebugKeyLogin = false {
+        didSet { notify() }
+    }
+
+    static let debugAppID = "10000003"
+    private static let debugKeyID = "dbg-1"
+    private static let debugKeySecret = "4d2a7de87c2cde231ce2100918145beae7d7805a1d0334e6416ac0c320dacc70"
+    private static let debugTokenTTLSec = 12 * 3600
+    #endif
+
+    /// resolveLoginToken 二选一：走调试密钥本地签票，或走服务端 `/v1/demo/login`。
+    private func resolveLoginToken(server: String, username: String) async throws -> String {
+        #if DEBUG
+        if useDebugKeyLogin {
+            // 不用 `deviceID`：那个计算属性读的是 `self.username`，此刻还是登录前的旧值。
+            return try IMDebugTokenGenerator.generate(
+                appId: Self.debugAppID, keyId: Self.debugKeyID, secret: Self.debugKeySecret,
+                uid: username, deviceId: "ios-demo-\(username)", ttlSec: Self.debugTokenTTLSec)
+        }
+        #endif
+        return try await DemoAPI.login(server: server, username: username)
+    }
+
     func login(server: String, username: String) async throws {
-        let token = try await DemoAPI.login(server: server, username: username)
+        let token = try await resolveLoginToken(server: server, username: username)
         self.server = server
         self.username = username
         self.token = token

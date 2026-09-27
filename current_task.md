@@ -7,6 +7,16 @@
 
 ## 当前焦点
 
+- **09-27 Demo 补上调试密钥登录开关**（此前本仓完全没有这条逻辑，Web/Android 已各自有）：
+  `DemoSession.useDebugKeyLogin`（`#if DEBUG` 包住，跟 SDK 里的 `IMDebugTokenGenerator` 一样只在
+  Debug 构建存在），身份卡（`DialerViewController`）合成画面开关下面加一行同款 `UISwitch`，登录后
+  锁定；勾上时 `login()` 走 `IMDebugTokenGenerator.generate` 本地签票，跳过 `DemoAPI.login`
+  服务端免密登录；身份卡多一行 SDKAppID 提示（橙色 `debugBadgeLabel`）。四端常量同值
+  （`10000003` / `dbg-1` / 同一密钥），方便跨端对拨联调落在同一租户下。**顺手修了一个环境问题**：
+  `.build` 里残留着搬仓（`/Users/liying/...` → `/Users/dev/...`）之前的绝对路径缓存
+  （`workspace-state.json` / `debug.yaml` / `ModuleCache` / `demo-dd` 整个目录），导致
+  `swift build` / xcodebuild 报「找不到 XCFramework」；清掉这些本地构建缓存（不是 Xcode 全局
+  DerivedData）后恢复正常，`./scripts/test.sh` 11 步全绿。
 - **09-22 SDK 2.1.0 已发版**（tag `b2f9ffc`，Demo 公网包档锁定随后跟着改到 2.1.0）：本次内容即下面这些条目——音频路由四选一、多语言、simulcast 三层。协议版本未变（仍为 2）。
 
 - **09-22 音频路由四选一（听筒 / 扬声器 / 有线耳机 / 蓝牙）：自画面板版，真机 ✅（16:57~17:05 第九轮，grace iOS × alice Android）。**

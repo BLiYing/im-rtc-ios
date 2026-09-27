@@ -28,6 +28,11 @@ final class DialerViewController: UIViewController {
     private let logoutButton = UIButton(type: .system)
     /// 合成画面开关。**模拟器上默认开**——那儿没有摄像头，不开就只能看头像。
     private let syntheticSwitch = UISwitch()
+    #if DEBUG
+    /// 调试密钥登录开关，与身份卡上的 SDKAppID 提示成对（见 `DemoSession.useDebugKeyLogin`）。
+    private let debugLoginSwitch = UISwitch()
+    private let debugBadgeLabel = UILabel()
+    #endif
     private var callButtons: [UIButton] = []
     /// 群呼默认名单。**不能含登录的那个人**——服务端会以 1004 拒掉整通电话
     /// （"callee_ids 不能含主叫自己"）。登录后 refresh() 会把自己剔掉。
@@ -61,6 +66,12 @@ final class DialerViewController: UIViewController {
         // 适配器是登录时造的，登录之后再拨这个开关不会生效——干脆锁上，别给假承诺。
         syntheticSwitch.isEnabled = !loggedIn
         syntheticSwitch.isOn = session.syntheticVideo
+        #if DEBUG
+        // 换票方式在登录那一刻就定了，登录后拨它不会生效——同样锁上。
+        debugLoginSwitch.isEnabled = !loggedIn
+        debugLoginSwitch.isOn = session.useDebugKeyLogin
+        debugBadgeLabel.isHidden = !(loggedIn && session.useDebugKeyLogin)
+        #endif
         callButtons.forEach { $0.isEnabled = loggedIn }
         // 把自己从群呼名单里剔掉：带着自己发出去，服务端会拒掉**整通**电话。
         let me = session.username
@@ -128,6 +139,29 @@ final class DialerViewController: UIViewController {
     @objc private func onToggleSynthetic() {
         session.syntheticVideo = syntheticSwitch.isOn
     }
+
+    #if DEBUG
+    /// 调试密钥登录这一行：一句说明 + 一个开关，紧跟在合成画面下面（同一条身份卡）。
+    private func debugLoginRow() -> UIStackView {
+        let label = UILabel()
+        label.text = dt("demo.login.debugKey.title")
+        label.font = .systemFont(ofSize: 13)
+        label.textColor = .secondaryLabel
+        label.numberOfLines = 0
+        debugLoginSwitch.isOn = session.useDebugKeyLogin
+        debugLoginSwitch.addTarget(self, action: #selector(onToggleDebugLogin), for: .valueChanged)
+        debugLoginSwitch.setContentHuggingPriority(.required, for: .horizontal)
+        let row = UIStackView(arrangedSubviews: [label, debugLoginSwitch])
+        row.axis = .horizontal
+        row.spacing = 8
+        row.alignment = .center
+        return row
+    }
+
+    @objc private func onToggleDebugLogin() {
+        session.useDebugKeyLogin = debugLoginSwitch.isOn
+    }
+    #endif
 
     /// 空文案要把整行收起来——留一个空 label 在那儿，身份卡里会平白多出一条缝。
     private func setLoginHint(_ text: String, isError: Bool = true) {
@@ -214,6 +248,13 @@ final class DialerViewController: UIViewController {
         errorLabel.textColor = .systemRed
         errorLabel.numberOfLines = 0
         groupLabel.font = .systemFont(ofSize: 15)
+        #if DEBUG
+        debugBadgeLabel.font = .systemFont(ofSize: 13)
+        debugBadgeLabel.textColor = .systemOrange
+        debugBadgeLabel.numberOfLines = 0
+        debugBadgeLabel.isHidden = true
+        debugBadgeLabel.text = dt("demo.identity.debugBadge", ["appId": DemoSession.debugAppID])
+        #endif
 
         DemoUI.style(loginButton, title: dt("demo.login.title"), action: #selector(onLogin), target: self)
         DemoUI.style(logoutButton, title: dt("demo.logout"), action: #selector(onLogout), target: self)
@@ -225,10 +266,15 @@ final class DialerViewController: UIViewController {
         let joinCall = DemoUI.button(dt("demo.dial.joinThisCall"), #selector(onJoinByCallID), self)
         callButtons = [audio, video, pick, group, join, joinCall]
 
+        var identityRows: [UIView] = [serverField, DemoUI.note(DemoSession.serverHint),
+                                       userField, syntheticRow()]
+        #if DEBUG
+        identityRows += [debugLoginRow(), debugBadgeLabel]
+        #endif
+        identityRows += [statusLabel, loginButton, logoutButton, loginHint]
+
         let stack = UIStackView(arrangedSubviews: [
-            DemoUI.card(dt("demo.identity"), [serverField, DemoUI.note(DemoSession.serverHint),
-                               userField, syntheticRow(), statusLabel,
-                               loginButton, logoutButton, loginHint]),
+            DemoUI.card(dt("demo.identity"), identityRows),
             DemoUI.card(dt("demo.dial.single"), [calleeField, DemoUI.row([audio, video])]),
             DemoUI.card(dt("demo.dial.groupLimit", ["n": 8]), [DemoUI.row([groupLabel, pick]), group,
                                         DemoUI.note(dt("demo.dial.groupNoteIos", ["id": Self.demoChatGroupID]))]),
