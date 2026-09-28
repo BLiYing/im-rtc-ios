@@ -6,8 +6,8 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/BLiYing/im-rtc-ios.git",
       "state" : {
-        "revision" : "b2f9ffc2b6bfb92f51d8634834ee2159134980f3",
-        "version" : "2.1.0"
+        "revision" : "8cc03b4e6d9bfdd418f2d7ef10706d1a52b024ef",
+        "version" : "2.1.1"
       }
     }
   ],
