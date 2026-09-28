@@ -1,7 +1,7 @@
-#if canImport(WebRTC) && canImport(UIKit)
+#if canImport(LiveKitWebRTC) && canImport(UIKit)
 import Foundation
 import UIKit
-import WebRTC
+import LiveKitWebRTC
 import IMCallEngine
 
 /*
@@ -34,7 +34,7 @@ extension IMWebRTCAdapter {
         pubICERestartPending = false
         lock.unlock()
         if restart { IMRTCLog.info("上行重启 ICE", [:]) }
-        let constraints = RTCMediaConstraints(
+        let constraints = LKRTCMediaConstraints(
             mandatoryConstraints: restart ? ["IceRestart": "true"] : nil,
             optionalConstraints: nil)
         let offer = try await ensurePeers().pub.offer(for: constraints)
@@ -51,7 +51,7 @@ extension IMWebRTCAdapter {
 
     public func applyPubAnswer(_ sdp: String) async throws {
         try await ensurePeers().setRemoteDescription(
-            RTCSessionDescription(type: .answer, sdp: sdp), for: .pub)
+            LKRTCSessionDescription(type: .answer, sdp: sdp), for: .pub)
     }
 
     /// answerSubOffer 应答服务端下发的下行 offer。**sub 的 offerer 恒为服务端**。
@@ -62,8 +62,8 @@ extension IMWebRTCAdapter {
         // 把 pub/sub 换掉——会让 peers 整个换掉的只有 `close()`（调用方持有旧引用即可）。
         let peers = ensurePeers()
         try await peers.setRemoteDescription(
-            RTCSessionDescription(type: .offer, sdp: sdp), for: .sub)
-        let constraints = RTCMediaConstraints(mandatoryConstraints: nil, optionalConstraints: nil)
+            LKRTCSessionDescription(type: .offer, sdp: sdp), for: .sub)
+        let constraints = LKRTCMediaConstraints(mandatoryConstraints: nil, optionalConstraints: nil)
         let answer = try await peers.sub.answer(for: constraints)
         try await peers.sub.setLocalDescription(answer)
         return answer.sdp
@@ -71,7 +71,7 @@ extension IMWebRTCAdapter {
 
     public func addRemoteCandidate(_ pc: IMPCRole, _ candidate: IMICECandidate) async throws {
         try await ensurePeers().addRemoteCandidate(
-            RTCIceCandidate(sdp: candidate.candidate,
+            LKRTCIceCandidate(sdp: candidate.candidate,
                             sdpMLineIndex: Int32(candidate.sdpMLineIndex),
                             sdpMid: candidate.sdpMid.isEmpty ? nil : candidate.sdpMid),
             for: pc)

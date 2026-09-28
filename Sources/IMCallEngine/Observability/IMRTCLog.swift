@@ -114,7 +114,7 @@ public enum IMRTCLog {
 
     /// redactSDP 把 SDP 压成一行摘要。
     ///
-    /// 要看完整 SDP 请用 Chrome 的 `webrtc-internals` 或 `RTCPeerConnection` 的统计，
+    /// 要看完整 SDP 请用 Chrome 的 `webrtc-internals` 或 `LKRTCPeerConnection` 的统计，
     /// **不要靠日志**——一条 SDP 几千字节，打两条就把日志淹了。
     public static func redactSDP(_ sdp: String) -> String {
         let lines = sdp.split(separator: "\n")

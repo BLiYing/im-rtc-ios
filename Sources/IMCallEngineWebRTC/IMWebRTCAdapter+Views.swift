@@ -1,7 +1,7 @@
-#if canImport(WebRTC) && canImport(UIKit)
+#if canImport(LiveKitWebRTC) && canImport(UIKit)
 import Foundation
 import UIKit
-import WebRTC
+import LiveKitWebRTC
 import IMCallEngine
 
 /*
@@ -20,7 +20,7 @@ extension IMWebRTCAdapter {
      视图本身与它的 sink **不销毁**（整通电话复用，见 `IMVideoRegistry.attach(owner:to:)`）。
 
      **走的是同一张登记表**（键加 `:local:` 前缀），不是另起一套。
-     原先这里每调一次就 `addSubview` 一个新的 `RTCMTLVideoView`，
+     原先这里每调一次就 `addSubview` 一个新的 `LKRTCMTLVideoView`，
      而 Kit 每次界面状态变化都会重挂一遍——格子里叠了一摞渲染视图，
      且传 nil 时什么都不做，卸载不掉。
 
@@ -35,7 +35,7 @@ extension IMWebRTCAdapter {
             return
         }
         lock.lock()
-        let track = localTracks[cid] as? RTCVideoTrack
+        let track = localTracks[cid] as? LKRTCVideoTrack
         lock.unlock()
         if let track { registry.addTrack(cid, track, owner: key) }
         registry.attach(owner: key, to: container)
@@ -55,10 +55,10 @@ extension IMWebRTCAdapter {
     /// handleRemoteTrack 处理一条下行轨道。
     ///
     /// **track_id 就是协议里的 track_id**：订阅侧 SDP 的 msid 即此值（协议 §2.5 表）。
-    func handleRemoteTrack(_ track: RTCMediaStreamTrack) {
+    func handleRemoteTrack(_ track: LKRTCMediaStreamTrack) {
         let trackID = track.trackId
         events.onRemoteTrack?(trackID)
-        guard let video = track as? RTCVideoTrack else { return }
+        guard let video = track as? LKRTCVideoTrack else { return }
         // **归属这时候通常还不知道**（信令帧可能后到），先按 track_id 收着，
         // 等 claimRemoteTracks 认领。这里原先直接把 track_id 当 uid 挂进去，
         // 而挂载侧传的是真 uid，两把钥匙永远对不上——协商全通但一格画面都没有。

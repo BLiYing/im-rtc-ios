@@ -1,20 +1,20 @@
-#if canImport(WebRTC) && canImport(UIKit)
+#if canImport(LiveKitWebRTC) && canImport(UIKit)
 import Foundation
 import AVFoundation
-import WebRTC
+import LiveKitWebRTC
 import IMCallEngine
 
 /*
  四条音频路由的枚举与切换（2026-09-22，设计稿 §04 的面板 + §7.5 的 `setAudioRoute`）。
 
- # 一条铁律：所有会话操作都走 RTCAudioSession
+ # 一条铁律：所有会话操作都走 LKRTCAudioSession
 
  上一版（系统的 `AVRoutePickerView`）就是栽在这里——它让**系统**去改路由，
- `RTCAudioSession` 全程不知情，而 libwebrtc 的 ADM 正靠那套配置吃饭
+ `LKRTCAudioSession` 全程不知情，而 libwebrtc 的 ADM 正靠那套配置吃饭
  （`IMWebRTCAudioConfiguration` 把 category/mode/采样率都钉死了）。后果是真机上
  两个方向同时没声音，且工厂全进程一份、永不销毁，崩了拔掉蓝牙也不自愈。
 
- 所以这里每一次改动都：`RTCAudioSession.sharedInstance().lockForConfiguration()` 里做、
+ 所以这里每一次改动都：`LKRTCAudioSession.sharedInstance().lockForConfiguration()` 里做、
  用 `session.session` 拿底下那个 `AVAudioSession` 调 `setPreferredInput`、
  **绝不碰 category**（那是 `applyCallAudioCategory` 的事，两边抢会打架）。
 
@@ -73,7 +73,7 @@ extension IMWebRTCAdapter {
          那一刻它正好在 HFP/A2DP 之间协商，`availableInputs` 里瞬间没有它。
 
          这道检查与 `inputPort(for:)` 里「找不到就退回内置麦」的兜底不是一回事：那条是
-         `applyAudioRoute` 已经进了 `RTCAudioSession` 的锁、没法回头时的最后防线，
+         `applyAudioRoute` 已经进了 `LKRTCAudioSession` 的锁、没法回头时的最后防线，
          真触发时会把路由**悄悄改到内置麦**，而不是什么都不做——留着它是为了防会话级
          API 传 `nil`（那会把会话往 A2DP 推，比切错设备更糟）。这里提前判一道，
          让「设备真的还在」与「设备刚好消失」这两种情况分流：前者才走到那条兜底可能触发的窗口。
@@ -103,10 +103,10 @@ extension IMWebRTCAdapter {
         }
     }
 
-    /// 真正去改。**只在会话配好之后调**，全程在 `RTCAudioSession` 的锁里。
+    /// 真正去改。**只在会话配好之后调**，全程在 `LKRTCAudioSession` 的锁里。
     /// 只有用户在面板里手动选择才走到这里；通话开始不主动钉路由（见 `ensureAudioSessionConfigured`）。
     private func applyAudioRoute(_ route: IMAudioRoute) {
-        let session = RTCAudioSession.sharedInstance()
+        let session = LKRTCAudioSession.sharedInstance()
         session.lockForConfiguration()
         defer { session.unlockForConfiguration() }
         do {

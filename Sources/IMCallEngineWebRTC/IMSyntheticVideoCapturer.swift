@@ -1,17 +1,17 @@
-#if canImport(WebRTC) && canImport(UIKit)
+#if canImport(LiveKitWebRTC) && canImport(UIKit)
 import CoreGraphics
 import CoreVideo
 import Foundation
 import IMCallEngine
 import UIKit
-import WebRTC
+import LiveKitWebRTC
 
 /**
  合成视频源：自己画帧推进 libwebrtc，**完全不碰摄像头**。
 
  # 为什么需要它
 
- **iOS 模拟器没有摄像头**（`RTCCameraVideoCapturer.captureDevices()` 恒为空），
+ **iOS 模拟器没有摄像头**（`LKRTCCameraVideoCapturer.captureDevices()` 恒为空），
  于是模拟器上的一切视频联调都只能看头像——九宫格版式、格子里的画面通没通、
  层上界选得对不对，一条都验不了，非得插真机。
  麦克风倒是有（模拟器转发宿主 Mac 的），所以**只有视频需要合成**：
@@ -24,7 +24,7 @@ import WebRTC
 
  # 用法
 
- 它是个 `RTCVideoCapturer`，和 `RTCCameraVideoCapturer` 一样挂在 `RTCVideoSource` 上：
+ 它是个 `LKRTCVideoCapturer`，和 `LKRTCCameraVideoCapturer` 一样挂在 `LKRTCVideoSource` 上：
 
  ```swift
  let source = factory.videoSource()
@@ -33,9 +33,9 @@ import WebRTC
  ```
 
  **只给 Demo / 联调用**，不是产品能力：宿主真要「虚拟摄像头」应当自己实现
- `RTCVideoCapturer` 推自己的帧，这个类只是那条路的一个现成例子。
+ `LKRTCVideoCapturer` 推自己的帧，这个类只是那条路的一个现成例子。
  */
-public final class IMSyntheticVideoCapturer: RTCVideoCapturer {
+public final class IMSyntheticVideoCapturer: LKRTCVideoCapturer {
 
     private let label: String
     private let queue = DispatchQueue(label: "im-rtc.synthetic-video")
@@ -45,7 +45,7 @@ public final class IMSyntheticVideoCapturer: RTCVideoCapturer {
     private var height = 0
 
     /// - Parameter label: 画在画面左上角的字（一般是自己的 uid），好在多端并排时认出是谁。
-    public init(delegate: RTCVideoCapturerDelegate, label: String) {
+    public init(delegate: LKRTCVideoCapturerDelegate, label: String) {
         self.label = label
         super.init(delegate: delegate)
     }
@@ -82,8 +82,8 @@ public final class IMSyntheticVideoCapturer: RTCVideoCapturer {
     private func emitFrame() {
         guard let pool, let pixelBuffer = Self.makeBuffer(pool) else { return }
         draw(into: pixelBuffer)
-        let buffer = RTCCVPixelBuffer(pixelBuffer: pixelBuffer)
-        let frame = RTCVideoFrame(
+        let buffer = LKRTCCVPixelBuffer(pixelBuffer: pixelBuffer)
+        let frame = LKRTCVideoFrame(
             buffer: buffer,
             rotation: ._0,
             timeStampNs: Int64(CACurrentMediaTime() * 1_000_000_000)

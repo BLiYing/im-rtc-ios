@@ -1,7 +1,7 @@
-#if canImport(WebRTC) && canImport(UIKit)
+#if canImport(LiveKitWebRTC) && canImport(UIKit)
 import Foundation
 import UIKit
-import WebRTC
+import LiveKitWebRTC
 import IMCallEngine
 
 /*
@@ -21,7 +21,7 @@ import IMCallEngine
 ///
 /// 远端轨道上的那个报完就一直挂着（之后每帧只剩一次加锁判断）；
 /// 本端画布用的那个由登记表报完就摘掉（见 `IMVideoRegistry.resetForReopen(owner:)`）。
-final class IMFirstFrameProbe: NSObject, RTCVideoRenderer {
+final class IMFirstFrameProbe: NSObject, LKRTCVideoRenderer {
     private let onFirstFrame: (_ width: Int32, _ height: Int32, _ rotation: Int) -> Void
     private var fired = false
     /// 还认不认帧。见 ``accept()``。
@@ -51,7 +51,7 @@ final class IMFirstFrameProbe: NSObject, RTCVideoRenderer {
         // 尺寸回调也可能先于第一帧到，**不能拿它当判据**——它只说明协商出了分辨率。
     }
 
-    func renderFrame(_ frame: RTCVideoFrame?) {
+    func renderFrame(_ frame: LKRTCVideoFrame?) {
         guard let frame else { return }
         lock.lock()
         let fire = accepting && !fired
@@ -86,7 +86,7 @@ func imLocalViewKey(_ cid: String) -> String { ":local:\(cid)" }
 
  # 为什么整张表只在主线程上动
 
- 表里存的是 `UIView`（`RTCMTLVideoView` 背后是 `CAMetalLayer`）。
+ 表里存的是 `UIView`（`LKRTCMTLVideoView` 背后是 `CAMetalLayer`）。
  原先用一把 `NSLock` 保护，`attach` 从主线程进、`removeAll` 从 actor 线程进——
  **锁保护得了字典，保护不了 UIKit**。通话结束时在后台线程
  `removeFromSuperview()` 一个正在渲染的 Metal 视图，进程是要挂的。
@@ -96,9 +96,9 @@ final class IMVideoRegistry {
     /// owner（uid 或 `:local:cid`）→ 渲染视图。
     private var views: [String: IMAspectVideoView] = [:]
     /// owner → 轨道。
-    private var tracks: [String: RTCVideoTrack] = [:]
+    private var tracks: [String: LKRTCVideoTrack] = [:]
     /// track_id → 还不知道归属的轨道。
-    private var orphans: [String: RTCVideoTrack] = [:]
+    private var orphans: [String: LKRTCVideoTrack] = [:]
     /// track_id → owner，认领之后的记账。
     private var owners: [String: String] = [:]
     /// 已经把视图接到轨道上的 owner。见 ``attachRenderer(owner:)``——`add` 不去重。
@@ -111,13 +111,13 @@ final class IMVideoRegistry {
     private struct FirstFrameGate {
         let serial: Int
         let probe: IMFirstFrameProbe
-        let track: RTCVideoTrack
+        let track: LKRTCVideoTrack
         /// 从什么时候开始认帧。nil = 摄像头还关着。
         var openedAt: CFAbsoluteTime?
     }
 
     /// addTrack 收下一条轨道。`owner` 为空表示「还不知道是谁的」，先进 orphans 等认领。
-    func addTrack(_ trackID: String, _ track: RTCVideoTrack, owner: String) {
+    func addTrack(_ trackID: String, _ track: LKRTCVideoTrack, owner: String) {
         onMain { [self] in
             guard !owner.isEmpty else {
                 orphans[trackID] = track
@@ -136,7 +136,7 @@ final class IMVideoRegistry {
      **判据只看 `orphans` 里有没有新轨道，不看归属变没变。**
      原先还带一条 `owners[trackID] != owner`，意思是「已经认过就别再认」。
      会议分页之后这条是错的：翻走五秒会**退订**，翻回来**重新订阅**——
-     track_id 还是同一个，可 `RTCVideoTrack` 是全新对象。归属没变，于是那一条直接 return，
+     track_id 还是同一个，可 `LKRTCVideoTrack` 是全新对象。归属没变，于是那一条直接 return，
      新轨道永远躺在 orphans 里，渲染器还挂在已经死掉的旧轨道上，
      **画面定格在最后一帧**（2026-09-18 真机：翻走再翻回来，那一格就冻住）。
 
@@ -155,14 +155,14 @@ final class IMVideoRegistry {
     /// attach 把某个 owner 的画面挂到宿主给的视图上；传 nil 只从容器上摘下来。
     ///
     /// **重复调用是幂等的**。原先每调一次就 `addSubview` 一个新的
-    /// `RTCMTLVideoView`——而 Kit 每次状态变化都会重挂一遍，于是格子里
+    /// `LKRTCMTLVideoView`——而 Kit 每次状态变化都会重挂一遍，于是格子里
     /// 叠了一摞渲染视图，只有最下面那张接着轨道。
     ///
     /// # 传 nil 不再拆视图、不再拆 sink
     ///
     /// 本端摄像头关闭时 Kit 会用 `attach(owner:to: nil)` 把预览从容器上收回。
     /// 视图和它接在轨道上的 sink 都**留在表里**——只是暂时没有 superview，
-    /// 轨道那边（`RTCCameraVideoCapturer`）也已经停采集，不会再送帧过来。
+    /// 轨道那边（`LKRTCCameraVideoCapturer`）也已经停采集，不会再送帧过来。
     /// 整通电话只彻底释放一次，在 `remove`/`removeAll`（挂断、进房前的
     /// `stopLocalPreview`）——见那两个方法的注释。
     /// 与 Android `IMCallKit.localPreviewView` 同一个思路：Kit 层的预览视图
@@ -249,7 +249,7 @@ final class IMVideoRegistry {
 
      # 为什么是「换一块新画布」而不是「清空这块画布」
 
-     `RTCMTLVideoView` 没有公开的清帧接口——`renderFrame(nil)` 直接 return，不会清空当前
+     `LKRTCMTLVideoView` 没有公开的清帧接口——`renderFrame(nil)` 直接 return，不会清空当前
      显示的内容。换一个全新的 `IMAspectVideoView` 实例就不用赌：新视图从没渲染过东西，
      `CAMetalLayer` 天然是空的。与 Android `IMWebRTCAdapter.kt` 的 `attachLocalPreview`
      每次 `release()` + 重新 `init()` 同一个目的：复用的是宿主看到的那个视图**位置**，
@@ -326,7 +326,7 @@ final class IMVideoRegistry {
         IMRTCLog.info("本端画面首帧到达", ["owner": owner, "waitMs": waited, "frame": frame])
     }
 
-    private func bind(owner: String, track: RTCVideoTrack) {
+    private func bind(owner: String, track: LKRTCVideoTrack) {
         // 同一个 owner 换了轨道（对方关了摄像头再开）：**先把旧轨道从渲染视图上摘掉**，
         // 不摘的话新轨道的帧会和旧轨道的最后一帧抢同一个渲染器，画面停在旧的那一帧。
         if let previous = tracks[owner], previous !== track, let view = views[owner] {
@@ -346,10 +346,10 @@ final class IMVideoRegistry {
 
      # 为什么必须自己判重
 
-     `RTCVideoTrack.add(_:)` **不去重**：每调一次就新造一个 renderer adapter 挂到
+     `LKRTCVideoTrack.add(_:)` **不去重**：每调一次就新造一个 renderer adapter 挂到
      native 的 sink 列表上。而这条路被调得非常勤——`IMCallOverlayViewController.render`
      每次状态变化都无条件 `attachLocalPreview`，而 `onActiveSpeakers` 每 300ms 就改一次
-     音量、状态就变一次，于是一秒好几轮。一通视频打几分钟，同一个 `RTCMTLVideoView`
+     音量、状态就变一次，于是一秒好几轮。一通视频打几分钟，同一个 `LKRTCMTLVideoView`
      上就挂了几百个重复 sink，每一帧渲染几百遍（CPU/GPU 与内存一起涨）；
      而卸载时只 `remove` 一次，多出来的那些**永远回收不掉**。
 
@@ -398,13 +398,13 @@ final class IMVideoRegistry {
 
  # 两个触发点都要接
 
- · 视频尺寸变了（对端转屏、换摄像头）→ `RTCVideoViewDelegate`；
+ · 视频尺寸变了（对端转屏、换摄像头）→ `LKRTCVideoViewDelegate`；
  · 自己的 bounds 变了（进出全屏、九宫格行列变化、设备转屏）→ `layoutSubviews`。
    少接任何一个，都会在那种变化之后停在上一次算出来的模式上。
 
  自己当自己的 delegate：这个视图没有别的观察者，多一层转发只会多一处能漂的地方。
  */
-final class IMAspectVideoView: RTCMTLVideoView, RTCVideoViewDelegate {
+final class IMAspectVideoView: LKRTCMTLVideoView, LKRTCVideoViewDelegate {
 
     /// 这块画布登记在谁名下（uid 或 `:local:cid`）。只用来打日志。
     var owner = ""
@@ -434,7 +434,7 @@ final class IMAspectVideoView: RTCMTLVideoView, RTCVideoViewDelegate {
         applyContentMode()
     }
 
-    func videoView(_ videoView: RTCVideoRenderer, didChangeVideoSize size: CGSize) {
+    func videoView(_ videoView: LKRTCVideoRenderer, didChangeVideoSize size: CGSize) {
         let previous = videoSize
         videoSize = size
         applyContentMode()

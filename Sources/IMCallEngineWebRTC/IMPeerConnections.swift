@@ -1,6 +1,6 @@
-#if canImport(WebRTC)
+#if canImport(LiveKitWebRTC)
 import Foundation
-import WebRTC
+import LiveKitWebRTC
 import IMCallEngine
 
 /*
@@ -23,22 +23,22 @@ import IMCallEngine
 final class IMPeerConnections: NSObject {
 
     /// **全进程共用一个**，见 sharedFactory 的说明。
-    let factory: RTCPeerConnectionFactory
-    private(set) var pub: RTCPeerConnection!
-    private(set) var sub: RTCPeerConnection!
+    let factory: LKRTCPeerConnectionFactory
+    private(set) var pub: LKRTCPeerConnection!
+    private(set) var sub: LKRTCPeerConnection!
 
     /// 还没能交给 PC 的远端候选，按角色分开攒。
     ///
     /// `candidateLock` 同时保护它与「远端描述设了没有」的判断——
     /// **两件事必须原子**：分开判断的话，正好在判断与入队之间设上远端描述，
     /// 这个候选就会永远躺在队列里没人排空。
-    private var pending: [IMPCRole: [RTCIceCandidate]] = [.pub: [], .sub: []]
+    private var pending: [IMPCRole: [LKRTCIceCandidate]] = [.pub: [], .sub: []]
     private var hasRemoteDescription: [IMPCRole: Bool] = [.pub: false, .sub: false]
     private let candidateLock = NSLock()
 
-    var onLocalCandidate: ((IMPCRole, RTCIceCandidate) -> Void)?
-    var onRemoteTrack: ((RTCMediaStreamTrack) -> Void)?
-    var onStateChange: ((IMPCRole, RTCPeerConnectionState) -> Void)?
+    var onLocalCandidate: ((IMPCRole, LKRTCIceCandidate) -> Void)?
+    var onRemoteTrack: ((LKRTCMediaStreamTrack) -> Void)?
+    var onStateChange: ((IMPCRole, LKRTCPeerConnectionState) -> Void)?
 
     override init() {
         factory = Self.sharedFactory
@@ -47,27 +47,27 @@ final class IMPeerConnections: NSObject {
         sub = makeConnection(role: .sub)
     }
 
-    func connection(for role: IMPCRole) -> RTCPeerConnection {
+    func connection(for role: IMPCRole) -> LKRTCPeerConnection {
         role == .pub ? pub : sub
     }
 
-    private func makeConnection(role: IMPCRole) -> RTCPeerConnection {
-        let config = RTCConfiguration()
+    private func makeConnection(role: IMPCRole) -> LKRTCPeerConnection {
+        let config = LKRTCConfiguration()
         // **只用 Unified Plan**：Plan B 早已废弃，而且 simulcast 的 rid 只在
         // Unified Plan 下有意义。
         config.sdpSemantics = .unifiedPlan
         config.continualGatheringPolicy = .gatherContinually
         // 不配 STUN/TURN：服务端是 ICE-lite 且候选由它下发（协议 §3.3），
         // 本端只需要收集主机候选。将来要打洞时这里加 iceServers。
-        let constraints = RTCMediaConstraints(mandatoryConstraints: nil, optionalConstraints: nil)
+        let constraints = LKRTCMediaConstraints(mandatoryConstraints: nil, optionalConstraints: nil)
         guard let connection = factory.peerConnection(with: config, constraints: constraints,
                                                       delegate: nil) else {
-            fatalError("创建 RTCPeerConnection 失败——这在正常设备上不会发生")
+            fatalError("创建 LKRTCPeerConnection 失败——这在正常设备上不会发生")
         }
         /*
          **先留强引用再赋值，顺序不能反。**
 
-         `RTCPeerConnection.delegate` 是 weak：`connection.delegate = IMPCDelegate(...)`
+         `LKRTCPeerConnection.delegate` 是 weak：`connection.delegate = IMPCDelegate(...)`
          之后那个新建的对象没有任何强引用，当场就被释放，`connection.delegate`
          立刻读回 nil。真机/模拟器上第一次登录就崩在这里
          （`as! IMPCDelegate` 对 nil 强解包）。
@@ -81,15 +81,15 @@ final class IMPeerConnections: NSObject {
         return connection
     }
 
-    /// 强引用 delegate。见上：`RTCPeerConnection.delegate` 是 weak 的。
+    /// 强引用 delegate。见上：`LKRTCPeerConnection.delegate` 是 weak 的。
     private var delegates: [IMPCDelegate] = []
 
     // MARK: - 描述与候选
 
     /// setRemoteDescription 设远端描述，**并在同一把锁里排空攒下的候选**。
-    func setRemoteDescription(_ sdp: RTCSessionDescription, for role: IMPCRole) async throws {
+    func setRemoteDescription(_ sdp: LKRTCSessionDescription, for role: IMPCRole) async throws {
         try await connection(for: role).setRemoteDescription(sdp)
-        let drained: [RTCIceCandidate] = {
+        let drained: [LKRTCIceCandidate] = {
             candidateLock.lock()
             defer { candidateLock.unlock() }
             hasRemoteDescription[role] = true
@@ -106,7 +106,7 @@ final class IMPeerConnections: NSObject {
     }
 
     /// addRemoteCandidate 加一个远端候选；远端描述还没设就先攒着。
-    func addRemoteCandidate(_ candidate: RTCIceCandidate, for role: IMPCRole) async throws {
+    func addRemoteCandidate(_ candidate: LKRTCIceCandidate, for role: IMPCRole) async throws {
         let ready: Bool = {
             candidateLock.lock()
             defer { candidateLock.unlock() }
@@ -119,7 +119,7 @@ final class IMPeerConnections: NSObject {
     }
 
     /// close 关掉两条 PC。**关掉之后这个对象就报废了**——
-    /// RTCPeerConnection 关闭后不能复用，再往上 `addTransceiver` 会抛 ObjC 异常
+    /// LKRTCPeerConnection 关闭后不能复用，再往上 `addTransceiver` 会抛 ObjC 异常
     /// （Swift 接不住，直接进程挂掉）。调用方负责换一个新的（见 IMWebRTCAdapter.ensurePeers）。
     func close() {
         pub.close()
@@ -135,9 +135,9 @@ final class IMPeerConnections: NSObject {
 
      两条理由，都踩过：
 
-     1. `RTCInitializeSSL` / `RTCCleanupSSL` 是全局的、**没有引用计数**。
+     1. `LKRTCInitializeSSL` / `LKRTCCleanupSSL` 是全局的、**没有引用计数**。
         原先写在 init/deinit 里，重新登录会造第二个适配器，而第一个析构时
-        `RTCCleanupSSL()` 会把**正在用的**那套 SSL 拆掉。
+        `LKRTCCleanupSSL()` 会把**正在用的**那套 SSL 拆掉。
 
      2. **工厂必须活得比它造出来的 PeerConnection 久。**
         工厂原先是本对象的存储属性，而本对象「一通电话一个」——通话结束时
@@ -148,7 +148,7 @@ final class IMPeerConnections: NSObject {
 
      造工厂本身也不便宜（要起三条线程 + 编解码器枚举），一通电话造一次纯属浪费。
     */
-    private static let sharedFactory: RTCPeerConnectionFactory = {
+    private static let sharedFactory: LKRTCPeerConnectionFactory = {
         // 先把 libwebrtc 的音频日志接进来（见 IMWebRTCLogBridge），再碰任何 WebRTC 对象。
         IMWebRTCLogBridge.start()
         #if os(iOS)
@@ -156,12 +156,12 @@ final class IMPeerConnections: NSObject {
         // 首次被碰那一刻的会话快照，拍在 SoloAmbient 上就是双向无声。见 IMWebRTCAudioConfiguration。
         IMWebRTCAudioConfiguration.install()
         #endif
-        RTCInitializeSSL()
+        LKRTCInitializeSSL()
         /*
          libwebrtc 的默认编解码工厂，**编码器先后顺序由它决定，我们没有排序**。
          原注释写「VP8 是 MVP 基线」，与实际不符。
 
-         这个顺序本仓没有源码能直接证实：预编译包的 `RTCDefaultVideoEncoderFactory.h`
+         这个顺序本仓没有源码能直接证实：预编译包的 `LKRTCDefaultVideoEncoderFactory.h`
          只声明了 `supportedCodecs`，不写次序。依据是 Android 侧
          `IMUplinkPolicy.preferH264Codec` 的分析——「iOS 这个工厂恰好把 H.264 排前面，
          所以 iOS 一直在用硬编」，与 Android 默认 VP8 在前正好相反。
@@ -169,22 +169,22 @@ final class IMPeerConnections: NSObject {
          要确认某次通话实际用的是哪个，看服务端日志 `上行 Track 已接入 … codec=`。
         */
         /*
-         **套 simulcast adapter 才会真的编三层**（2026-09-21）。裸 `RTCDefaultVideoEncoderFactory`
+         **套 simulcast adapter 才会真的编三层**（2026-09-21）。裸 `LKRTCDefaultVideoEncoderFactory`
          不带 `SimulcastEncoderAdapter`，`sendEncodings` 配了 h/m/l 三条也只编第一条。
          这个类是 webrtc-sdk 那个 fork 才有的（见 Package.swift），primary / fallback 都给默认工厂，
          与 LiveKit 的用法一致：adapter 按 encoding 个数拆成多个内层编码器，硬编 H.264 / 软编 VP8 都适用。
          **与 `IMVideoProfile.simulcastLayers` 的低→高顺序是同一刀**，单改一处会发 1/4 分辨率。
         */
-        let encoderFactory = RTCDefaultVideoEncoderFactory()
-        return RTCPeerConnectionFactory(
-            encoderFactory: RTCVideoEncoderFactorySimulcast(primary: encoderFactory, fallback: encoderFactory),
-            decoderFactory: RTCDefaultVideoDecoderFactory())
+        let encoderFactory = LKRTCDefaultVideoEncoderFactory()
+        return LKRTCPeerConnectionFactory(
+            encoderFactory: LKRTCVideoEncoderFactorySimulcast(primary: encoderFactory, fallback: encoderFactory),
+            decoderFactory: LKRTCDefaultVideoDecoderFactory())
     }()
 }
 
 /// PC 的回调。**每条 PC 一个实例**，这样回调里天然知道自己是 pub 还是 sub——
 /// 共用一个 delegate 就得反查是谁在回调，那段反查逻辑没有存在的必要。
-private final class IMPCDelegate: NSObject, RTCPeerConnectionDelegate {
+private final class IMPCDelegate: NSObject, LKRTCPeerConnectionDelegate {
     private let role: IMPCRole
     private weak var owner: IMPeerConnections?
 
@@ -193,37 +193,37 @@ private final class IMPCDelegate: NSObject, RTCPeerConnectionDelegate {
         self.owner = owner
     }
 
-    func peerConnection(_ peerConnection: RTCPeerConnection,
-                        didGenerate candidate: RTCIceCandidate) {
+    func peerConnection(_ peerConnection: LKRTCPeerConnection,
+                        didGenerate candidate: LKRTCIceCandidate) {
         owner?.onLocalCandidate?(role, candidate)
     }
 
-    func peerConnection(_ peerConnection: RTCPeerConnection,
-                        didChange newState: RTCPeerConnectionState) {
+    func peerConnection(_ peerConnection: LKRTCPeerConnection,
+                        didChange newState: LKRTCPeerConnectionState) {
         owner?.onStateChange?(role, newState)
     }
 
-    func peerConnection(_ peerConnection: RTCPeerConnection,
-                        didAdd rtpReceiver: RTCRtpReceiver,
-                        streams: [RTCMediaStream]) {
+    func peerConnection(_ peerConnection: LKRTCPeerConnection,
+                        didAdd rtpReceiver: LKRTCRtpReceiver,
+                        streams: [LKRTCMediaStream]) {
         guard let track = rtpReceiver.track else { return }
         owner?.onRemoteTrack?(track)
     }
 
     // 下面这些协议要求实现，但我们不需要——**不要在这里打日志**，
     // 有些是每次协商都触发的高频回调。
-    func peerConnectionShouldNegotiate(_ peerConnection: RTCPeerConnection) {}
-    func peerConnection(_ peerConnection: RTCPeerConnection,
-                        didChange stateChanged: RTCSignalingState) {}
-    func peerConnection(_ peerConnection: RTCPeerConnection, didAdd stream: RTCMediaStream) {}
-    func peerConnection(_ peerConnection: RTCPeerConnection, didRemove stream: RTCMediaStream) {}
-    func peerConnection(_ peerConnection: RTCPeerConnection,
-                        didChange newState: RTCIceConnectionState) {}
-    func peerConnection(_ peerConnection: RTCPeerConnection,
-                        didChange newState: RTCIceGatheringState) {}
-    func peerConnection(_ peerConnection: RTCPeerConnection,
-                        didRemove candidates: [RTCIceCandidate]) {}
-    func peerConnection(_ peerConnection: RTCPeerConnection,
-                        didOpen dataChannel: RTCDataChannel) {}
+    func peerConnectionShouldNegotiate(_ peerConnection: LKRTCPeerConnection) {}
+    func peerConnection(_ peerConnection: LKRTCPeerConnection,
+                        didChange stateChanged: LKRTCSignalingState) {}
+    func peerConnection(_ peerConnection: LKRTCPeerConnection, didAdd stream: LKRTCMediaStream) {}
+    func peerConnection(_ peerConnection: LKRTCPeerConnection, didRemove stream: LKRTCMediaStream) {}
+    func peerConnection(_ peerConnection: LKRTCPeerConnection,
+                        didChange newState: LKRTCIceConnectionState) {}
+    func peerConnection(_ peerConnection: LKRTCPeerConnection,
+                        didChange newState: LKRTCIceGatheringState) {}
+    func peerConnection(_ peerConnection: LKRTCPeerConnection,
+                        didRemove candidates: [LKRTCIceCandidate]) {}
+    func peerConnection(_ peerConnection: LKRTCPeerConnection,
+                        didOpen dataChannel: LKRTCDataChannel) {}
 }
 #endif

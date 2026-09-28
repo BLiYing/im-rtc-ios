@@ -1,4 +1,4 @@
-#if canImport(WebRTC) && canImport(UIKit)
+#if canImport(LiveKitWebRTC) && canImport(UIKit)
 import Foundation
 import IMCallEngine
 

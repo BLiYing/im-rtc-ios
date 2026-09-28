@@ -1,7 +1,7 @@
-#if canImport(WebRTC) && canImport(UIKit)
+#if canImport(LiveKitWebRTC) && canImport(UIKit)
 import AVFoundation
 import Foundation
-import WebRTC
+import LiveKitWebRTC
 import IMCallEngine
 
 /*
@@ -42,7 +42,7 @@ extension IMWebRTCAdapter {
     /**
      makeCameraCapturer 建摄像头采集器，**自己给一个 `AVCaptureSession`**。
 
-     不能用 `RTCCameraVideoCapturer(delegate:)`：现在这个预编译包（webrtc-sdk，2026-09-18 换）
+     不能用 `LKRTCCameraVideoCapturer(delegate:)`：现在这个预编译包（webrtc-sdk，2026-09-18 换）
      的 `createCaptureSession` 与上游不一样——**支持多摄的机型上它返回一个进程内静态共享的
      `AVCaptureMultiCamSession`**，而上游是每个采集器一个普通 `AVCaptureSession`。
 
@@ -61,19 +61,19 @@ extension IMWebRTCAdapter {
      它加出来就是给应用自带会话用的），等于把上游那套「一采集器一会话」拿回来。
      */
     static func makeCameraCapturer(
-        delegate: RTCVideoCapturerDelegate
-    ) -> RTCCameraVideoCapturer {
-        RTCCameraVideoCapturer(delegate: delegate, captureSession: AVCaptureSession())
+        delegate: LKRTCVideoCapturerDelegate
+    ) -> LKRTCCameraVideoCapturer {
+        LKRTCCameraVideoCapturer(delegate: delegate, captureSession: AVCaptureSession())
     }
 
     static func captureChoice(front: Bool, profile: IMVideoProfile) throws -> IMCaptureChoice {
-        let devices = RTCCameraVideoCapturer.captureDevices()
+        let devices = LKRTCCameraVideoCapturer.captureDevices()
         let wantedPosition: AVCaptureDevice.Position = front ? .front : .back
         guard let device = devices.first(where: { $0.position == wantedPosition }) ?? devices.first else {
             throw IMRTCError(.deviceNotFound, "没有可用的摄像头")
         }
         let wanted = profile.width
-        let formats = RTCCameraVideoCapturer.supportedFormats(for: device)
+        let formats = LKRTCCameraVideoCapturer.supportedFormats(for: device)
         guard let format = formats.min(by: { lhs, rhs in
             let l = CMVideoFormatDescriptionGetDimensions(lhs.formatDescription)
             let r = CMVideoFormatDescriptionGetDimensions(rhs.formatDescription)
@@ -97,16 +97,16 @@ extension IMWebRTCAdapter {
     }
 
     /**
-     halt 停采集。**特意是个同步函数**：`RTCCameraVideoCapturer` 同时有同步的 `stopCapture()`
+     halt 停采集。**特意是个同步函数**：`LKRTCCameraVideoCapturer` 同时有同步的 `stopCapture()`
      和带回调的那个（Swift 会把后者导成 async），在 async 函数里直接写 `stopCapture()`
      编译器挑的是 async 那个，于是要求 await。放进同步函数里就不会挑错。
      */
     /// 采集会话上**实际接着**的那颗摄像头朝向。会话上没有输入（或输入不是摄像头）时为 nil。
-    static func inputPosition(of camera: RTCCameraVideoCapturer) -> AVCaptureDevice.Position? {
+    static func inputPosition(of camera: LKRTCCameraVideoCapturer) -> AVCaptureDevice.Position? {
         camera.captureSession.inputs.compactMap { ($0 as? AVCaptureDeviceInput)?.device.position }.first
     }
 
-    static func halt(_ camera: RTCCameraVideoCapturer?, _ synthetic: IMSyntheticVideoCapturer?) {
+    static func halt(_ camera: LKRTCCameraVideoCapturer?, _ synthetic: IMSyntheticVideoCapturer?) {
         camera?.stopCapture()
         synthetic?.stopCapture()
     }
@@ -146,11 +146,11 @@ extension IMWebRTCAdapter {
     func applyCallAudioCategory(why: String) {
         // 我们配会话时顺手把 WebRTC 那份也钉一遍：两份不一致，ADM 开麦时就会把我们配的覆盖掉。
         IMWebRTCAudioConfiguration.install()
-        let session = RTCAudioSession.sharedInstance()
+        let session = LKRTCAudioSession.sharedInstance()
         session.lockForConfiguration()
         defer { session.unlockForConfiguration() }
         let startedNS = DispatchTime.now().uptimeNanoseconds
-        // **`isActive` 是判这一刀有没有真做的关键**：为 YES 时 `RTCAudioSession.setActive(true)`
+        // **`isActive` 是判这一刀有没有真做的关键**：为 YES 时 `LKRTCAudioSession.setActive(true)`
         // 只加计数、不碰底层会话（见 `releaseAudioSession`），elapsed 会是 2~3 ms，路由不会重新协商。
         let wasActive = session.isActive
         var failure: String?
@@ -226,7 +226,7 @@ extension IMWebRTCAdapter {
 
      # 「第一通有声、挂断再打就哑」的根因（2026-09-22，真机 8 轮 100% 复现）
 
-     `RTCAudioSession` 的激活是**引用计数 + 一个 `isActive` 标记**，`setActive:` 的规则
+     `LKRTCAudioSession` 的激活是**引用计数 + 一个 `isActive` 标记**，`setActive:` 的规则
      （从 WebRTC.framework 反汇编核实，这一版与上游略有出入）：
      - `setActive(true)`：`isActive == NO` 才真调底层 `AVAudioSession.setActive(true)`，
        否则**只加计数**——2~3 ms 就返回，路由不会重新协商；
@@ -234,7 +234,7 @@ extension IMWebRTCAdapter {
        **其余情形只减计数、`isActive` 保持 YES**。
 
      旧代码为了传 `notifyOthersOnDeactivation`，走的是 `session.session.setActive(false, options:)`
-     ——**绕过了 `RTCAudioSession` 直接关底层**。后果：底层会话真关了，`RTCAudioSession`
+     ——**绕过了 `LKRTCAudioSession` 直接关底层**。后果：底层会话真关了，`LKRTCAudioSession`
      仍记着 `count=1 / isActive=YES`（我们那一次激活从没还回去；libwebrtc 自己那一次 2→1 是配平的）。
      下一通 `setActive(true)` 一看 `isActive=YES` → 只加计数（日志 `Number of current activations: 2`、
      `elapsed_ms=3`），底层会话**根本没被激活**：`currentRoute` 看到的是系统闲置态
@@ -247,7 +247,7 @@ extension IMWebRTCAdapter {
 
      # 现在的做法
 
-     全部经 `RTCAudioSession.setActive(_:)`，**不再碰 `session.session`**。它自己在真关底层时
+     全部经 `LKRTCAudioSession.setActive(_:)`，**不再碰 `session.session`**。它自己在真关底层时
      就会传 `notifyOthersOnDeactivation`（头文件明写），旧注释说「没有带 options 的重载所以要绕」
      是误读。次序无所谓：libwebrtc 的 ADM 与我们谁后走，谁那一次 `count==1` 就真关底层——
      `isActive` 在此之前一直是 YES。回读 `rtc_active` 是为下一次真机排查留的把手：
@@ -259,7 +259,7 @@ extension IMWebRTCAdapter {
      （见 `IMWebRTCAdapter+AudioRoute.swift` 的 `inputPort(for:)`）。
      */
     static func releaseAudioSession(activations: Int) {
-        let session = RTCAudioSession.sharedInstance()
+        let session = LKRTCAudioSession.sharedInstance()
         session.lockForConfiguration()
         defer { session.unlockForConfiguration() }
         var failure: String?
@@ -287,9 +287,9 @@ extension IMWebRTCAdapter {
     }
 
     /// simulcastEncodings 是 simulcast 三层（协议 §3.5：rid 为 h/m/l），码率跟着档位走。
-    static func simulcastEncodings(_ profile: IMVideoProfile) -> [RTCRtpEncodingParameters] {
+    static func simulcastEncodings(_ profile: IMVideoProfile) -> [LKRTCRtpEncodingParameters] {
         profile.simulcastLayers.map { layer in
-            let encoding = RTCRtpEncodingParameters()
+            let encoding = LKRTCRtpEncodingParameters()
             encoding.rid = layer.rid
             encoding.isActive = true
             encoding.scaleResolutionDownBy = NSNumber(value: layer.scaleDownBy)
@@ -310,12 +310,12 @@ extension IMWebRTCAdapter {
 
      挂上 transceiver 之后、生成 offer 之前设。ObjC 的 setter 不回错误，设没设上看回读。
      */
-    static func preferResolutionOverFramerate(_ sender: RTCRtpSender?) {
+    static func preferResolutionOverFramerate(_ sender: LKRTCRtpSender?) {
         guard let sender else {
             IMRTCLog.warn("没拿到视频 sender，降级偏好没设上", [:])
             return
         }
-        let wanted = RTCDegradationPreference.maintainResolution.rawValue
+        let wanted = LKRTCDegradationPreference.maintainResolution.rawValue
         let parameters = sender.parameters
         parameters.degradationPreference = NSNumber(value: wanted)
         sender.parameters = parameters
@@ -326,7 +326,7 @@ extension IMWebRTCAdapter {
         }
     }
 
-    static func stateName(_ state: RTCPeerConnectionState) -> String {
+    static func stateName(_ state: LKRTCPeerConnectionState) -> String {
         switch state {
         case .new: return "new"
         case .connecting: return "connecting"

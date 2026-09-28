@@ -293,7 +293,7 @@ final class DemoSession {
      用合成画面代替摄像头（见 `IMSyntheticVideoCapturer`）。**换了要重登才生效**——
      适配器是登录时造的，和画质档位同一条规矩。
 
-     **模拟器上默认开**：模拟器根本没有摄像头（`RTCCameraVideoCapturer.captureDevices()`
+     **模拟器上默认开**：模拟器根本没有摄像头（`LKRTCCameraVideoCapturer.captureDevices()`
      恒为空），不开就只能看头像，九宫格版式、画面通没通、层上界对不对一条都验不了。
      真机上默认关——那儿有真摄像头，没理由拿假画面顶替。
 

@@ -7,19 +7,20 @@
 
 ## 当前焦点
 
-- **09-28 走了个弯路又撤回：`IMCallKit` 不需要加 `businessDelegate`**。起因是参考 Android
-  `TencentTUIUtils`/`IMCallKit.wrap()` 时，以为 iOS 缺一个等价能力——`IMCallController.init(engine:)`
-  独占 `engine.delegate`，以为 Kit 接管后宿主拿不到 `callSummary`（通话记录）/`wasKickedOutFor`/
-  `tokenWillExpireAt`/`didFailWithError`。写完转发器、补完测试、`test.sh` 全绿之后才发现
-  **`IMCallEngine.addEventObserver(_:)`（`Facade/IMCallEngine.swift`，**2.1.0 就有**）本来就是一条
-  完全独立于 `delegate` 的广播通道**——`IMEventDispatcher.deliver(_:)` 里 `observers`（block 观察者，
-  不限数量）与 `delegate`（单槽位）是两条并行分发路径，Kit 占了 `delegate` 不影响 `observers` 照样收到
-  同一份事件（`IMCallEvent.payload`，键是协议 snake_case 名，`.name == .callSummary` 时能拿到通话记录
-  要的全部字段）。**纯 ObjC 宿主也能直接用**（`(IMCallEvent) -> Void` 是 block）。
-  已把那次 SDK 改动整个 `git reset --hard` 撤掉（没推送过，代价为零）——**不需要发新版本，
-  `rongxin4` 现在锁的 `Exact Version 2.1.0` 已经够用**，之前计划里「改 SDK → 本地联调 → 发 2.1.1 →
-  切回远端」这条链直接省掉，`im-ios`（`rongxin4`）那边想要业务事件，`TUIAutoCallObserver` 里
-  `engine.addEventObserver { event in ... }` 判 `event.name` 就是了，不用等我这边发版。
+- **09-28 SDK 2.1.1：libwebrtc 换成带前缀的 `LiveKitWebRTC`（类名全变 `LKRTC*`）**。起因是容信宿主
+  rongxin4（im-ios）接通时 SIGSEGV：进程里同时有容联 `ECMediaSDK.framework`，它导出 63 个无前缀 `RTC*`
+  ObjC 类，与 vanilla 命名的 `WebRTC.framework` 重名 61 个，ObjC 类名进程全局，建 PeerConnection 拿错实现。
+  `livekit/webrtc-xcframework` `150.7871.01` 是同一个 webrtc-sdk fork、同编号，只是 `RTC_OBJC_TYPE_PREFIX=LK`；
+  与 Android 2.1.1（`android-prefixed`，`livekit.org.webrtc`）同号同思路。改动：`Package.swift` binaryTarget、
+  `IMCallEngineWebRTC` 22 个文件 `import LiveKitWebRTC` + 39 个标识符改名，公开 API 不变。
+  **验证**：Demo 真机 × Web 双向音视频；rongxin4 本地源码集成（workspace 挂本地包覆盖远端）真机 × Web / Android
+  1v1、群视频、通话记录气泡、头像全部通过（09-28 用户确认）。
+  **对宿主的影响**：只用 IMCallEngine / IMCallKit 公开 API 的不受影响；自己 `import WebRTC`、或像 rongxin4
+  那样用 Run Script 嵌 `WebRTC.framework` 的要改名成 `LiveKitWebRTC`。
+  同批 Demo 两处修复：身份卡两个开关对齐（`DemoUI.switchRow`）、键盘遮挡输入框（`KeyboardAwareScrollView`，
+  滚动区底边钉 `keyboardLayoutGuide`）。
+  宿主业务事件（通话记录 / 踢下线）走 `IMCallEngine.addEventObserver(_:)`，与 Kit 独占的 `delegate` 并行，
+  **不需要给 Kit 加 businessDelegate**（09-28 走过一次弯路，详见 archive 同日节）。
 - **09-27 Demo 补上调试密钥登录开关**（此前本仓完全没有这条逻辑，Web/Android 已各自有）：
   `DemoSession.useDebugKeyLogin`（`#if DEBUG` 包住，跟 SDK 里的 `IMDebugTokenGenerator` 一样只在
   Debug 构建存在），身份卡（`DialerViewController`）合成画面开关下面加一行同款 `UISwitch`，登录后
@@ -30,6 +31,7 @@
   （`workspace-state.json` / `debug.yaml` / `ModuleCache` / `demo-dd` 整个目录），导致
   `swift build` / xcodebuild 报「找不到 XCFramework」；清掉这些本地构建缓存（不是 Xcode 全局
   DerivedData）后恢复正常，`./scripts/test.sh` 11 步全绿。
+- **09-28 SDK 2.1.1 发版**（内容即上一条；Demo 公网包档锁定跟着改到 2.1.1）。
 - **09-22 SDK 2.1.0 已发版**（tag `b2f9ffc`，Demo 公网包档锁定随后跟着改到 2.1.0）：本次内容即下面这些条目——音频路由四选一、多语言、simulcast 三层。协议版本未变（仍为 2）。
 
 - **09-22 音频路由四选一（听筒 / 扬声器 / 有线耳机 / 蓝牙）：自画面板版，真机 ✅（16:57~17:05 第九轮，grace iOS × alice Android）。**
@@ -154,10 +156,11 @@
 - **libwebrtc 的 `webRTCConfiguration` 是会话快照**（09-18 视频通话双向无声真根因，`IMWebRTCAudioConfiguration`）：这个 fork 的 `-[RTCAudioSessionConfiguration init]` 读的是**当下会话的 category/mode**，默认值是首次被碰那一刻的快照（上游写死 PlayAndRecord）。
   视频通话响铃期预览先建工厂 → 快照 = SoloAmbient → 开麦 `-50` → `InitPlayOrRecord failed`；纯音频先配会话后建工厂 → 快照对，同进程之后的视频也好（所以症状「偶然好了」）。
   修法：`sharedFactory` 建之前 + 每次 `applyCallAudioCategory` 时 `setWebRTC(_:)` 钉死 PlayAndRecord/VoiceChat。验收看 `音频会话已配成通话态 webrtc_config=…PlayAndRecord/…VoiceChat`、无 `有人把音频会话写成非通话类目`、`上行音频采样 packetsSent` 在涨。
-- **包已换成 webrtc-sdk M150（09-18）；simulcast 09-21 已开（工厂 + 层序同一刀，待真机验）**：`Package.swift` 现在是自己写的
-  `.binaryTarget` 指向 `webrtc-sdk/Specs` 的 `150.7871.01`——**不能用 `.package(url:)` 引它**，
-  它的 `Package.swift` 近期 tag 全是坏的（声明 `tools-version:5.9` 却用了 6.2 才有的 `.visionOS(.v26)`）。
-  模块名仍是 `WebRTC`，所以 `import` 一行没改。**升级要自己算 checksum**：`swift package compute-checksum`。
+- **包是 LiveKitWebRTC `150.7871.01`（09-28 从 webrtc-sdk 同号包换来，类名 `LKRTC*`、模块名 `LiveKitWebRTC`）；simulcast 09-21 已开**：`Package.swift` 是自己写的
+  `.binaryTarget` 指向 `livekit/webrtc-xcframework` release zip——webrtc-sdk 那边的 `Package.swift` 近期 tag 全是坏的
+  （声明 `tools-version:5.9` 却用了 6.2 才有的 `.visionOS(.v26)`），所以一直直指 zip。**别换回无前缀的包**：
+  宿主进程里的容联 ECMediaSDK 会撞 `RTC*` 类名。**升级要自己算 checksum**：`swift package compute-checksum`。
+  下文「已知坑」里的 `RTCAudioSession` / `RTCPeerConnectionFactory` 等，现在代码里都叫 `LKRTC*`。
   **SwiftPM 首次解析偶尔卡成龟速**（冷缓存三次：21 分钟 / 72 分钟 / 64 秒；同期 curl 稳定 2~3 MB/s，
   SwiftPM 拉 stasel 18 秒，两个地址的重定向链和后端一模一样）。**原因没查出来，但是偶发的**，别当阻塞项。
   碰上了就 curl 下来放进 `~/Library/Caches/org.swift.swiftpm/artifacts/<URL 里非字母数字全换成下划线>`。

@@ -6,7 +6,7 @@ import IMCallEngine
  音频路由面板：出现第三条路由时从底部升起的那张设备列表（设计稿 §04 v3.5）。
 
  **iOS 自己画，不用系统的 `AVRoutePickerView`**——2026-09-22 试过，那个控件让系统直接改路由、
- 完全绕开 `RTCAudioSession`，真机上把两个方向的声音都打没了（CLIENT_PARITY `[^audioroute]` v1.59）。
+ 完全绕开 `LKRTCAudioSession`，真机上把两个方向的声音都打没了（CLIENT_PARITY `[^audioroute]` v1.59）。
  这里点一行只调 `IMCallController.selectAudioRoute(_:)`，最终落到 Engine 的
  `setAudioRoute(_:)`，全程在 libwebrtc 自己的会话管理里，与 Android 的面板同一套语义。
 

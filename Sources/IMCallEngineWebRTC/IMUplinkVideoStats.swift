@@ -1,6 +1,6 @@
-#if canImport(WebRTC) && canImport(UIKit)
+#if canImport(LiveKitWebRTC) && canImport(UIKit)
 import Foundation
-import WebRTC
+import LiveKitWebRTC
 import IMCallEngine
 
 /**
@@ -45,7 +45,7 @@ final class IMUplinkVideoStats: @unchecked Sendable {
     private var pending: [DispatchWorkItem] = []
 
     /// sample 立刻采一次（关摄像头时的基线），并取消上一轮还没到点的。
-    func sample(_ connection: RTCPeerConnection?, phase: String) {
+    func sample(_ connection: LKRTCPeerConnection?, phase: String) {
         guard let connection else { return }
         queue.async {
             self.cancelPending()
@@ -54,7 +54,7 @@ final class IMUplinkVideoStats: @unchecked Sendable {
     }
 
     /// burst 重开摄像头之后按 `reopenOffsets` 采一轮。
-    func burst(_ connection: RTCPeerConnection?) {
+    func burst(_ connection: LKRTCPeerConnection?) {
         guard let connection else { return }
         queue.async {
             self.cancelPending()
@@ -80,7 +80,7 @@ final class IMUplinkVideoStats: @unchecked Sendable {
         pending = []
     }
 
-    private static func collect(_ connection: RTCPeerConnection, phase: String) {
+    private static func collect(_ connection: LKRTCPeerConnection, phase: String) {
         connection.statistics { report in
             var fields = ["phase": phase]
             for stats in report.statistics.values {

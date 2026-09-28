@@ -1,8 +1,8 @@
-#if canImport(WebRTC) && canImport(UIKit)
+#if canImport(LiveKitWebRTC) && canImport(UIKit)
 import AVFoundation
 import Foundation
 import IMCallEngine
-import WebRTC
+import LiveKitWebRTC
 
 /**
  采集会话看门狗：把 `AVCaptureSession` 的**静默失败**变成日志。
@@ -10,7 +10,7 @@ import WebRTC
  # 为什么需要它
 
  `AVCaptureSession.startRunning()` **失败时不抛错、不返回值**，只发通知。
- libwebrtc 的 `RTCCameraVideoCapturer.startCapture` 也就跟着一起沉默——
+ libwebrtc 的 `LKRTCCameraVideoCapturer.startCapture` 也就跟着一起沉默——
  它的 completionHandler 照样以 `nil` 错误回调，于是上层看到的是「起成功了」，
  真机上的表现却是**本端预览恒为 0x0、上行 0 帧、没有任何报错**。
 

@@ -1,7 +1,7 @@
-#if canImport(WebRTC) && canImport(UIKit)
+#if canImport(LiveKitWebRTC) && canImport(UIKit)
 import Foundation
 import AVFoundation
-import WebRTC
+import LiveKitWebRTC
 import IMCallEngine
 
 /*
@@ -42,7 +42,7 @@ import IMCallEngine
  没配置过（只起过摄像头预览、mic 从没被 acquire 就被挂断）的情形不动会话。
 
  拆到独立文件是为了不把 `IMWebRTCAdapter.swift` 顶过 600 行体量红线——这里只放
- 「配没配过 / 路由选了什么」这两件事，真正的 `RTCAudioSession` 配置与释放仍在
+ 「配没配过 / 路由选了什么」这两件事，真正的 `LKRTCAudioSession` 配置与释放仍在
  `IMWebRTCAdapter+Support.swift` 的 `configureAudioSession()` / `releaseAudioSession()`。
  */
 /**
@@ -63,7 +63,7 @@ extension IMWebRTCAdapter {
     /// 两个入口都调（`acquireMicrophone` / `answerSubOffer`，各自调用点有注释说明为什么要调，
     /// 本文件头部说明为什么是这两个、为什么不是 `setSpeakerOn` 与 `ensurePeers()`），
     /// 谁先到都行；真正的配置在 `configureAudioSession()`。标记的读改写在 `lock` 里，
-    /// 真正调 `configureAudioSession()` 放锁外——不把 `RTCAudioSession` 的锁嵌进来。
+    /// 真正调 `configureAudioSession()` 放锁外——不把 `LKRTCAudioSession` 的锁嵌进来。
     func ensureAudioSessionConfigured() {
         let needsConfig: Bool = {
             lock.lock()
@@ -102,7 +102,7 @@ extension IMWebRTCAdapter {
         notifyAudioRoutesChanged()
     }
 
-    /// setSpeakerOn 切扬声器。走 `RTCAudioSession` 而不是直接碰 `AVAudioSession`——
+    /// setSpeakerOn 切扬声器。走 `LKRTCAudioSession` 而不是直接碰 `AVAudioSession`——
     /// libwebrtc 自己也在管这个 session，绕开它会两边打架。
     ///
     /// **2026-09-16 改**：**只记选择，不配置会话**。这颗按钮在拨出中（`.outgoing`）
@@ -261,12 +261,12 @@ extension IMWebRTCAdapter {
     /// 真正去改路由。**只在会话已经配置过之后调**——`overrideOutputAudioPort` 只有
     /// category 已是 `.playAndRecord` 时才有效，没配就调会静默失效。
     private func applySpeakerRoute(_ on: Bool) {
-        let session = RTCAudioSession.sharedInstance()
+        let session = LKRTCAudioSession.sharedInstance()
         session.lockForConfiguration()
         defer { session.unlockForConfiguration() }
         // 记耗时：16:27:46 那通视频在会话配好之后、libwebrtc 拿到锁配置之前空了 17 s
         // （两条采样日志同一毫秒到齐，定时器全被卡住），还没定位到是谁把锁占着；
-        // 这里是那段里唯一持 `RTCAudioSession` 锁做 IPC 的地方，先量出来。
+        // 这里是那段里唯一持 `LKRTCAudioSession` 锁做 IPC 的地方，先量出来。
         let startedNS = DispatchTime.now().uptimeNanoseconds
         do {
             try session.overrideOutputAudioPort(on ? .speaker : .none)

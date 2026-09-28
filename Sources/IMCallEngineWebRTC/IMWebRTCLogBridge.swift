@@ -1,7 +1,7 @@
-#if canImport(WebRTC)
+#if canImport(LiveKitWebRTC)
 import Foundation
 import IMCallEngine
-import WebRTC
+import LiveKitWebRTC
 
 /**
  把 libwebrtc 自己的日志接进 `IMRTCLog`——**只接音频那一小撮**。
@@ -19,17 +19,17 @@ import WebRTC
 
  libwebrtc 的 Info 级日志量很大（ICE、SDP、统计…），全接会把回传日志淹掉。
  这里按关键词只放行音频会话 / ADM / 音频单元那几类，其余丢弃。
- 关键词见 `keywords`，改的时候记得它们要盖住 `RTCAudioSession.mm`、
+ 关键词见 `keywords`，改的时候记得它们要盖住 `LKRTCAudioSession.mm`、
  `audio_device_ios.mm`、`voice_processing_audio_unit.mm`、`audio_engine_device.mm`
  四个文件的日志。
 
  # 生命周期
 
- `RTCCallbackLogger` 必须被持有，所以是 static。跟着进程走，不停。
+ `LKRTCCallbackLogger` 必须被持有，所以是 static。跟着进程走，不停。
  */
 enum IMWebRTCLogBridge {
 
-    private static let logger = RTCCallbackLogger()
+    private static let logger = LKRTCCallbackLogger()
 
     /// 放行的关键词（小写比较）。
     private static let keywords = [
@@ -42,7 +42,7 @@ enum IMWebRTCLogBridge {
     private static let noise = ["ongetplayoutdata", "glitch"]
 
     private static let started: Void = {
-        RTCSetMinDebugLogLevel(.info)
+        LKRTCSetMinDebugLogLevel(.info)
         logger.severity = .info
         logger.start(messageAndSeverityHandler: { message, severity in
             let trimmed = message.trimmingCharacters(in: .whitespacesAndNewlines)

@@ -1,7 +1,7 @@
 import Foundation
 
 /**
- imStatsFields 从一条 WebRTC 统计（`RTCStatistics.values`）里挑出要打进日志的字段，统一成字符串。
+ imStatsFields 从一条 WebRTC 统计（`LKRTCStatistics.values`）里挑出要打进日志的字段，统一成字符串。
 
  **缺席就不写，不补 0**：没编出过帧就没有 `frameWidth`——日志里写成 0 的话，
  「真是 0」和「压根没这一项」就分不出来了，而后者本身就是线索。

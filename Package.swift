@@ -81,20 +81,30 @@ let package = Package(
          但它的 `Package.swift` **所有近期 tag 都编不过**：声明 `swift-tools-version:5.9`
          却用了 6.2 才有的 `.visionOS(.v26)`，`swift package resolve` 当场
          `error: 'v26' is unavailable`。他们的 SPM 那一半实际没人用。
-         所以这里直接指向同一个 release zip——**模块名仍是 `WebRTC`**，
-         `import WebRTC` 一行不用改。代价是升级时要自己算 checksum：
-         `swift package compute-checksum WebRTC.xcframework.zip`。
+         所以这里直接指向 release zip，代价是升级时要自己算 checksum：
+         `swift package compute-checksum LiveKitWebRTC.xcframework.zip`。
+
+         # 为什么是带前缀的 LiveKitWebRTC（2026-09-28 换，与 Android 2.1.1 同一个问题）
+
+         宿主进程里常常已经有另一份 WebRTC：容信的 `ECMediaSDK.framework`（容联 YuntxIMLib）
+         导出 63 个 `RTC*` ObjC 类，与 vanilla 命名的 WebRTC.framework 重名 61 个
+         （`RTCPeerConnectionFactory` / `RTCAudioSession` …）。ObjC 类名进程全局，运行时只认一份，
+         接通建 PeerConnection 时拿错实现当场 SIGSEGV（rongxin4 真机，09-28）。
+         `livekit/webrtc-xcframework` 是同一个 webrtc-sdk fork、同一条编号线，只是编译时带
+         `RTC_OBJC_TYPE_PREFIX=LK`：类、协议、枚举、C 函数全部变成 `LKRTC*`，模块名 `LiveKitWebRTC`。
+         与 Android 的 `io.github.webrtc-sdk:android-prefixed:150.7871.01`（`livekit.org.webrtc`）同号同思路。
+         simulcast 补丁仍在（`LKRTCVideoEncoderFactorySimulcast`）。
          */
         .binaryTarget(
-            name: "WebRTC",
-            url: "https://github.com/webrtc-sdk/Specs/releases/download/150.7871.01/WebRTC.xcframework.zip",
-            checksum: "03815cdf2f6a0ed328c94d74cce8fd1b8d2b6e95e2b37eab66795012fcecfdfa"),
+            name: "LiveKitWebRTC",
+            url: "https://github.com/livekit/webrtc-xcframework/releases/download/150.7871.01/LiveKitWebRTC.xcframework.zip",
+            checksum: "75ba3e7d596bc1ebe35c22472491a3dab8ddc7d22a0281ccaaeb92f2b53fc659"),
         /*
          媒体实现。**iOS-only**：libwebrtc 的 ObjC API 与渲染视图都只在 iOS 上有，
-         整个 target 的源码包在 `#if canImport(UIKit) && canImport(WebRTC)` 里，
+         整个 target 的源码包在 `#if canImport(UIKit) && canImport(LiveKitWebRTC)` 里，
          所以 macOS 上 `swift build` 编出来是个空模块，不会挡住单测。
          */
-        .target(name: "IMCallEngineWebRTC", dependencies: ["IMCallEngine", "WebRTC"]),
+        .target(name: "IMCallEngineWebRTC", dependencies: ["IMCallEngine", "LiveKitWebRTC"]),
         .testTarget(name: "IMCallEngineTests", dependencies: ["IMCallEngine"]),
         .testTarget(name: "IMCallKitTests", dependencies: ["IMCallKit"]),
         // Demo 没有单测 target：Demo 里的纯逻辑（通话记录时间文案）用符号链接编进这里测，不复制代码。

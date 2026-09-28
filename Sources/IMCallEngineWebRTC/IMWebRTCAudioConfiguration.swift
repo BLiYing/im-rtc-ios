@@ -1,8 +1,8 @@
-#if canImport(WebRTC) && os(iOS)
+#if canImport(LiveKitWebRTC) && os(iOS)
 import AVFoundation
 import Foundation
 import IMCallEngine
-import WebRTC
+import LiveKitWebRTC
 
 /**
  钉死 libwebrtc 的「WebRTC 需要的音频配置」。**视频通话双向无声的根因修复（2026-09-18）。**
@@ -10,11 +10,11 @@ import WebRTC
  # 根因
 
  libwebrtc 的 ADM 开麦时（`AudioDeviceIOS::InitRecording` → `ConfigureAudioSessionLocked`
- → `-[RTCAudioSession configureWebRTCSession:]`）会把音频会话配成
- `+[RTCAudioSessionConfiguration webRTCConfiguration]` 里的那份配置。
+ → `-[LKRTCAudioSession configureWebRTCSession:]`）会把音频会话配成
+ `+[LKRTCAudioSessionConfiguration webRTCConfiguration]` 里的那份配置。
 
  上游 libwebrtc 里这份配置是写死的 `PlayAndRecord / VoiceChat`。**我们用的 webrtc-sdk fork
- 不是**：它的 `-[RTCAudioSessionConfiguration init]`（反汇编 `0x250bb0`）读的是
+ 不是**：它的 `-[LKRTCAudioSessionConfiguration init]`（反汇编 `0x250bb0`）读的是
  `AVAudioSession.sharedInstance()` 当下的 `category` / `mode`——**默认值是第一次被碰到那一刻
  会话的快照**。App 启动后会话是系统默认的 `SoloAmbient / Default`，快照要是拍在我们配会话
  之前，整个进程里 WebRTC 每次开麦都会把会话「配」回 `SoloAmbient`：
@@ -45,7 +45,7 @@ enum IMWebRTCAudioConfiguration {
 
     /// install 钉死配置。幂等，可以多次调；每次都整份重设，不读当前会话。
     static func install() {
-        let config = RTCAudioSessionConfiguration()
+        let config = LKRTCAudioSessionConfiguration()
         config.category = AVAudioSession.Category.playAndRecord.rawValue
         config.mode = AVAudioSession.Mode.voiceChat.rawValue
         config.categoryOptions = [.allowBluetooth]
@@ -55,12 +55,12 @@ enum IMWebRTCAudioConfiguration {
         config.ioBufferDuration = 0.02
         config.inputNumberOfChannels = 1
         config.outputNumberOfChannels = 1
-        RTCAudioSessionConfiguration.setWebRTC(config)
+        LKRTCAudioSessionConfiguration.setWebRTC(config)
     }
 
     /// current 读回当前生效的那份，给日志用：`category` 不是 PlayAndRecord 就说明又被快照顶掉了。
     static func current() -> (category: String, mode: String) {
-        let config = RTCAudioSessionConfiguration.webRTC()
+        let config = LKRTCAudioSessionConfiguration.webRTC()
         return (config.category, config.mode)
     }
 }

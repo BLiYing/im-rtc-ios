@@ -121,19 +121,9 @@ final class DialerViewController: UIViewController {
      与 Web Demo 登录框里那个勾选框对齐。
     */
     private func syntheticRow() -> UIStackView {
-        let label = UILabel()
-        label.text = dt("demo.dial.synthetic")
-        label.font = .systemFont(ofSize: 13)
-        label.textColor = .secondaryLabel
-        label.numberOfLines = 0
         syntheticSwitch.isOn = session.syntheticVideo
         syntheticSwitch.addTarget(self, action: #selector(onToggleSynthetic), for: .valueChanged)
-        syntheticSwitch.setContentHuggingPriority(.required, for: .horizontal)
-        let row = UIStackView(arrangedSubviews: [label, syntheticSwitch])
-        row.axis = .horizontal
-        row.spacing = 8
-        row.alignment = .center
-        return row
+        return DemoUI.switchRow(dt("demo.dial.synthetic"), syntheticSwitch)
     }
 
     @objc private func onToggleSynthetic() {
@@ -143,19 +133,9 @@ final class DialerViewController: UIViewController {
     #if DEBUG
     /// 调试密钥登录这一行：一句说明 + 一个开关，紧跟在合成画面下面（同一条身份卡）。
     private func debugLoginRow() -> UIStackView {
-        let label = UILabel()
-        label.text = dt("demo.login.debugKey.title")
-        label.font = .systemFont(ofSize: 13)
-        label.textColor = .secondaryLabel
-        label.numberOfLines = 0
         debugLoginSwitch.isOn = session.useDebugKeyLogin
         debugLoginSwitch.addTarget(self, action: #selector(onToggleDebugLogin), for: .valueChanged)
-        debugLoginSwitch.setContentHuggingPriority(.required, for: .horizontal)
-        let row = UIStackView(arrangedSubviews: [label, debugLoginSwitch])
-        row.axis = .horizontal
-        row.spacing = 8
-        row.alignment = .center
-        return row
+        return DemoUI.switchRow(dt("demo.login.debugKey.title"), debugLoginSwitch)
     }
 
     @objc private func onToggleDebugLogin() {

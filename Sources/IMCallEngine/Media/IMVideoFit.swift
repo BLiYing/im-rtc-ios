@@ -23,7 +23,7 @@ import Foundation
 
  # 与 Android 的一处差别，不是漂
 
- iOS 的 `RTCVideoViewDelegate.videoView(_:didChangeVideoSize:)` 给的是**已经旋转过**
+ iOS 的 `LKRTCVideoViewDelegate.videoView(_:didChangeVideoSize:)` 给的是**已经旋转过**
  的显示尺寸，所以这里不收旋转角；Android 的 `onFrameResolutionChanged` 给的是
  未旋转的缓冲区尺寸 + 旋转角，那边的 `IMVideoFit` 多一个参数并自己换算。
  **判据本身是同一个**，只是各平台回调的契约不同。

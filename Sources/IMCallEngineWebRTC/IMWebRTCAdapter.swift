@@ -1,8 +1,8 @@
-#if canImport(WebRTC) && canImport(UIKit)
+#if canImport(LiveKitWebRTC) && canImport(UIKit)
 import AVFoundation
 import Foundation
 import UIKit
-import WebRTC
+import LiveKitWebRTC
 import IMCallEngine
 
 /*
@@ -17,7 +17,7 @@ public final class IMWebRTCAdapter: NSObject, IMMediaAdapter, @unchecked Sendabl
     /**
      两条 PeerConnection。**通话结束后会被整个换掉，不是复用。**
 
-     `RTCPeerConnection` 一旦 `close()` 就报废了：再往上 `addTransceiver`
+     `LKRTCPeerConnection` 一旦 `close()` 就报废了：再往上 `addTransceiver`
      会抛 ObjC 异常，而 Swift 接不住——**进程直接挂掉**。
      原先这里是 `let`，于是第一通电话结束后第二通必崩。
     */
@@ -30,14 +30,14 @@ public final class IMWebRTCAdapter: NSObject, IMMediaAdapter, @unchecked Sendabl
     var events = IMMediaAdapterEvents()
 
     /// 本端轨道，按 cid 索引。
-    var localTracks: [String: RTCMediaStreamTrack] = [:]
+    var localTracks: [String: LKRTCMediaStreamTrack] = [:]
     /// 摄像头采集器。**必须持有**：不留引用的话它会被释放，画面直接停掉。
-    private var capturer: RTCCameraVideoCapturer?
+    private var capturer: LKRTCCameraVideoCapturer?
     /// 采集会话看门狗：`AVCaptureSession` 起不来时**不抛错只发通知**，见 `IMCaptureWatch`。
     private let captureWatch = IMCaptureWatch()
     /// 当前用的是不是前置。翻转靠它决定下一次挑哪一个。
     private var usingFrontCamera = true
-    private var videoSource: RTCVideoSource?
+    private var videoSource: LKRTCVideoSource?
     /// 已经在预览的那条摄像头轨道。发布时复用它，不重开设备。
     private var previewTrack: IMLocalTrackInfo?
     /// 已经挂上 pub 的摄像头 cid。**挂过就不再挂**（两条 m-line 发同一条轨道），也不许被 `stopLocalPreview` 停掉。
@@ -91,7 +91,7 @@ public final class IMWebRTCAdapter: NSObject, IMMediaAdapter, @unchecked Sendabl
     /// 下一个上行 offer 要不要带 ICE restart。见 `restartPubICE()`。
     var pubICERestartPending = false
     var audioSessionActive = false // 见 IMWebRTCAdapter+AudioSession.swift。
-    /// 我们在 `RTCAudioSession` 上欠着几次 `setActive(true)`。**每一次都要在 `close()` 里用
+    /// 我们在 `LKRTCAudioSession` 上欠着几次 `setActive(true)`。**每一次都要在 `close()` 里用
     /// `setActive(false)` 还掉**——它的激活是引用计数的，少还一次下一通就哑（见 `releaseAudioSession`）。
     var audioActivations = 0
     var desiredSpeakerOn = false // 同上：会话还没配好时先记下来，配好再补应用。
@@ -150,10 +150,10 @@ public final class IMWebRTCAdapter: NSObject, IMMediaAdapter, @unchecked Sendabl
         // 取一次局部变量复用：下面三步之间没有任何会让 peers 换掉的步骤
         // （不涉及 await，纯同步的 factory / addTransceiver 调用）。
         let peers = ensurePeers()
-        let source = peers.factory.audioSource(with: RTCMediaConstraints(
+        let source = peers.factory.audioSource(with: LKRTCMediaConstraints(
             mandatoryConstraints: nil, optionalConstraints: nil))
         let track = peers.factory.audioTrack(with: source, trackId: cid)
-        let transceiverInit = RTCRtpTransceiverInit()
+        let transceiverInit = LKRTCRtpTransceiverInit()
         transceiverInit.direction = .sendOnly
         transceiverInit.streamIds = ["im-rtc"]
         peers.pub.addTransceiver(with: track, init: transceiverInit)
@@ -229,7 +229,7 @@ public final class IMWebRTCAdapter: NSObject, IMMediaAdapter, @unchecked Sendabl
         let source = peers.factory.videoSource()
         let track = peers.factory.videoTrack(with: source, trackId: cid)
 
-        var camera: RTCCameraVideoCapturer?
+        var camera: LKRTCCameraVideoCapturer?
         var synthetic: IMSyntheticVideoCapturer?
         if syntheticVideo {
             let fake = IMSyntheticVideoCapturer(delegate: source, label: syntheticLabel)
@@ -311,14 +311,14 @@ public final class IMWebRTCAdapter: NSObject, IMMediaAdapter, @unchecked Sendabl
             return info
         }
         // 预览在这之间被关掉了：按作废报 2005，**不能报「没有设备」**——Kit 会把按钮打成「无权限」。
-        guard previewTrack?.cid == cid, let track = localTracks[cid] as? RTCVideoTrack else {
+        guard previewTrack?.cid == cid, let track = localTracks[cid] as? LKRTCVideoTrack else {
             lock.unlock()
             throw IMRTCError(.invalidState, "摄像头在发布前被关掉了")
         }
         publishedCameraCID = cid
         lock.unlock()
 
-        let transceiverInit = RTCRtpTransceiverInit()
+        let transceiverInit = LKRTCRtpTransceiverInit()
         transceiverInit.direction = .sendOnly
         transceiverInit.streamIds = ["im-rtc"]
         if simulcast {
@@ -326,7 +326,7 @@ public final class IMWebRTCAdapter: NSObject, IMMediaAdapter, @unchecked Sendabl
         } else {
             // 单层也要压上限：不压的话 libwebrtc 会往上飙到远高于服务端预算的码率，
             // 而 `bwe.go` 的降层判断正是拿那个预算算的。
-            let encoding = RTCRtpEncodingParameters()
+            let encoding = LKRTCRtpEncodingParameters()
             encoding.isActive = true
             encoding.maxBitrateBps = NSNumber(value: profile.maxBitrateBps)
             transceiverInit.sendEncodings = [encoding]
@@ -384,7 +384,7 @@ public final class IMWebRTCAdapter: NSObject, IMMediaAdapter, @unchecked Sendabl
     /**
      switchCamera 前后摄像头翻转。
 
-     **不重新协商**：`RTCCameraVideoCapturer` 换个 device 重新 `startCapture` 就行，
+     **不重新协商**：`LKRTCCameraVideoCapturer` 换个 device 重新 `startCapture` 就行，
      轨道对象、`track_id` 与 `cid` 一个都不变，服务端与对端不需要知道这件事。
      只有一个摄像头（或另一个被别的程序占着）时保持原样——别为了翻转把通话弄断。
      摄像头关着（采集停着）时不翻：翻转会重新 `startCapture`，等于替用户把摄像头打开了。
@@ -401,7 +401,7 @@ public final class IMWebRTCAdapter: NSObject, IMMediaAdapter, @unchecked Sendabl
             IMRTCLog.warn("摄像头关着，不翻转", [:])
             return
         }
-        guard RTCCameraVideoCapturer.captureDevices().contains(where: { $0.position == wanted }) else {
+        guard LKRTCCameraVideoCapturer.captureDevices().contains(where: { $0.position == wanted }) else {
             IMRTCLog.warn("没有另一个摄像头可翻", ["wanted": wanted == .front ? "front" : "back"])
             return
         }
@@ -448,7 +448,7 @@ public final class IMWebRTCAdapter: NSObject, IMMediaAdapter, @unchecked Sendabl
         captureGeneration += 1
         let camera = capturer
         let synthetic = syntheticCapturer
-        // **关掉就丢掉**：RTCPeerConnection 不能复用，下一通电话由 ensurePeers 现造一对。
+        // **关掉就丢掉**：LKRTCPeerConnection 不能复用，下一通电话由 ensurePeers 现造一对。
         let oldPeers = peers
         let wasAudioSessionActive = audioSessionActive
         // 还在路上的那一路预览没人再等了：取消它，别让弹权限框、开设备这些耗时步骤
@@ -497,7 +497,7 @@ public final class IMWebRTCAdapter: NSObject, IMMediaAdapter, @unchecked Sendabl
         throw IMRTCError(.invalidState, "采集还没起来就作废了（通话结束，或关了摄像头）")
     }
 
-    private func remember(cid: String, track: RTCMediaStreamTrack) {
+    private func remember(cid: String, track: LKRTCMediaStreamTrack) {
         lock.lock()
         localTracks[cid] = track
         lock.unlock()
@@ -511,7 +511,7 @@ public final class IMWebRTCAdapter: NSObject, IMMediaAdapter, @unchecked Sendabl
      真机上的表现就是「没画面、没报错」。2026-09-18 换 libwebrtc 包之后采集一帧不出，
      日志里唯一相关的那行还叫「摄像头已开」（其实打在挑格式时），白查了一轮。
      */
-    private func startCapture(_ capturer: RTCCameraVideoCapturer) async throws {
+    private func startCapture(_ capturer: LKRTCCameraVideoCapturer) async throws {
         lock.lock()
         let front = usingFrontCamera
         lock.unlock()

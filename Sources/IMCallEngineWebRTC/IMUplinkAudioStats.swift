@@ -1,7 +1,7 @@
-#if canImport(WebRTC) && canImport(UIKit)
+#if canImport(LiveKitWebRTC) && canImport(UIKit)
 import AVFoundation
 import Foundation
-import WebRTC
+import LiveKitWebRTC
 import IMCallEngine
 
 /**
@@ -60,7 +60,7 @@ final class IMUplinkAudioStats: @unchecked Sendable {
     private var pending: [DispatchWorkItem] = []
 
     /// burst 发布麦克风之后按 `sampleOffsets` 采一轮，并取消上一轮还没到点的。
-    func burst(_ connection: RTCPeerConnection?) {
+    func burst(_ connection: LKRTCPeerConnection?) {
         guard let connection else { return }
         queue.async {
             self.cancelPending()
@@ -86,7 +86,7 @@ final class IMUplinkAudioStats: @unchecked Sendable {
         pending = []
     }
 
-    private static func collect(_ connection: RTCPeerConnection, phase: String) {
+    private static func collect(_ connection: LKRTCPeerConnection, phase: String) {
         // 会话现场先拍下来：统计回调是异步的，等它回来时路由可能已经又变过了。
         let session = sessionFields()
         connection.statistics { report in
@@ -111,13 +111,13 @@ final class IMUplinkAudioStats: @unchecked Sendable {
     /**
      sessionFields 音频会话的现场。
 
-     **读的是 `AVAudioSession.sharedInstance()` 而不是 `RTCAudioSession` 的镜像**：
+     **读的是 `AVAudioSession.sharedInstance()` 而不是 `LKRTCAudioSession` 的镜像**：
      后者是 libwebrtc 自己记的账，两边不一致恰恰是要查的东西之一。
-     `isAudioEnabled` / `useManualAudio` 仍从 `RTCAudioSession` 取——那两个本来就只有它有，
+     `isAudioEnabled` / `useManualAudio` 仍从 `LKRTCAudioSession` 取——那两个本来就只有它有，
      而且它们为假时 ADM 直接不录，是「录不到」最常见的一种。
      */
     private static func sessionFields() -> [String: String] {
-        let rtc = RTCAudioSession.sharedInstance()
+        let rtc = LKRTCAudioSession.sharedInstance()
         let av = AVAudioSession.sharedInstance()
         return [
             "session.category": av.category.rawValue,
