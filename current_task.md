@@ -7,6 +7,7 @@
 
 ## 当前焦点
 
+- **10-07 Kit `tokenProvider`（2.2.0 待发，未提交）**：`IMCallKitConfig.tokenProvider`（ObjC 可用 block）由 Kit 取票登录、退避重试、拨号 / 加入 / 进会议前补登录、续票、`authExpired` 重登；新增 `IMCallKit.stop()` / `ensureReady(_:)`；拨号回 2007 出提示。逻辑 `State/IMKitSession.swift` + `IMCallController+Session.swift`，测试 `KitSessionTests`（15 条）。`test.sh` 11 步绿。设计 server `docs/design/KIT_TOKEN_PROVIDER_DESIGN.md`。**待**：IMProgram 切本地源码联调。
 - **09-28 SDK 2.1.1：libwebrtc 换成带前缀的 `LiveKitWebRTC`（类名全变 `LKRTC*`）**。起因是容信宿主
   rongxin4（im-ios）接通时 SIGSEGV：进程里同时有容联 `ECMediaSDK.framework`，它导出 63 个无前缀 `RTC*`
   ObjC 类，与 vanilla 命名的 `WebRTC.framework` 重名 61 个，ObjC 类名进程全局，建 PeerConnection 拿错实现。

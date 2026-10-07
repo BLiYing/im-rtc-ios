@@ -142,6 +142,7 @@ extension IMCallController {
 
     @objc private func appWillEnterForeground() {
         engine.setAppForeground(true)
+        kitSession?.onNetworkRestored() // 在退避里等着的会话立刻再试
         guard cameraPausedByBackground else { return }
         cameraPausedByBackground = false
         guard !cameraCID.isEmpty, state.selfState.cameraOn else { return }

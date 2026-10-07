@@ -8,22 +8,27 @@ extension IMCallController: IMCallEngineDelegate {
     // MARK: 连接（顶部橙条：正在重连 / 连接已断开，规范 §08）
 
     public func callEngine(_ engine: IMCallEngine, didConnect sessionID: String, resumed: Bool) {
+        kitSession?.onConnected()
         apply(.connection(.ok))
     }
 
     public func callEngine(_ engine: IMCallEngine, didDisconnect code: Int, willReconnect: Bool) {
+        kitSession?.onDisconnected()
         apply(.connection(willReconnect ? .reconnecting : .lost))
     }
 
     public func callEngine(_ engine: IMCallEngine, wasKickedOutFor reason: IMKickedOutReason) {
         // Kit 对三种原因的界面表达一致（都是「连接没了」）；**分岔是宿主的事**——
         // 回登录页、静默换票重登、还是去后台改配置，只有宿主知道该走哪条。
+        // 例外：配了 tokenProvider 时 authExpired 由 Kit 换票重登，顶号 / 配置被拒不再自动登录。
+        kitSession?.onKickedOut(reason)
         apply(.connection(.lost))
     }
 
     public func callEngine(_ engine: IMCallEngine, tokenWillExpireAt expiresAtMS: Int64) {
-        // Kit 对票期没有界面表达——换票是宿主的事（票从宿主的账号体系来）。
-        // 这里不实现的话宿主照样收得到（delegate 是宿主自己挂的），故留空即可。
+        // 配了 tokenProvider 时 Kit 自己取新票续上；没配就是宿主的事（票从宿主的账号体系来，
+        // 宿主经 `addEventObserver` 照样收得到）。
+        kitSession?.onTokenWillExpire()
     }
 
     // MARK: 来电与拨出

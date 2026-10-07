@@ -100,6 +100,10 @@ public protocol IMCallControllerObserver: AnyObject {
     var cameraPausedByBackground = false
     /// 系统网络换了就叫 Engine 立即重连，见 `IMNetworkWatcher`。
     private var networkWatcher: IMNetworkWatcher?
+    /// 设备此刻有没有网（取票失败时挑文案用）。没有监听时当作有网。
+    var networkOnline: Bool { networkWatcher?.isOnline ?? true }
+    /// Kit 取票登录的会话，配了 `tokenProvider` 才有（见 `IMCallController+Session.swift`）。**只在主线程读写**。
+    var kitSession: IMKitSession?
     /// 最后一批邀请出去的 uid。加人被拒时用它把占位格收回来。
     private var lastInvited: [String] = []
     #if canImport(UIKit)
@@ -118,7 +122,11 @@ public protocol IMCallControllerObserver: AnyObject {
         super.init()
         engine.delegate = self
         observeAppLifecycle()
-        networkWatcher = IMNetworkWatcher { [weak engine] in engine?.notifyNetworkChanged() }
+        networkWatcher = IMNetworkWatcher { [weak self] in
+            self?.engine.notifyNetworkChanged()
+            // 在退避里等着的会话立刻再试（会话只在主线程上碰）。
+            DispatchQueue.main.async { self?.kitSession?.onNetworkRestored() }
+        }
         /*
          **音频路由不在这里监听。** Kit 一个字都不碰 `AVAudioSession`——
          清单与当前路由由 Engine 经 `audioRoutesDidChange` 回调抛上来（见 `+Delegate`）。
@@ -161,6 +169,9 @@ public protocol IMCallControllerObserver: AnyObject {
             guard await settle(outcome, onBlocked: { self.apply(.dismiss) }) else { return }
             // 过完权限门要再看一眼这一屏还在不在，见 `stillOnScreen(expecting:whenGone:)`。
             guard await stillOnScreen(expecting: .outgoing, whenGone: "[Kit] 过完权限门时这一屏已经不在了，invite 不发") else { return }
+            // 没登上先补一次（KIT_TOKEN_PROVIDER_DESIGN §6）；等的这段时间里用户可能已经按了红键，再看一眼。
+            guard await readyOrNotice(screen: .outgoing) else { return }
+            guard await stillOnScreen(expecting: .outgoing, whenGone: "[Kit] 等登录时这一屏已经不在了，invite 不发") else { return }
             // 群通话默认关着摄像头：权限照问（交互稿 §01），摄像头不开。
             await startPreviewIfWanted()
             let options = IMCallOptions(isGroup: isGroup, chatGroupID: chatGroupID,
@@ -170,7 +181,7 @@ public protocol IMCallControllerObserver: AnyObject {
             } catch {
                 /*
                  被拒时 Engine **先**抛 `callDidEnd(.error)`（界面已经进了结束画面）、**再** throw 到这里。
-                 宿主邀请鉴权回调拒绝（1409）与已在别处通话（1408，同账号在别的设备上通话，入口守门拦不到）有专属提示，
+                 宿主邀请鉴权回调拒绝（1409）、已在别处通话（1408，同账号在别的设备上通话，入口守门拦不到）与没登录（2007）有专属提示，
                  其余码的收场由 `callDidEnd` 那条路负责。
                  */
                 imLogRejected("拨号", error)
@@ -179,6 +190,9 @@ public protocol IMCallControllerObserver: AnyObject {
                     await MainActor.run { self.apply(.hint(imT("hint.inviteRejected"))) }
                 } else if code == IMErrorCode.alreadyInCall.rawValue {
                     await MainActor.run { self.showNotice(imBusyNoticeText) }
+                } else if code == IMErrorCode.notLoggedIn.rawValue {
+                    // 没登录（没配 tokenProvider 的宿主没登上 / 刚好断了）：原先只有笼统的结束画面。
+                    await MainActor.run { self.showNotice(imT("hint.serviceUnreachable")) }
                 }
             }
         }
@@ -191,6 +205,7 @@ public protocol IMCallControllerObserver: AnyObject {
             let outcome = await permissionGate.ensure(
                 imPermissionDevices(mediaType: "video", withCamera: true))
             guard await settle(outcome, onBlocked: {}) else { return }
+            guard await readyOrNotice(screen: nil) else { return }
             await MainActor.run {
                 self.apply(.meetingJoined(roomID: roomID, now: Date().timeIntervalSince1970))
                 if outcome == .cameraBlocked { self.apply(.cameraBlocked) }

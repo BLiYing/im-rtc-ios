@@ -45,6 +45,8 @@ extension IMCallController {
                 self.state.phase == .connecting && self.state.callID == callID
             })
             guard stillJoining else { return }
+            // 没登上先补一次（KIT_TOKEN_PROVIDER_DESIGN §6），界面照常是「接通中…」。
+            guard await readyOrNotice(screen: .connecting) else { return }
             do {
                 try await engine.joinCall(callID)
             } catch {

@@ -13,9 +13,19 @@ final class IMNetworkWatcher {
     private let monitor = NWPathMonitor()
     private let queue = DispatchQueue(label: "com.imrtc.kit.network")
     private let tracker = IMPathChangeTracker()
+    private let lock = NSLock()
+    private var satisfied = true
+
+    /// 设备此刻有没有网（Kit 取票失败时挑文案用，KIT_TOKEN_PROVIDER_DESIGN §5）。还没收到第一次回调时当作有网。
+    var isOnline: Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return satisfied
+    }
 
     init(onChanged: @escaping () -> Void) {
-        monitor.pathUpdateHandler = { [tracker] path in
+        monitor.pathUpdateHandler = { [tracker, weak self] path in
+            self?.record(satisfied: path.status == .satisfied)
             let signature = path.availableInterfaces.map { "\($0.type)/\($0.name)" }.joined(separator: ",")
                 + "|" + path.gateways.map { "\($0)" }.joined(separator: ",")
             guard tracker.observe(satisfied: path.status == .satisfied, signature: signature) else { return }
@@ -27,6 +37,12 @@ final class IMNetworkWatcher {
 
     deinit {
         monitor.cancel()
+    }
+
+    private func record(satisfied: Bool) {
+        lock.lock()
+        self.satisfied = satisfied
+        lock.unlock()
     }
 }
 

@@ -86,6 +86,15 @@ public let IMCallKitVersion = IMCallEngineVersion
         didSet { IMText.locale = locale }
     }
 
+    /**
+     从你的后台取一张 RTC 接入票（server `docs/design/KIT_TOKEN_PROVIDER_DESIGN.md`）。**在 `IMCallKit.start()` 时读一次**。
+
+     **给了它，登录归 Kit**：start 即取票登录，失败按退避重试（网络换了 / 回到前台立即再试），
+     票快过期自动续、被踢 `authExpired` 自动重登，拨号 / 加入前没登上会先补一次；`IMCallKit.stop()` 时登出。
+     宿主**不要再自己调 `engine.login` / `logout`**。不给：与 2.1.x 一致，宿主自己管登录。与 Web / Android 同名同义。
+     */
+    @objc public var tokenProvider: IMTokenProvider?
+
     /// 按语言覆盖个别文案（只写要改的 key，key 见跨端文案表 `docs/i18n/strings.json`）。
     public var messages: [IMLocale: [String: String]] = [:] {
         didSet { IMText.overrides = messages }
@@ -157,6 +166,22 @@ public let IMCallKitVersion = IMCallEngineVersion
         #if canImport(UIKit)
         _ = callWindow // 让它订阅上 controller；之后由状态驱动显示与收起
         #endif
+        // 配了 tokenProvider 就由 Kit 取票登录（KIT_TOKEN_PROVIDER_DESIGN），宿主不要再自己 login。
+        let provider = config.tokenProvider
+        DispatchQueue.main.async { self.controller.startSession(provider: provider) }
+    }
+
+    /// 停掉 Kit 的取票登录并登出 Engine（只在配了 `tokenProvider` 时有事可做）。宿主登出 / 切账号时调。
+    @objc public func stop() {
+        DispatchQueue.main.async { self.controller.stopSession() }
+    }
+
+    /**
+     确保已登录（配了 `tokenProvider` 时由 Kit 补一次取票登录），主线程回调。
+     宿主自己直接用 Engine 的地方（`fetchCallHistory`）先调它。没配 tokenProvider 时恒为 `true`。
+     */
+    @objc public func ensureReady(_ completion: @escaping (Bool) -> Void) {
+        controller.ensureReady(completion)
     }
 }
 
