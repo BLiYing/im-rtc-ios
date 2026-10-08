@@ -7,6 +7,7 @@
 
 ## 当前焦点
 
+- **10-08 SDK 2.2.1（仅 iOS）**：修 2.2.0 Kit 会话 logout / login 两个独立 Task 交错、掐掉帧泵导致收不到来电与对方挂断（`enqueueEngineOp` 串行，`EngineOpQueueTests`）。iPhone 14 Pro 真机修后来电 / 对方取消都到。Demo 公网包档锁 2.2.1。
 - **10-08 SDK 2.2.0 已发版：Kit `tokenProvider`**：`IMCallKitConfig.tokenProvider`（ObjC 可用 block）由 Kit 取票登录、退避重试、拨号 / 加入 / 进会议前补登录、续票、`authExpired` 重登；新增 `IMCallKit.stop()` / `ensureReady(_:)`；拨号回 2007 出提示。逻辑 `State/IMKitSession.swift` + `IMCallController+Session.swift`，测试 `KitSessionTests`（15 条）。`test.sh` 11 步绿。设计 server `docs/design/KIT_TOKEN_PROVIDER_DESIGN.md`。IMProgram 已接入（模拟器实测通过），Demo 公网包档锁 2.2.0、解析到 tag 提交 `feba461`、模拟器 build 过。
 - **09-28 SDK 2.1.1：libwebrtc 换成带前缀的 `LiveKitWebRTC`（类名全变 `LKRTC*`）**。起因是容信宿主
   rongxin4（im-ios）接通时 SIGSEGV：进程里同时有容联 `ECMediaSDK.framework`，它导出 63 个无前缀 `RTC*`
