@@ -104,6 +104,8 @@ public protocol IMCallControllerObserver: AnyObject {
     var networkOnline: Bool { networkWatcher?.isOnline ?? true }
     /// Kit 取票登录的会话，配了 `tokenProvider` 才有（见 `IMCallController+Session.swift`）。**只在主线程读写**。
     var kitSession: IMKitSession?
+    /// 会话发给 Engine 的 logout / login 排成一条链，见 `IMCallController+Session.swift` 的 `enqueueEngineOp`。**只在主线程读写**。
+    var engineOps: Task<Void, Never>?
     /// 最后一批邀请出去的 uid。加人被拒时用它把占位格收回来。
     private var lastInvited: [String] = []
     #if canImport(UIKit)

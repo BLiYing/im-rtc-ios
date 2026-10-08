@@ -8,7 +8,7 @@ import IMCallEngine
  */
 extension IMCallController: IMSessionEngine {
     func sessionLogin(_ token: String, done: @escaping (Error?) -> Void) {
-        Task {
+        enqueueEngineOp { [engine] in
             do {
                 try await engine.login(token)
                 DispatchQueue.main.async { done(nil) }
@@ -19,7 +19,26 @@ extension IMCallController: IMSessionEngine {
     }
 
     func sessionLogout() {
-        Task { await engine.logout() }
+        enqueueEngineOp { [engine] in await engine.logout() }
+    }
+
+    /**
+     会话发给 Engine 的 logout / login **一个接一个地跑**：每个操作等上一个跑完再开始。
+
+     这两个都是 async，原先各起一个独立的 `Task`，先后没有保证。2026-10-08 真机（iPhone 14 Pro）：
+     登录前那一下「清场 logout」与紧随其后的 login 交错——logout 读连接时还是 nil（没东西可关），
+     login 起了帧泵、建了连接，logout 的后半段 `stopFramePump()` 才跑，把新帧泵掐了。
+     连接还活着、请求的应答照常（走连接自己的 pending 表），**服务端推下来的帧（来电、对方拒接、
+     通话结束）全被丢掉**：呼叫发得出去，对方拒接这边不知道，别人打来也不响。
+     Android 的 Engine 把 login / logout 投递到同一个调度队列，Web 的 logout 是同步的，都没有这个问题。
+     **只在主线程调**（链头 `engineOps` 只在主线程读写）。
+     */
+    func enqueueEngineOp(_ op: @escaping @Sendable () async -> Void) {
+        let previous = engineOps
+        engineOps = Task {
+            await previous?.value
+            await op()
+        }
     }
 
     func sessionUpdateToken(_ token: String, expiresAtMS: Int64) {
